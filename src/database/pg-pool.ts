@@ -27,7 +27,7 @@ dns.setDefaultResultOrder('ipv4first');
 const dbUrl = new URL(env.DATABASE_URL);
 
 const poolConfig: PoolConfig = {
-  host: dbUrl.hostname,                           // aws-0-ap-south-1.pooler.supabase.com
+  host: dbUrl.hostname,                           // aws-1-ap-south-1.pooler.supabase.com
   port: parseInt(dbUrl.port || '5432', 10),       // 5432 (Session mode)
   user: decodeURIComponent(dbUrl.username),        // postgres.ixygmsqbpyyvjhxphpso
   password: decodeURIComponent(dbUrl.password),    // database password
