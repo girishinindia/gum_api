@@ -7,5 +7,6 @@ node_modules
 .DS_Store
 coverage
 *.log
-Database/
+/Database/
 documentation_api/
+hosting/
