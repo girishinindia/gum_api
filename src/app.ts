@@ -3,10 +3,12 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
+import swaggerUi from 'swagger-ui-express';
 
 import { apiRouter } from './api';
 import { buildCorsOptions } from './config/cors';
 import { env } from './config/env';
+import { swaggerSpec } from './config/swagger';
 import { errorHandler } from './core/errors/error-handler';
 import { notFoundMiddleware } from './core/middlewares/not-found.middleware';
 import { globalRateLimiter } from './core/middlewares/rate-limit.middleware';
@@ -42,6 +44,14 @@ app.get('/', (_req, res) => {
     }
   });
 });
+
+// ─── Swagger API Docs ─────────────────────────────────────
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: 'GrowUpMore API Docs',
+  customCss: '.swagger-ui .topbar { display: none }',
+  swaggerOptions: { persistAuthorization: true, docExpansion: 'none', filter: true }
+}));
+app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
 
 app.use('/api', apiRouter);
 app.use(notFoundMiddleware);
