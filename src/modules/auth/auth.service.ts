@@ -83,7 +83,8 @@ class AuthService {
       lastName: input.lastName,
       email: input.email,
       mobile: input.mobile,
-      password: input.password
+      password: input.password,
+      roleCode: input.roleCode
     };
     await redisPending.store(`register:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
 
@@ -132,18 +133,19 @@ class AuthService {
       password: pending.password
     });
 
-    // Auto-assign "student" role to newly registered user
+    // Auto-assign role based on roleCode (student or instructor)
+    const roleCode = pending.roleCode ?? 'student';
     try {
       await db.query(
         `INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
          SELECT $1, r.id, $1
          FROM roles r
-         WHERE r.code = 'student' AND r.is_deleted = FALSE`,
-        [id]
+         WHERE r.code = $2 AND r.is_deleted = FALSE`,
+        [id, roleCode]
       );
     } catch (err) {
       // Log but don't fail registration — role can be assigned manually
-      logger.error({ err, userId: id }, 'Failed to auto-assign student role on registration');
+      logger.error({ err, userId: id, roleCode }, 'Failed to auto-assign role on registration');
     }
 
     // Clean up pending session and OTP keys

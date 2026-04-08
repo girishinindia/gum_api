@@ -144,6 +144,10 @@ When an admin creates a user via `POST /api/v1/users`, they can optionally pass 
 
 If `roleId` is not provided, the user is created without any role. You can assign a role later using the User Role Assignments API.
 
+### Important — automatic defaults:
+
+Admin-created users are always created with `isActive = false`, `isEmailVerified = false`, `isMobileVerified = false`. These fields are **not** accepted in the request body — they are set automatically. Super Admin must activate the user manually via the update endpoint.
+
 ### Where is this code?
 
 - **File:** `src/modules/users/user.service.ts` — `create()` method
@@ -151,22 +155,42 @@ If `roleId` is not provided, the user is created without any role. You can assig
 
 ---
 
-## Default Role on Registration
+## Role on Registration (Student or Instructor)
 
-When a new user registers through the `/auth/register` endpoint, they are **automatically assigned the Student role**. No manual role assignment needed.
+When a new user registers through the `/auth/register` endpoint, they can choose to register as a **Student** or **Instructor**. The role is passed via the optional `roleCode` field. If not provided, it defaults to `student`.
+
+### Request body:
+
+```json
+{
+  "firstName": "Girish",
+  "lastName": "Kumar",
+  "email": "girish@example.com",
+  "mobile": "9876543210",
+  "password": "SecurePass1",
+  "roleCode": "instructor"
+}
+```
+
+### Rules:
+
+- `roleCode` is optional. Allowed values: `student` (default) or `instructor`
+- If `roleCode` is not provided, user is registered as a **Student**
+- Any value other than `student` or `instructor` is rejected with a 400 error
+- Other roles (admin, moderator, etc.) **cannot** be self-registered — they must be created by an Admin/Super Admin via `POST /api/v1/users`
 
 ### Flow:
 
-1. User calls `POST /auth/register/initiate` with their details
+1. User calls `POST /auth/register/initiate` with their details + optional `roleCode`
 2. User verifies OTP via `POST /auth/register/verify-otp`
-3. User account is created in the database
-4. **Student role is automatically assigned** to the new user
+3. User account is created with `isEmailVerified = true`, `isMobileVerified = true`, `isActive = true`
+4. The chosen role (student or instructor) is **automatically assigned**
 5. User receives access token and can start using the app
 
 ### Where is this code?
 
-- **File:** `src/modules/auth/auth.service.ts`
-- **Method:** `registerVerifyOtp()` — after creating the user, it inserts into `user_role_assignments` with the `student` role
+- **DTO:** `src/api/v1/auth/auth.dto.ts` — `registerInitiateDto` includes optional `roleCode` with enum validation
+- **Service:** `src/modules/auth/auth.service.ts` — `registerVerifyOtp()` assigns the role from `pending.roleCode`
 
 ---
 

@@ -31,7 +31,8 @@ export const registerInitiateDto = z.object({
     lastName: z.string().trim().min(1).max(80),
     email: z.string().trim().email(),
     mobile: mobileSchema,
-    password: passwordSchema
+    password: passwordSchema,
+    roleCode: z.enum(['student', 'instructor']).default('student')
   })
 });
 

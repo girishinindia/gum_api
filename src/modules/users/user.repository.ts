@@ -41,9 +41,9 @@ export const userRepository = {
       p_email: input.email ?? null,
       p_mobile: input.mobile ?? null,
       p_country_id: input.countryId ?? null,
-      p_is_active: input.isActive ?? null,
-      p_is_email_verified: input.isEmailVerified ?? null,
-      p_is_mobile_verified: input.isMobileVerified ?? null,
+      p_is_active: false,
+      p_is_email_verified: false,
+      p_is_mobile_verified: false,
       p_created_by: input.createdBy ?? null
     });
     return { id: result.id! };

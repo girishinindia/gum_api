@@ -13,6 +13,7 @@ export type RegisterInitiateInput = {
   email: string;
   mobile: string;
   password: string;
+  roleCode: 'student' | 'instructor';
 };
 
 export type LoginInput = {
@@ -90,6 +91,7 @@ export interface PendingRegisterSession {
   email: string;
   mobile: string;
   password: string;
+  roleCode: 'student' | 'instructor';
 }
 
 export interface PendingForgotPasswordSession {
