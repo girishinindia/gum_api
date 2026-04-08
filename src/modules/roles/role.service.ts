@@ -1,4 +1,5 @@
 import { AppError } from '../../core/errors/app-error';
+import { db } from '../../database/db';
 import { roleRepository } from './role.repository';
 import { RoleRow, RoleResponse, RoleCreateInput, RoleUpdateInput, RoleListQuery } from './role.types';
 
@@ -60,6 +61,19 @@ class RoleService {
   }
 
   async delete(id: number) {
+    // Guard: Super Admin role cannot be deleted
+    const role = await db.queryOne<{ code: string }>(
+      'SELECT code FROM roles WHERE id = $1 AND is_deleted = FALSE',
+      [id]
+    );
+    if (role?.code === 'super_admin') {
+      throw new AppError(
+        'The Super Admin role cannot be deleted',
+        403,
+        'CANNOT_DELETE_SUPER_ADMIN_ROLE'
+      );
+    }
+
     const result = await roleRepository.delete(id);
     return { message: result.message };
   }

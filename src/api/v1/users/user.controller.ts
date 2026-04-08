@@ -60,12 +60,14 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
 
 export const deleteUser = asyncHandler(async (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const data = await userService.delete(id);
+  const currentUserId = req.user!.userId;
+  const data = await userService.delete(id, currentUserId);
   return sendSuccess(res, data, 'User deleted');
 });
 
 export const restoreUser = asyncHandler(async (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const data = await userService.restore(id);
+  const currentUserId = req.user!.userId;
+  const data = await userService.restore(id, currentUserId);
   return sendSuccess(res, data, 'User restored');
 });

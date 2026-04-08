@@ -1,4 +1,5 @@
 import { AppError } from '../../core/errors/app-error';
+import { db } from '../../database/db';
 import { logger } from '../../core/logger/logger';
 import { brevoService } from '../../integrations/email/brevo.service';
 import { accountDeletedTemplate } from '../../integrations/email/templates/account-deleted.template';
@@ -102,9 +103,51 @@ class UserService {
     return this.getById(userId);
   }
 
-  // ─── Delete (soft — admin) ────────────────────────────────
+  // ─── Check if a user has the Super Admin role ─────────────
 
-  async delete(id: number) {
+  private async isSuperAdmin(userId: number): Promise<boolean> {
+    const row = await db.queryOne<{ is_super_admin: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM user_role_assignments ura
+         INNER JOIN roles r ON ura.role_id = r.id
+         WHERE ura.user_id = $1
+           AND r.code = 'super_admin'
+           AND ura.is_deleted = FALSE
+           AND ura.is_active = TRUE
+           AND r.is_deleted = FALSE
+       ) AS is_super_admin`,
+      [userId]
+    );
+    return row?.is_super_admin ?? false;
+  }
+
+  // ─── Delete (soft — Super Admin only) ─────────────────────
+  // Guards:
+  //   1. Super Admin cannot delete themselves
+  //   2. Super Admin cannot delete other Super Admins
+  //   3. Only Super Admin has user.delete permission (enforced via RBAC seed)
+
+  async delete(id: number, currentUserId: number) {
+    // Guard 1: Cannot delete yourself
+    if (id === currentUserId) {
+      throw new AppError(
+        'You cannot delete your own account',
+        403,
+        'CANNOT_DELETE_SELF'
+      );
+    }
+
+    // Guard 2: Cannot delete a Super Admin
+    const targetIsSuperAdmin = await this.isSuperAdmin(id);
+    if (targetIsSuperAdmin) {
+      throw new AppError(
+        'Super Admin accounts cannot be deleted',
+        403,
+        'CANNOT_DELETE_SUPER_ADMIN'
+      );
+    }
+
     // Fetch user before delete for notification
     const user = await userRepository.findById(id);
 
@@ -126,9 +169,9 @@ class UserService {
     return { message: result.message };
   }
 
-  // ─── Restore (admin) ─────────────────────────────────────
+  // ─── Restore (Super Admin only) ───────────────────────────
 
-  async restore(id: number) {
+  async restore(id: number, _currentUserId: number) {
     const result = await userRepository.restore(id);
 
     // Fetch restored user for notification
