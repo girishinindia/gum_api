@@ -38,6 +38,35 @@ const rolePermissionRoutes = Router();
  *     responses:
  *       200:
  *         description: List of user's permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User permissions retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       code: { type: string }
+ *                       name: { type: string }
+ *                       resource: { type: string }
+ *                       action: { type: string }
+ *                       scope: { type: string }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.get('/me', authMiddleware, getMyPermissions);
 
@@ -79,6 +108,72 @@ rolePermissionRoutes.get('/me', authMiddleware, getMyPermissions);
  *     responses:
  *       200:
  *         description: Paginated role-permission list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role permissions retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       roleId: { type: integer }
+ *                       roleCode: { type: string }
+ *                       roleName: { type: string }
+ *                       permissionId: { type: integer }
+ *                       permissionCode: { type: string }
+ *                       permissionName: { type: string }
+ *                       resource: { type: string }
+ *                       action: { type: string }
+ *                       scope: { type: string }
+ *                       createdAt: { type: string, format: date-time }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 50 }
+ *                     totalCount: { type: integer }
+ *                     totalPages: { type: integer }
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.get('/', authMiddleware, authorize('permission.manage'), validate(listRolePermissionsDto), listRolePermissions);
 
@@ -100,6 +195,57 @@ rolePermissionRoutes.get('/', authMiddleware, authorize('permission.manage'), va
  *     responses:
  *       200:
  *         description: User's permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User permissions retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       code: { type: string }
+ *                       name: { type: string }
+ *                       resource: { type: string }
+ *                       action: { type: string }
+ *                       scope: { type: string }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.get('/user/:userId', authMiddleware, authorize('permission.manage'), validate(userIdParamDto), getUserPermissions);
 
@@ -124,9 +270,79 @@ rolePermissionRoutes.get('/user/:userId', authMiddleware, authorize('permission.
  *               permissionId: { type: integer }
  *     responses:
  *       201:
- *         description: Permission assigned
+ *         description: Permission assigned to role
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission assigned successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     roleId: { type: integer }
+ *                     permissionId: { type: integer }
+ *                     createdAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Role or permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role or permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  *       409:
- *         description: Already assigned
+ *         description: Permission already assigned to role
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission already assigned to role" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.post('/assign', authMiddleware, authorize('permission.manage'), validate(assignPermissionDto), assignPermission);
 
@@ -151,7 +367,57 @@ rolePermissionRoutes.post('/assign', authMiddleware, authorize('permission.manag
  *               permissionIds: { type: array, items: { type: integer } }
  *     responses:
  *       200:
- *         description: Permissions assigned
+ *         description: Permissions assigned (with count)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permissions assigned successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     roleId: { type: integer }
+ *                     assignedCount: { type: integer }
+ *                     totalRequested: { type: integer }
+ *                     skippedCount: { type: integer, description: "Already assigned permissions" }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.post('/bulk-assign', authMiddleware, authorize('permission.manage'), validate(bulkAssignPermissionsDto), bulkAssignPermissions);
 
@@ -176,7 +442,66 @@ rolePermissionRoutes.post('/bulk-assign', authMiddleware, authorize('permission.
  *               permissionId: { type: integer }
  *     responses:
  *       200:
- *         description: Permission removed
+ *         description: Permission removed from role
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission removed successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     roleId: { type: integer }
+ *                     permissionId: { type: integer }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Role-permission mapping not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role-permission mapping not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.post('/remove', authMiddleware, authorize('permission.manage'), validate(removePermissionDto), removePermission);
 
@@ -197,6 +522,51 @@ rolePermissionRoutes.post('/remove', authMiddleware, authorize('permission.manag
  *     responses:
  *       200:
  *         description: All permissions removed from role
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "All permissions removed from role" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     roleId: { type: integer }
+ *                     removedCount: { type: integer }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 rolePermissionRoutes.delete('/role/:roleId', authMiddleware, authorize('permission.manage'), validate(bulkRemovePermissionsDto), bulkRemovePermissions);
 
@@ -204,7 +574,7 @@ rolePermissionRoutes.delete('/role/:roleId', authMiddleware, authorize('permissi
 /**
  * @swagger
  * /api/v1/role-permissions/replace:
- *   put:
+ *   patch:
  *     tags: [Role Permissions]
  *     summary: Replace all permissions for role (atomic)
  *     description: Removes all existing permissions and assigns the new set atomically. Empty array clears all permissions.
@@ -222,8 +592,69 @@ rolePermissionRoutes.delete('/role/:roleId', authMiddleware, authorize('permissi
  *               permissionIds: { type: array, items: { type: integer } }
  *     responses:
  *       200:
- *         description: Permissions replaced
+ *         description: Permissions replaced atomically
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permissions replaced successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     roleId: { type: integer }
+ *                     removedCount: { type: integer }
+ *                     addedCount: { type: integer }
+ *                     permissionIds: { type: array, items: { type: integer } }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Role or permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role or permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
-rolePermissionRoutes.put('/replace', authMiddleware, authorize('permission.manage'), validate(replacePermissionsDto), replacePermissions);
+rolePermissionRoutes.patch('/replace', authMiddleware, authorize('permission.manage'), validate(replacePermissionsDto), replacePermissions);
 
 export { rolePermissionRoutes };

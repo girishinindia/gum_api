@@ -60,6 +60,71 @@ const permissionRoutes = Router();
  *     responses:
  *       200:
  *         description: Paginated permission list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permissions retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       moduleId: { type: integer }
+ *                       name: { type: string }
+ *                       code: { type: string }
+ *                       resource: { type: string }
+ *                       action: { type: string }
+ *                       scope: { type: string }
+ *                       description: { type: string, nullable: true }
+ *                       createdAt: { type: string, format: date-time }
+ *                       updatedAt: { type: string, format: date-time }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer }
+ *                     totalPages: { type: integer }
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 permissionRoutes.get('/', authMiddleware, authorize('permission.manage'), validate(listPermissionsDto), listPermissions);
 /**
@@ -78,8 +143,59 @@ permissionRoutes.get('/', authMiddleware, authorize('permission.manage'), valida
  *     responses:
  *       200:
  *         description: Permission found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     moduleId: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     resource: { type: string }
+ *                     action: { type: string }
+ *                     scope: { type: string }
+ *                     description: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       404:
  *         description: Permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 permissionRoutes.get('/:id', authMiddleware, authorize('permission.manage'), validate(permissionIdParamDto), getPermissionById);
 /**
@@ -108,15 +224,80 @@ permissionRoutes.get('/:id', authMiddleware, authorize('permission.manage'), val
  *               description: { type: string }
  *     responses:
  *       201:
- *         description: Permission created
+ *         description: Permission created (auto-assigned to SA and Admin via trigger)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     moduleId: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     resource: { type: string }
+ *                     action: { type: string }
+ *                     scope: { type: string }
+ *                     description: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       409:
  *         description: Permission code already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission code already exists" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: 'null' }
  */
 permissionRoutes.post('/', authMiddleware, authorize('permission.manage'), validate(createPermissionDto), createPermission);
 /**
  * @swagger
  * /api/v1/permissions/{id}:
- *   put:
+ *   patch:
  *     tags: [Permissions]
  *     summary: Update permission
  *     security:
@@ -143,10 +324,75 @@ permissionRoutes.post('/', authMiddleware, authorize('permission.manage'), valid
  *     responses:
  *       200:
  *         description: Permission updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     moduleId: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     resource: { type: string }
+ *                     action: { type: string }
+ *                     scope: { type: string }
+ *                     description: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       404:
  *         description: Permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
-permissionRoutes.put('/:id', authMiddleware, authorize('permission.manage'), validate(updatePermissionDto), updatePermission);
+permissionRoutes.patch('/:id', authMiddleware, authorize('permission.manage'), validate(updatePermissionDto), updatePermission);
 /**
  * @swagger
  * /api/v1/permissions/{id}:
@@ -163,6 +409,57 @@ permissionRoutes.put('/:id', authMiddleware, authorize('permission.manage'), val
  *     responses:
  *       200:
  *         description: Permission soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     moduleId: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     resource: { type: string }
+ *                     action: { type: string }
+ *                     scope: { type: string }
+ *                     deletedAt: { type: string, format: date-time, nullable: true }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 permissionRoutes.delete('/:id', authMiddleware, authorize('permission.manage'), validate(permissionIdParamDto), deletePermission);
 /**
@@ -181,6 +478,59 @@ permissionRoutes.delete('/:id', authMiddleware, authorize('permission.manage'), 
  *     responses:
  *       200:
  *         description: Permission restored
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Permission restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     moduleId: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     resource: { type: string }
+ *                     action: { type: string }
+ *                     scope: { type: string }
+ *                     description: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (permission.manage required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Permission not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Permission not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 permissionRoutes.patch('/:id/restore', authMiddleware, authorize('permission.manage'), validate(permissionIdParamDto), restorePermission);
 

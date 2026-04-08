@@ -65,6 +65,73 @@ const userRoleAssignmentRoutes = Router();
  *     responses:
  *       200:
  *         description: Paginated assignment list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignments retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       userId: { type: integer }
+ *                       roleId: { type: integer }
+ *                       roleCode: { type: string }
+ *                       roleName: { type: string }
+ *                       contextType: { type: string, nullable: true }
+ *                       contextId: { type: integer, nullable: true }
+ *                       isActive: { type: boolean }
+ *                       expiresAt: { type: string, format: date-time, nullable: true }
+ *                       reason: { type: string, nullable: true }
+ *                       createdAt: { type: string, format: date-time }
+ *                       updatedAt: { type: string, format: date-time }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer }
+ *                     totalPages: { type: integer }
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (role.assign required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.get('/', authMiddleware, authorize('role.assign'), validate(listAssignmentsDto), listAssignments);
 
@@ -85,8 +152,61 @@ userRoleAssignmentRoutes.get('/', authMiddleware, authorize('role.assign'), vali
  *     responses:
  *       200:
  *         description: Assignment found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignment retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     roleId: { type: integer }
+ *                     roleCode: { type: string }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     isActive: { type: boolean }
+ *                     expiresAt: { type: string, format: date-time, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (role.assign required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       404:
  *         description: Assignment not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Assignment not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.get('/:id', authMiddleware, authorize('role.assign'), validate(assignmentIdParamDto), getAssignment);
 
@@ -97,7 +217,7 @@ userRoleAssignmentRoutes.get('/:id', authMiddleware, authorize('role.assign'), v
  *   post:
  *     tags: [User Role Assignments]
  *     summary: Create assignment
- *     description: Assigns a role to a user with optional context (course, batch, etc.) and expiration. RBAC guards prevent Admin from assigning SA/admin/student/instructor roles.
+ *     description: Assigns a role to a user with optional context (course, batch, etc.) and expiration. RBAC guards prevent Admin from assigning SA/admin/student/instructor roles. Only SA can assign student or instructor roles.
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -117,10 +237,74 @@ userRoleAssignmentRoutes.get('/:id', authMiddleware, authorize('role.assign'), v
  *     responses:
  *       201:
  *         description: Assignment created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignment created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     roleId: { type: integer }
+ *                     roleCode: { type: string }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     isActive: { type: boolean }
+ *                     expiresAt: { type: string, format: date-time, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
  *       403:
- *         description: RBAC guard blocked
+ *         description: Forbidden - one of RBAC guard errors
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string }
+ *                 code: { type: string, enum: ["ADMIN_CANNOT_ASSIGN_ADMIN", "CANNOT_ASSIGN_PROTECTED_ROLE", "FORBIDDEN"], example: "ADMIN_CANNOT_ASSIGN_ADMIN" }
+ *                 details: { type: 'null' }
  *       409:
- *         description: Duplicate assignment
+ *         description: Duplicate assignment (user already has this role in same context)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User already has this role assignment" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.post('/', authMiddleware, authorize('role.assign'), validate(createAssignmentDto), createAssignment);
 
@@ -128,9 +312,10 @@ userRoleAssignmentRoutes.post('/', authMiddleware, authorize('role.assign'), val
 /**
  * @swagger
  * /api/v1/user-role-assignments/{id}:
- *   put:
+ *   patch:
  *     tags: [User Role Assignments]
  *     summary: Update assignment
+ *     description: Updates expiration, reason, or active status. RBAC guards prevent unauthorized role changes.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -151,10 +336,76 @@ userRoleAssignmentRoutes.post('/', authMiddleware, authorize('role.assign'), val
  *     responses:
  *       200:
  *         description: Assignment updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignment updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     roleId: { type: integer }
+ *                     roleCode: { type: string }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     isActive: { type: boolean }
+ *                     expiresAt: { type: string, format: date-time, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     updatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
  *       403:
- *         description: RBAC guard blocked
+ *         description: Forbidden (RBAC guard blocked - protected role)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Assignment not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Assignment not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
-userRoleAssignmentRoutes.put('/:id', authMiddleware, authorize('role.assign'), validate(updateAssignmentDto), updateAssignment);
+userRoleAssignmentRoutes.patch('/:id', authMiddleware, authorize('role.assign'), validate(updateAssignmentDto), updateAssignment);
 
 // ─── Delete assignment (soft) ──────────────────────────────
 /**
@@ -173,8 +424,53 @@ userRoleAssignmentRoutes.put('/:id', authMiddleware, authorize('role.assign'), v
  *     responses:
  *       200:
  *         description: Assignment soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignment deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     roleId: { type: integer }
+ *                     deletedAt: { type: string, format: date-time, nullable: true }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
  *       403:
- *         description: RBAC guard blocked
+ *         description: Forbidden (RBAC guard blocked - protected role)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Assignment not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Assignment not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.delete('/:id', authMiddleware, authorize('role.assign'), validate(assignmentIdParamDto), deleteAssignment);
 
@@ -195,6 +491,61 @@ userRoleAssignmentRoutes.delete('/:id', authMiddleware, authorize('role.assign')
  *     responses:
  *       200:
  *         description: Assignment restored
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User role assignment restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     roleId: { type: integer }
+ *                     roleCode: { type: string }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     isActive: { type: boolean }
+ *                     expiresAt: { type: string, format: date-time, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (role.assign required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Assignment not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Assignment not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.patch('/:id/restore', authMiddleware, authorize('role.assign'), validate(assignmentIdParamDto), restoreAssignment);
 

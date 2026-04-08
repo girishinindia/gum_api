@@ -37,8 +37,36 @@ const userRoutes = Router();
  *     responses:
  *       200:
  *         description: Current user profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Profile retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     email: { type: string }
+ *                     mobile: { type: string }
+ *                     isActive: { type: boolean }
+ *                     isEmailVerified: { type: boolean }
+ *                     isMobileVerified: { type: boolean }
+ *                     country: { type: object }
  *       401:
  *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  */
 userRoutes.get('/me', authMiddleware, getMe);
 /**
@@ -62,8 +90,47 @@ userRoutes.get('/me', authMiddleware, getMe);
  *     responses:
  *       200:
  *         description: Profile updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Profile updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     email: { type: string }
+ *                     mobile: { type: string }
+ *                     isActive: { type: boolean }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
  *       401:
  *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  */
 userRoutes.patch('/me', authMiddleware, validate(updateMeDto), updateMe);
 
@@ -119,8 +186,70 @@ userRoutes.patch('/me', authMiddleware, validate(updateMeDto), updateMe);
  *     responses:
  *       200:
  *         description: Paginated user list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Users retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       firstName: { type: string }
+ *                       lastName: { type: string }
+ *                       email: { type: string }
+ *                       mobile: { type: string }
+ *                       isActive: { type: boolean }
+ *                       isEmailVerified: { type: boolean }
+ *                       isMobileVerified: { type: boolean }
+ *                       country: { type: object }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer, example: 100 }
+ *                     totalPages: { type: integer, example: 5 }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  *       403:
- *         description: Insufficient permissions
+ *         description: Insufficient permissions (requires user.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  */
 userRoutes.get('/', authMiddleware, authorize('user.read'), validate(listUsersDto), listUsers);
 /**
@@ -140,8 +269,58 @@ userRoutes.get('/', authMiddleware, authorize('user.read'), validate(listUsersDt
  *     responses:
  *       200:
  *         description: User found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     email: { type: string }
+ *                     mobile: { type: string }
+ *                     isActive: { type: boolean }
+ *                     isEmailVerified: { type: boolean }
+ *                     isMobileVerified: { type: boolean }
+ *                     country: { type: object }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires user.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 userRoutes.get('/:id', authMiddleware, authorize('user.read'), validate(userIdParamDto), getUserById);
 /**
@@ -174,16 +353,86 @@ userRoutes.get('/:id', authMiddleware, authorize('user.read'), validate(userIdPa
  *     responses:
  *       201:
  *         description: User created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     email: { type: string }
+ *                     mobile: { type: string }
+ *                     isActive: { type: boolean }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  *       403:
- *         description: RBAC guard blocked role assignment
+ *         description: RBAC guard blocked role assignment or insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string }
+ *                 code: { type: string, enum: ["FORBIDDEN", "ADMIN_CANNOT_ASSIGN_ADMIN", "CANNOT_ASSIGN_PROTECTED_ROLE"] }
+ *                 details: { type: "null" }
+ *       404:
+ *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "ROLE_NOT_FOUND" }
+ *                 details: { type: "null" }
  *       409:
  *         description: Email or mobile already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Email or mobile already exists" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: "null" }
  */
 userRoutes.post('/', authMiddleware, authorize('user.create'), validate(createUserDto), createUser);
 /**
  * @swagger
  * /api/v1/users/{id}:
- *   put:
+ *   patch:
  *     tags: [Users]
  *     summary: Update user (admin)
  *     description: Updates user details. Requires user.update permission.
@@ -213,10 +462,71 @@ userRoutes.post('/', authMiddleware, authorize('user.create'), validate(createUs
  *     responses:
  *       200:
  *         description: User updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     email: { type: string }
+ *                     mobile: { type: string }
+ *                     isActive: { type: boolean }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires user.update)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
-userRoutes.put('/:id', authMiddleware, authorize('user.update'), validate(updateUserDto), updateUser);
+userRoutes.patch('/:id', authMiddleware, authorize('user.update'), validate(updateUserDto), updateUser);
 /**
  * @swagger
  * /api/v1/users/{id}:
@@ -234,10 +544,53 @@ userRoutes.put('/:id', authMiddleware, authorize('user.update'), validate(update
  *     responses:
  *       200:
  *         description: User soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     isDeleted: { type: boolean, example: true }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  *       403:
- *         description: Cannot delete self or Super Admin
+ *         description: Cannot delete self or Super Admin, or insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string }
+ *                 code: { type: string, enum: ["FORBIDDEN", "CANNOT_DELETE_SELF", "CANNOT_DELETE_SUPER_ADMIN"] }
+ *                 details: { type: "null" }
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 userRoutes.delete('/:id', authMiddleware, authorize('user.delete'), validate(userIdParamDto), deleteUser);
 /**
@@ -257,8 +610,53 @@ userRoutes.delete('/:id', authMiddleware, authorize('user.delete'), validate(use
  *     responses:
  *       200:
  *         description: User restored
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "User restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     firstName: { type: string }
+ *                     lastName: { type: string }
+ *                     isDeleted: { type: boolean, example: false }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires user.restore, Super Admin only)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: User not found or not deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "User not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 userRoutes.patch('/:id/restore', authMiddleware, authorize('user.restore'), validate(userIdParamDto), restoreUser);
 

@@ -29,11 +29,51 @@ const uploadRoutes = Router();
  *                 description: Image file (JPEG, PNG, WebP, etc.)
  *     responses:
  *       200:
- *         description: Image uploaded, CDN URL returned
+ *         description: Image uploaded successfully to CDN
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Image uploaded successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     url: { type: string, example: "https://cdn.bunny.net/images/abc123.jpg" }
+ *                     fileName: { type: string, example: "profile_pic.jpg" }
+ *                     fileSize: { type: integer, example: 102400 }
+ *                     mimeType: { type: string, example: "image/jpeg" }
  *       400:
- *         description: Invalid file type or size exceeded
+ *         description: Invalid file type or file size exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Invalid file type or size exceeded" }
+ *                 code: { type: string, example: "INVALID_FILE" }
  *       401:
  *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Not authenticated" }
+ *                 code: { type: string, example: "NOT_AUTHENTICATED" }
+ *       500:
+ *         description: Upload to CDN failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Upload failed" }
+ *                 code: { type: string, example: "UPLOAD_FAILED" }
  */
 uploadRoutes.post('/image', authMiddleware, imageUploadMiddleware.single('file'), uploadImage);
 /**
@@ -59,11 +99,51 @@ uploadRoutes.post('/image', authMiddleware, imageUploadMiddleware.single('file')
  *                 description: Document file (PDF, DOCX, etc.)
  *     responses:
  *       200:
- *         description: Document uploaded, CDN URL returned
+ *         description: Document uploaded successfully to CDN
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Document uploaded successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     url: { type: string, example: "https://cdn.bunny.net/documents/xyz789.pdf" }
+ *                     fileName: { type: string, example: "assignment.pdf" }
+ *                     fileSize: { type: integer, example: 512000 }
+ *                     mimeType: { type: string, example: "application/pdf" }
  *       400:
- *         description: Invalid file type or size exceeded
+ *         description: Invalid file type or file size exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Invalid file type or size exceeded" }
+ *                 code: { type: string, example: "INVALID_FILE" }
  *       401:
  *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Not authenticated" }
+ *                 code: { type: string, example: "NOT_AUTHENTICATED" }
+ *       500:
+ *         description: Upload to CDN failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Upload failed" }
+ *                 code: { type: string, example: "UPLOAD_FAILED" }
  */
 uploadRoutes.post('/document', authMiddleware, documentUploadMiddleware.single('file'), uploadDocument);
 

@@ -49,6 +49,74 @@ const roleChangeLogRoutes = Router();
  *     responses:
  *       200:
  *         description: Paginated log entries
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Audit logs retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       userId: { type: integer }
+ *                       action: { type: string }
+ *                       roleId: { type: integer }
+ *                       roleName: { type: string }
+ *                       contextType: { type: string, nullable: true }
+ *                       contextId: { type: integer, nullable: true }
+ *                       oldValues: { type: object, nullable: true }
+ *                       newValues: { type: object, nullable: true }
+ *                       reason: { type: string, nullable: true }
+ *                       changedBy: { type: integer }
+ *                       ipAddress: { type: string, nullable: true }
+ *                       createdAt: { type: string, format: date-time }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer }
+ *                     totalPages: { type: integer }
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (admin_log.read required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 roleChangeLogRoutes.get('/', authMiddleware, authorize('admin_log.read'), validate(listLogsDto), listLogs);
 
@@ -69,8 +137,62 @@ roleChangeLogRoutes.get('/', authMiddleware, authorize('admin_log.read'), valida
  *     responses:
  *       200:
  *         description: Log entry found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Audit log retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     action: { type: string }
+ *                     roleId: { type: integer }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     oldValues: { type: object, nullable: true }
+ *                     newValues: { type: object, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     changedBy: { type: integer }
+ *                     ipAddress: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (admin_log.read required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       404:
  *         description: Log entry not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Log entry not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 roleChangeLogRoutes.get('/:id', authMiddleware, authorize('admin_log.read'), validate(logIdParamDto), getLog);
 
@@ -104,6 +226,65 @@ roleChangeLogRoutes.get('/:id', authMiddleware, authorize('admin_log.read'), val
  *     responses:
  *       201:
  *         description: Log entry created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Audit log created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     userId: { type: integer }
+ *                     action: { type: string }
+ *                     roleId: { type: integer }
+ *                     roleName: { type: string }
+ *                     contextType: { type: string, nullable: true }
+ *                     contextId: { type: integer, nullable: true }
+ *                     oldValues: { type: object, nullable: true }
+ *                     newValues: { type: object, nullable: true }
+ *                     reason: { type: string, nullable: true }
+ *                     changedBy: { type: integer }
+ *                     ipAddress: { type: string, nullable: true }
+ *                     createdAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (admin_log.create required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 roleChangeLogRoutes.post('/', authMiddleware, authorize('admin_log.create'), validate(createLogDto), createLog);
 

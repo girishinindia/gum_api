@@ -35,6 +35,41 @@ const menuItemRoutes = Router();
  *     responses:
  *       200:
  *         description: User's accessible menu items
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu items retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       code: { type: string }
+ *                       route: { type: string }
+ *                       icon: { type: string, nullable: true }
+ *                       description: { type: string, nullable: true }
+ *                       parentMenuItemId: { type: integer, nullable: true }
+ *                       permissionId: { type: integer, nullable: true }
+ *                       displayOrder: { type: integer }
+ *                       isVisible: { type: boolean }
+ *                       isActive: { type: boolean }
+ *                       children: { type: array }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.get('/me', authMiddleware, getMyMenu);
 
@@ -76,7 +111,75 @@ menuItemRoutes.get('/me', authMiddleware, getMyMenu);
  *         schema: { type: integer, default: 50, maximum: 200 }
  *     responses:
  *       200:
- *         description: Menu item list
+ *         description: Paginated menu item list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu items retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       code: { type: string }
+ *                       route: { type: string }
+ *                       icon: { type: string, nullable: true }
+ *                       description: { type: string, nullable: true }
+ *                       parentMenuItemId: { type: integer, nullable: true }
+ *                       permissionId: { type: integer, nullable: true }
+ *                       displayOrder: { type: integer }
+ *                       isVisible: { type: boolean }
+ *                       isActive: { type: boolean }
+ *                       createdAt: { type: string, format: date-time }
+ *                       updatedAt: { type: string, format: date-time }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 50 }
+ *                     totalCount: { type: integer }
+ *                     totalPages: { type: integer }
+ *       400:
+ *         description: Invalid query parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.read required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.get('/', authMiddleware, authorize('menu.read'), validate(listMenuItemsDto), listMenuItems);
 
@@ -97,8 +200,62 @@ menuItemRoutes.get('/', authMiddleware, authorize('menu.read'), validate(listMen
  *     responses:
  *       200:
  *         description: Menu item found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu item retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     route: { type: string }
+ *                     icon: { type: string, nullable: true }
+ *                     description: { type: string, nullable: true }
+ *                     parentMenuItemId: { type: integer, nullable: true }
+ *                     permissionId: { type: integer, nullable: true }
+ *                     displayOrder: { type: integer }
+ *                     isVisible: { type: boolean }
+ *                     isActive: { type: boolean }
+ *                     createdAt: { type: string, format: date-time }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.read required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
  *       404:
  *         description: Menu item not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Menu item not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.get('/:id', authMiddleware, authorize('menu.read'), validate(menuItemIdParamDto), getMenuItem);
 
@@ -133,6 +290,75 @@ menuItemRoutes.get('/:id', authMiddleware, authorize('menu.read'), validate(menu
  *     responses:
  *       201:
  *         description: Menu item created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu item created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     route: { type: string }
+ *                     icon: { type: string, nullable: true }
+ *                     description: { type: string, nullable: true }
+ *                     parentMenuItemId: { type: integer, nullable: true }
+ *                     permissionId: { type: integer, nullable: true }
+ *                     displayOrder: { type: integer }
+ *                     isVisible: { type: boolean }
+ *                     isActive: { type: boolean }
+ *                     createdAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.create required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       409:
+ *         description: Menu item code already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Menu item code already exists" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.post('/', authMiddleware, authorize('menu.create'), validate(createMenuItemDto), createMenuItem);
 
@@ -140,9 +366,10 @@ menuItemRoutes.post('/', authMiddleware, authorize('menu.create'), validate(crea
 /**
  * @swagger
  * /api/v1/menu-items/{id}:
- *   put:
+ *   patch:
  *     tags: [Menu Items]
  *     summary: Update menu item
+ *     description: Updates a menu item. Requires menu.update permission.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -170,8 +397,77 @@ menuItemRoutes.post('/', authMiddleware, authorize('menu.create'), validate(crea
  *     responses:
  *       200:
  *         description: Menu item updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu item updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     route: { type: string }
+ *                     icon: { type: string, nullable: true }
+ *                     description: { type: string, nullable: true }
+ *                     parentMenuItemId: { type: integer, nullable: true }
+ *                     permissionId: { type: integer, nullable: true }
+ *                     displayOrder: { type: integer }
+ *                     isVisible: { type: boolean }
+ *                     isActive: { type: boolean }
+ *                     updatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid request body
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.update required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Menu item not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Menu item not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
-menuItemRoutes.put('/:id', authMiddleware, authorize('menu.update'), validate(updateMenuItemDto), updateMenuItem);
+menuItemRoutes.patch('/:id', authMiddleware, authorize('menu.update'), validate(updateMenuItemDto), updateMenuItem);
 
 // ─── Admin: Delete menu item (cascades children) ──────────
 /**
@@ -191,6 +487,53 @@ menuItemRoutes.put('/:id', authMiddleware, authorize('menu.update'), validate(up
  *     responses:
  *       200:
  *         description: Menu item and children soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu item deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     deletedAt: { type: string, format: date-time, nullable: true }
+ *                     deletedChildrenCount: { type: integer, description: "Number of child items cascaded" }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.delete required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Menu item not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Menu item not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.delete('/:id', authMiddleware, authorize('menu.delete'), validate(menuItemIdParamDto), deleteMenuItem);
 
@@ -218,7 +561,63 @@ menuItemRoutes.delete('/:id', authMiddleware, authorize('menu.delete'), validate
  *               restoreChildren: { type: boolean, default: false }
  *     responses:
  *       200:
- *         description: Menu item restored
+ *         description: Menu item restored (with optional child restoration)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Menu item restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     route: { type: string }
+ *                     icon: { type: string, nullable: true }
+ *                     description: { type: string, nullable: true }
+ *                     parentMenuItemId: { type: integer, nullable: true }
+ *                     permissionId: { type: integer, nullable: true }
+ *                     displayOrder: { type: integer }
+ *                     isVisible: { type: boolean }
+ *                     isActive: { type: boolean }
+ *                     restoredChildrenCount: { type: integer }
+ *                     updatedAt: { type: string, format: date-time }
+ *       401:
+ *         description: Unauthorized (missing or invalid token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Unauthorized" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: 'null' }
+ *       403:
+ *         description: Forbidden (menu.restore required)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Forbidden" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: 'null' }
+ *       404:
+ *         description: Menu item not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Menu item not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: 'null' }
  */
 menuItemRoutes.patch('/:id/restore', authMiddleware, authorize('menu.restore'), validate(restoreMenuItemDto), restoreMenuItem);
 

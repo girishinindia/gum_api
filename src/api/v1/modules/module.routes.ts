@@ -51,6 +51,67 @@ const moduleRoutes = Router();
  *     responses:
  *       200:
  *         description: Paginated module list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Modules retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       code: { type: string }
+ *                       description: { type: string }
+ *                       isActive: { type: boolean }
+ *                       displayOrder: { type: integer }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer, example: 100 }
+ *                     totalPages: { type: integer, example: 5 }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  */
 moduleRoutes.get('/', authMiddleware, authorize('module.read'), validate(listModulesDto), listModules);
 /**
@@ -59,6 +120,7 @@ moduleRoutes.get('/', authMiddleware, authorize('module.read'), validate(listMod
  *   get:
  *     tags: [Modules]
  *     summary: Get module by ID
+ *     description: Returns a single module. Requires module.read permission.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -69,8 +131,55 @@ moduleRoutes.get('/', authMiddleware, authorize('module.read'), validate(listMod
  *     responses:
  *       200:
  *         description: Module found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Module retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *                     isActive: { type: boolean }
+ *                     displayOrder: { type: integer }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Module not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Module not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 moduleRoutes.get('/:id', authMiddleware, authorize('module.read'), validate(moduleIdParamDto), getModuleById);
 /**
@@ -99,16 +208,77 @@ moduleRoutes.get('/:id', authMiddleware, authorize('module.read'), validate(modu
  *     responses:
  *       201:
  *         description: Module created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Module created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *                     isActive: { type: boolean }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.create)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       409:
  *         description: Module code already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Module code already exists" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: "null" }
  */
 moduleRoutes.post('/', authMiddleware, authorize('module.create'), validate(createModuleDto), createModule);
 /**
  * @swagger
  * /api/v1/modules/{id}:
- *   put:
+ *   patch:
  *     tags: [Modules]
  *     summary: Update module
+ *     description: Updates module details. Requires module.update permission.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -132,10 +302,69 @@ moduleRoutes.post('/', authMiddleware, authorize('module.create'), validate(crea
  *     responses:
  *       200:
  *         description: Module updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Module updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.update)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Module not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Module not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
-moduleRoutes.put('/:id', authMiddleware, authorize('module.update'), validate(updateModuleDto), updateModule);
+moduleRoutes.patch('/:id', authMiddleware, authorize('module.update'), validate(updateModuleDto), updateModule);
 /**
  * @swagger
  * /api/v1/modules/{id}:
@@ -153,8 +382,53 @@ moduleRoutes.put('/:id', authMiddleware, authorize('module.update'), validate(up
  *     responses:
  *       200:
  *         description: Module soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Module deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     isDeleted: { type: boolean, example: true }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.delete, Super Admin only)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Module not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Module not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 moduleRoutes.delete('/:id', authMiddleware, authorize('module.delete'), validate(moduleIdParamDto), deleteModule);
 /**
@@ -174,8 +448,53 @@ moduleRoutes.delete('/:id', authMiddleware, authorize('module.delete'), validate
  *     responses:
  *       200:
  *         description: Module restored
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Module restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     isDeleted: { type: boolean, example: false }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires module.restore, Super Admin only)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Module not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Module not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 moduleRoutes.patch('/:id/restore', authMiddleware, authorize('module.restore'), validate(moduleIdParamDto), restoreModule);
 

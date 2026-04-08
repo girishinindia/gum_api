@@ -61,8 +61,68 @@ const roleRoutes = Router();
  *     responses:
  *       200:
  *         description: Paginated role list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Roles retrieved successfully" }
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: integer }
+ *                       name: { type: string }
+ *                       code: { type: string }
+ *                       description: { type: string }
+ *                       level: { type: integer }
+ *                       isActive: { type: boolean }
+ *                       isSystem: { type: boolean }
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page: { type: integer, example: 1 }
+ *                     limit: { type: integer, example: 20 }
+ *                     totalCount: { type: integer, example: 100 }
+ *                     totalPages: { type: integer, example: 5 }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  *       403:
- *         description: Insufficient permissions
+ *         description: Insufficient permissions (requires role.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  */
 roleRoutes.get('/', authMiddleware, authorize('role.read'), validate(listRolesDto), listRoles);
 /**
@@ -71,6 +131,7 @@ roleRoutes.get('/', authMiddleware, authorize('role.read'), validate(listRolesDt
  *   get:
  *     tags: [Roles]
  *     summary: Get role by ID
+ *     description: Returns a single role. Requires role.read permission.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -81,8 +142,56 @@ roleRoutes.get('/', authMiddleware, authorize('role.read'), validate(listRolesDt
  *     responses:
  *       200:
  *         description: Role found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role retrieved successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *                     level: { type: integer }
+ *                     isActive: { type: boolean }
+ *                     isSystem: { type: boolean }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires role.read)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 roleRoutes.get('/:id', authMiddleware, authorize('role.read'), validate(roleIdParamDto), getRoleById);
 /**
@@ -114,16 +223,78 @@ roleRoutes.get('/:id', authMiddleware, authorize('role.read'), validate(roleIdPa
  *     responses:
  *       201:
  *         description: Role created
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role created successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *                     level: { type: integer }
+ *                     isActive: { type: boolean }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires role.create)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       409:
  *         description: Role code already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role code already exists" }
+ *                 code: { type: string, example: "CONFLICT" }
+ *                 details: { type: "null" }
  */
 roleRoutes.post('/', authMiddleware, authorize('role.create'), validate(createRoleDto), createRole);
 /**
  * @swagger
  * /api/v1/roles/{id}:
- *   put:
+ *   patch:
  *     tags: [Roles]
  *     summary: Update role
+ *     description: Updates role details. Requires role.update permission.
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -149,10 +320,70 @@ roleRoutes.post('/', authMiddleware, authorize('role.create'), validate(createRo
  *     responses:
  *       200:
  *         description: Role updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role updated successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     description: { type: string }
+ *                     level: { type: integer }
+ *       400:
+ *         description: Validation failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Validation failed" }
+ *                 errors:
+ *                   type: object
+ *                   properties:
+ *                     fieldErrors: { type: object }
+ *                     formErrors: { type: array, items: { type: string } }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires role.update)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
-roleRoutes.put('/:id', authMiddleware, authorize('role.update'), validate(updateRoleDto), updateRole);
+roleRoutes.patch('/:id', authMiddleware, authorize('role.update'), validate(updateRoleDto), updateRole);
 /**
  * @swagger
  * /api/v1/roles/{id}:
@@ -170,8 +401,53 @@ roleRoutes.put('/:id', authMiddleware, authorize('role.update'), validate(update
  *     responses:
  *       200:
  *         description: Role soft-deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role deleted successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     isDeleted: { type: boolean, example: true }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
  *       403:
- *         description: Cannot delete Super Admin role
+ *         description: Cannot delete Super Admin role or insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string }
+ *                 code: { type: string, enum: ["FORBIDDEN", "CANNOT_DELETE_SUPER_ADMIN_ROLE"] }
+ *                 details: { type: "null" }
+ *       404:
+ *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 roleRoutes.delete('/:id', authMiddleware, authorize('role.delete'), validate(roleIdParamDto), deleteRole);
 /**
@@ -198,8 +474,53 @@ roleRoutes.delete('/:id', authMiddleware, authorize('role.delete'), validate(rol
  *     responses:
  *       200:
  *         description: Role restored
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Role restored successfully" }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id: { type: integer }
+ *                     name: { type: string }
+ *                     code: { type: string }
+ *                     isDeleted: { type: boolean, example: false }
+ *       401:
+ *         description: Not authenticated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Authentication required" }
+ *                 code: { type: string, example: "UNAUTHORIZED" }
+ *                 details: { type: "null" }
+ *       403:
+ *         description: Insufficient permissions (requires role.restore, Super Admin only)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Insufficient permissions" }
+ *                 code: { type: string, example: "FORBIDDEN" }
+ *                 details: { type: "null" }
  *       404:
  *         description: Role not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: false }
+ *                 message: { type: string, example: "Role not found" }
+ *                 code: { type: string, example: "NOT_FOUND" }
+ *                 details: { type: "null" }
  */
 roleRoutes.patch('/:id/restore', authMiddleware, authorize('role.restore'), validate(restoreRoleDto), restoreRole);
 
