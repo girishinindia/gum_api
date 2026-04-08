@@ -11,25 +11,34 @@ import { logger } from '../core/logger/logger';
 // as a safety net so DNS always prefers IPv4 addresses.
 dns.setDefaultResultOrder('ipv4first');
 
-// ─── Pool Configuration ──────────────────────────────────────
-// DATABASE_URL should point to Supabase Session pooler for IPv4:
-//   postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
-// NOT the direct connection (db.PROJECT_REF.supabase.co) which is IPv6-only.
+// ─── Parse DATABASE_URL into individual components ──────────
+// WHY: The `pg` library's internal connection-string parser reads
+// ?sslmode=require and sets ssl: true (strict cert validation).
+// This OVERRIDES our ssl: { rejectUnauthorized: false } config,
+// causing SELF_SIGNED_CERT_IN_CHAIN with Supabase's pooler certs.
 //
-// SSL Note: We strip ?sslmode=require from the connection string and handle
-// SSL via the pool config's `ssl` option instead. When sslmode is in the URL,
-// the `pg` library uses Node.js default cert validation which rejects Supabase's
-// certificate chain (SELF_SIGNED_CERT_IN_CHAIN). By using ssl: { rejectUnauthorized: false }
-// directly, we accept Supabase's self-signed pooler certificates.
+// FIX: We parse the URL ourselves and pass host/port/user/password/database
+// as individual properties. This gives us FULL control over SSL
+// with zero interference from connection-string parsing.
+//
+// DATABASE_URL format:
+//   postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
 
-const connectionString = env.DATABASE_URL.replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
+const dbUrl = new URL(env.DATABASE_URL);
 
 const poolConfig: PoolConfig = {
-  connectionString,
-  max: 20, // max connections in pool
-  idleTimeoutMillis: 30_000, // close idle connections after 30s
-  connectionTimeoutMillis: 5_000, // fail if can't connect in 5s
-  allowExitOnIdle: true, // let Node exit if pool is idle
+  host: dbUrl.hostname,                           // aws-0-ap-south-1.pooler.supabase.com
+  port: parseInt(dbUrl.port || '5432', 10),       // 5432 (Session mode)
+  user: decodeURIComponent(dbUrl.username),        // postgres.ixygmsqbpyyvjhxphpso
+  password: decodeURIComponent(dbUrl.password),    // database password
+  database: dbUrl.pathname.slice(1) || 'postgres', // postgres (strip leading /)
+  max: 20,                                         // max connections in pool
+  idleTimeoutMillis: 30_000,                       // close idle connections after 30s
+  connectionTimeoutMillis: 5_000,                  // fail if can't connect in 5s
+  allowExitOnIdle: true,                           // let Node exit if pool is idle
+  // SSL: Accept Supabase's self-signed pooler certificates.
+  // rejectUnauthorized: false skips cert chain validation.
+  // This is safe because we're connecting to a known Supabase endpoint.
   ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 };
 
