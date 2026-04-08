@@ -29,10 +29,10 @@ interface RecaptchaAssessmentResponse {
 
 export class RecaptchaService {
   /**
-   * Auto-toggle: skip reCAPTCHA in development/test, enforce in production.
+   * Skip reCAPTCHA when RECAPTCHA_ENABLED=false OR in non-production environments.
    */
   private get shouldSkip(): boolean {
-    return env.NODE_ENV !== 'production';
+    return !env.RECAPTCHA_ENABLED || env.NODE_ENV !== 'production';
   }
 
   /**

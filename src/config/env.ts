@@ -58,11 +58,12 @@ const schema = z.object({
   RAZORPAY_KEY_SECRET: z.string().min(1),
   RAZORPAY_CURRENCY: z.string().default('INR'),
 
-  RECAPTCHA_SITE_KEY: z.string().min(1),
-  RECAPTCHA_SECRET_KEY: z.string().min(1),
-  RECAPTCHA_API_KEY: z.string().min(1),
-  RECAPTCHA_PROJECT_ID: z.string().min(1),
-  RECAPTCHA_MIN_SCORE: z.coerce.number().min(0).max(1),
+  RECAPTCHA_ENABLED: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  RECAPTCHA_SITE_KEY: z.string().default(''),
+  RECAPTCHA_SECRET_KEY: z.string().default(''),
+  RECAPTCHA_API_KEY: z.string().default(''),
+  RECAPTCHA_PROJECT_ID: z.string().default(''),
+  RECAPTCHA_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive(),
   RATE_LIMIT_MAX: z.coerce.number().int().positive(),
