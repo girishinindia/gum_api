@@ -144,10 +144,6 @@ When an admin creates a user via `POST /api/v1/users`, they can optionally pass 
 
 If `roleId` is not provided, the user is created without any role. You can assign a role later using the User Role Assignments API.
 
-### Important — automatic defaults:
-
-Admin-created users are always created with `isActive = false`, `isEmailVerified = false`, `isMobileVerified = false`. These fields are **not** accepted in the request body — they are set automatically. Super Admin must activate the user manually via the update endpoint.
-
 ### Where is this code?
 
 - **File:** `src/modules/users/user.service.ts` — `create()` method

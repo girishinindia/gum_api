@@ -108,7 +108,10 @@ Content-Type: application/json
   "mobile": "+919876543210",
   "password": "SecurePass123",
   "countryId": 1,
-  "roleId": 8
+  "roleId": 8,
+  "isActive": true,
+  "isEmailVerified": false,
+  "isMobileVerified": false
 }
 ```
 
@@ -139,9 +142,9 @@ pm.collectionVariables.set("userId", json.data.id);
 - `password`: 8-128 chars, must contain uppercase + lowercase + number
 - `countryId`: optional, positive integer
 - `roleId`: optional, positive integer — assigns a role to the user on creation (see RBAC guards below)
-- `isActive`: automatically set to `false` — Super Admin must activate the user
-- `isEmailVerified`: automatically set to `false` — user must verify their own email
-- `isMobileVerified`: automatically set to `false` — user must verify their own mobile
+- `isActive`: optional, boolean (default: true)
+- `isEmailVerified`: optional, boolean (default: false)
+- `isMobileVerified`: optional, boolean (default: false)
 
 **RBAC Guards on `roleId`:**
 - If `roleId` is not provided, user is created with no role (role can be assigned later via user-role-assignments API)

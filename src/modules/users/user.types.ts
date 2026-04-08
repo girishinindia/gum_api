@@ -79,6 +79,9 @@ export interface UserCreateInput {
   password: string;
   countryId?: number;
   roleId?: number;
+  isActive?: boolean;
+  isEmailVerified?: boolean;
+  isMobileVerified?: boolean;
   createdBy?: number;
 }
 
