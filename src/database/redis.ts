@@ -35,6 +35,8 @@ const KEYS = {
   otp: (identifier: string) => `otp:${identifier}`,
   otpAttempts: (identifier: string) => `otp_attempts:${identifier}`,
   otpCooldown: (identifier: string) => `otp_cooldown:${identifier}`,
+  otpResendCount: (identifier: string) => `otp_resend:${identifier}`,
+  pendingSession: (key: string) => `pending:${key}`,
   cache: (key: string) => `cache:${key}`
 } as const;
 
@@ -125,6 +127,65 @@ export const redisOtp = {
   async setCooldown(identifier: string): Promise<void> {
     const client = getRedisClient();
     await client.set(KEYS.otpCooldown(identifier), '1', 'EX', env.OTP_RESEND_COOLDOWN_SECONDS);
+  },
+
+  /** Get resend count (how many times OTP was resent) */
+  async getResendCount(identifier: string): Promise<number> {
+    const client = getRedisClient();
+    const count = await client.get(KEYS.otpResendCount(identifier));
+    return count ? parseInt(count, 10) : 0;
+  },
+
+  /** Increment resend count (TTL = OTP expiry window so it auto-resets) */
+  async incrementResendCount(identifier: string): Promise<number> {
+    const client = getRedisClient();
+    const count = await client.incr(KEYS.otpResendCount(identifier));
+    await client.expire(KEYS.otpResendCount(identifier), env.REDIS_OTP_TTL);
+    return count;
+  },
+
+  /** Clean up all OTP-related keys for an identifier */
+  async cleanup(identifier: string): Promise<void> {
+    const client = getRedisClient();
+    await client.del(
+      KEYS.otp(identifier),
+      KEYS.otpAttempts(identifier),
+      KEYS.otpCooldown(identifier),
+      KEYS.otpResendCount(identifier)
+    );
+  }
+};
+
+// ─── Pending Session Helpers (multi-step OTP flows) ──────────
+
+export const redisPending = {
+  /** Store pending session data (registration, forgot-password, etc.) */
+  async store(key: string, data: Record<string, unknown>, ttlSeconds?: number): Promise<void> {
+    const client = getRedisClient();
+    await client.set(
+      KEYS.pendingSession(key),
+      JSON.stringify(data),
+      'EX',
+      ttlSeconds ?? env.REDIS_OTP_TTL
+    );
+  },
+
+  /** Get pending session data */
+  async get<T = Record<string, unknown>>(key: string): Promise<T | null> {
+    const client = getRedisClient();
+    const raw = await client.get(KEYS.pendingSession(key));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Delete pending session */
+  async del(key: string): Promise<void> {
+    const client = getRedisClient();
+    await client.del(KEYS.pendingSession(key));
   }
 };
 

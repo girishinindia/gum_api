@@ -9,6 +9,7 @@ import { buildCorsOptions } from './config/cors';
 import { env } from './config/env';
 import { errorHandler } from './core/errors/error-handler';
 import { notFoundMiddleware } from './core/middlewares/not-found.middleware';
+import { globalRateLimiter } from './core/middlewares/rate-limit.middleware';
 import { requestLogger } from './core/logger/request-logger';
 
 const app = express();
@@ -19,6 +20,7 @@ app.use(cors(buildCorsOptions()));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(globalRateLimiter);
 app.use(requestLogger);
 
 // Files are served from Bunny CDN (cdn.growupmore.com), not from this server.
