@@ -5,11 +5,16 @@ import { env } from '../config/env';
 import { logger } from '../core/logger/logger';
 
 // ─── Force IPv4 DNS resolution ──────────────────────────────
-// Supabase DNS resolves to IPv6 which many EC2 instances can't reach.
-// Force Node.js to resolve hostnames to IPv4 addresses first.
+// Supabase direct connection resolves to IPv6 only, which most
+// EC2 instances can't reach (ENETUNREACH).
+// Even with the Session pooler (which has IPv4), we keep this
+// as a safety net so DNS always prefers IPv4 addresses.
 dns.setDefaultResultOrder('ipv4first');
 
 // ─── Pool Configuration ──────────────────────────────────────
+// DATABASE_URL should point to Supabase Session pooler for IPv4:
+//   postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
+// NOT the direct connection (db.PROJECT_REF.supabase.co) which is IPv6-only.
 
 const poolConfig: PoolConfig = {
   connectionString: env.DATABASE_URL,

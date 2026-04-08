@@ -34,19 +34,14 @@ export const errorHandler = (
 
   logger.error({ error: errorDetail, url: _req.originalUrl, method: _req.method }, 'Unhandled error');
 
-  // ⚠️  TEMPORARY: Expose error details in production for debugging.
-  //     Revert to safe error messages once the issue is identified.
-  //     Original code: only show details when isDev = true.
+  // In production: safe message only. In dev: include actual error for debugging.
+  const isDev = process.env.NODE_ENV !== 'production';
+
   return res.status(500).json({
     success: false,
-    message: error instanceof Error ? error.message : 'Internal server error',
-    ...(error instanceof Error && {
-      errorName: error.name,
-      stack: error.stack,
-      // Include PostgreSQL/Redis specific error properties if present
-      code: (error as { code?: string }).code ?? undefined,
-      address: (error as { address?: string }).address ?? undefined,
-      port: (error as { port?: number }).port ?? undefined
-    })
+    message: isDev
+      ? (error instanceof Error ? error.message : 'Internal server error')
+      : 'Internal server error',
+    ...(isDev && error instanceof Error && { stack: error.stack })
   });
 };
