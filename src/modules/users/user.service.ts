@@ -78,10 +78,81 @@ class UserService {
     return this.getById(userId);
   }
 
+  // ─── Helper: Get the role code of a user ───────────────────
+
+  private async getUserRoleCode(userId: number): Promise<string | null> {
+    const row = await db.queryOne<{ role_code: string }>(
+      `SELECT r.code AS role_code
+       FROM user_role_assignments ura
+       INNER JOIN roles r ON ura.role_id = r.id
+       WHERE ura.user_id = $1
+         AND ura.is_deleted = FALSE AND ura.is_active = TRUE AND r.is_deleted = FALSE
+       ORDER BY r.level ASC LIMIT 1`,
+      [userId]
+    );
+    return row?.role_code ?? null;
+  }
+
+  // ─── Helper: Get role code by role ID ─────────────────────
+
+  private async getRoleCodeById(roleId: number): Promise<string | null> {
+    const row = await db.queryOne<{ code: string }>(
+      'SELECT code FROM roles WHERE id = $1 AND is_deleted = FALSE',
+      [roleId]
+    );
+    return row?.code ?? null;
+  }
+
   // ─── Create (admin) ──────────────────────────────────────
+  // If roleId is provided, assigns the role to the user in one step.
+  // Guards:
+  //   - Admin cannot assign super_admin or admin roles
+  //   - Only Super Admin can assign student or instructor roles
 
   async create(input: UserCreateInput) {
+    // Validate role assignment guards BEFORE creating the user
+    if (input.roleId && input.createdBy) {
+      const targetRoleCode = await this.getRoleCodeById(input.roleId);
+      if (!targetRoleCode) {
+        throw new AppError('Role not found', 404, 'ROLE_NOT_FOUND');
+      }
+
+      const creatorRoleCode = await this.getUserRoleCode(input.createdBy);
+
+      // Admin cannot assign super_admin or admin roles
+      if (creatorRoleCode === 'admin' && ['super_admin', 'admin'].includes(targetRoleCode)) {
+        throw new AppError(
+          'Admins cannot assign Super Admin or Admin roles. Only Super Admin can do this.',
+          403,
+          'ADMIN_CANNOT_ASSIGN_ADMIN'
+        );
+      }
+
+      // Only Super Admin can assign student or instructor roles
+      if (creatorRoleCode !== 'super_admin' && ['student', 'instructor'].includes(targetRoleCode)) {
+        throw new AppError(
+          'Only Super Admin can assign Student or Instructor roles.',
+          403,
+          'CANNOT_ASSIGN_PROTECTED_ROLE'
+        );
+      }
+    }
+
     const { id } = await userRepository.create(input);
+
+    // Assign role if provided
+    if (input.roleId) {
+      try {
+        await db.query(
+          `INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
+           VALUES ($1, $2, $3)`,
+          [id, input.roleId, input.createdBy ?? id]
+        );
+      } catch (err) {
+        logger.error({ err, userId: id, roleId: input.roleId }, 'Failed to assign role during user creation');
+      }
+    }
+
     return this.getById(id);
   }
 

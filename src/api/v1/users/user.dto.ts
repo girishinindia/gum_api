@@ -28,6 +28,7 @@ export const createUserDto = z.object({
       mobile: z.string().trim().min(7).max(20).optional(),
       password: passwordSchema,
       countryId: z.coerce.number().int().positive().optional(),
+      roleId: z.coerce.number().int().positive().optional(),
       isActive: z.boolean().optional(),
       isEmailVerified: z.boolean().optional(),
       isMobileVerified: z.boolean().optional()
