@@ -69,7 +69,8 @@ export const updateAssignment = asyncHandler(async (req: Request, res: Response)
 
 export const deleteAssignment = asyncHandler(async (req: Request, res: Response) => {
   const id = Number(req.params.id);
-  const data = await userRoleAssignmentService.delete(id);
+  const currentUserId = req.user!.userId;
+  const data = await userRoleAssignmentService.delete(id, currentUserId);
   return sendSuccess(res, data, 'User role assignment deleted');
 });
 

@@ -10,6 +10,8 @@ import { passwordChangedTemplate } from '../../integrations/email/templates/pass
 import { emailChangedNotifyTemplate, emailChangedWelcomeTemplate } from '../../integrations/email/templates/email-changed.template';
 import { mobileChangedTemplate } from '../../integrations/email/templates/mobile-changed.template';
 
+import { db } from '../../database/db';
+import { logger } from '../../core/logger/logger';
 import { authRepository } from './auth.repository';
 import { otpService } from './otp.service';
 import {
@@ -129,6 +131,20 @@ class AuthService {
       mobile: pending.mobile,
       password: pending.password
     });
+
+    // Auto-assign "student" role to newly registered user
+    try {
+      await db.query(
+        `INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
+         SELECT $1, r.id, $1
+         FROM roles r
+         WHERE r.code = 'student' AND r.is_deleted = FALSE`,
+        [id]
+      );
+    } catch (err) {
+      // Log but don't fail registration — role can be assigned manually
+      logger.error({ err, userId: id }, 'Failed to auto-assign student role on registration');
+    }
 
     // Clean up pending session and OTP keys
     await otpService.cleanup('register', sessionKey);
