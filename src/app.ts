@@ -14,6 +14,12 @@ import { requestLogger } from './core/logger/request-logger';
 
 const app = express();
 
+// Trust first proxy (Nginx) — required for correct IP detection
+// in rate limiting, logging, and X-Forwarded-* headers
+if (env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(helmet());
 app.use(compression());
 app.use(cors(buildCorsOptions()));

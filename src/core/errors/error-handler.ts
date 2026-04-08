@@ -27,10 +27,21 @@ export const errorHandler = (
     });
   }
 
-  logger.error({ error }, 'Unhandled error');
+  // Log full error details (always visible in PM2 logs)
+  const errorDetail = error instanceof Error
+    ? { message: error.message, name: error.name, stack: error.stack }
+    : { raw: String(error) };
+
+  logger.error({ error: errorDetail, url: _req.originalUrl, method: _req.method }, 'Unhandled error');
+
+  // In production: safe message only. In dev: include actual error for debugging.
+  const isDev = process.env.NODE_ENV !== 'production';
 
   return res.status(500).json({
     success: false,
-    message: 'Internal server error'
+    message: isDev
+      ? (error instanceof Error ? error.message : 'Internal server error')
+      : 'Internal server error',
+    ...(isDev && error instanceof Error && { stack: error.stack })
   });
 };
