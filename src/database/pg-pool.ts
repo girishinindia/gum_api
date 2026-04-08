@@ -15,9 +15,17 @@ dns.setDefaultResultOrder('ipv4first');
 // DATABASE_URL should point to Supabase Session pooler for IPv4:
 //   postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
 // NOT the direct connection (db.PROJECT_REF.supabase.co) which is IPv6-only.
+//
+// SSL Note: We strip ?sslmode=require from the connection string and handle
+// SSL via the pool config's `ssl` option instead. When sslmode is in the URL,
+// the `pg` library uses Node.js default cert validation which rejects Supabase's
+// certificate chain (SELF_SIGNED_CERT_IN_CHAIN). By using ssl: { rejectUnauthorized: false }
+// directly, we accept Supabase's self-signed pooler certificates.
+
+const connectionString = env.DATABASE_URL.replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
 
 const poolConfig: PoolConfig = {
-  connectionString: env.DATABASE_URL,
+  connectionString,
   max: 20, // max connections in pool
   idleTimeoutMillis: 30_000, // close idle connections after 30s
   connectionTimeoutMillis: 5_000, // fail if can't connect in 5s
