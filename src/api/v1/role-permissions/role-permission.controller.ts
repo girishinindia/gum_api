@@ -46,7 +46,8 @@ export const bulkAssignPermissions = asyncHandler(async (req: Request, res: Resp
 
 export const removePermission = asyncHandler(async (req: Request, res: Response) => {
   const { roleId, permissionId } = req.body;
-  const data = await rolePermissionService.remove(roleId, permissionId);
+  const currentUserId = req.user!.userId;
+  const data = await rolePermissionService.remove(roleId, permissionId, currentUserId);
   return sendSuccess(res, data, 'Permission removed from role');
 });
 
@@ -54,7 +55,8 @@ export const removePermission = asyncHandler(async (req: Request, res: Response)
 
 export const bulkRemovePermissions = asyncHandler(async (req: Request, res: Response) => {
   const roleId = Number(req.params.roleId);
-  const data = await rolePermissionService.bulkRemove(roleId);
+  const currentUserId = req.user!.userId;
+  const data = await rolePermissionService.bulkRemove(roleId, currentUserId);
   return sendSuccess(res, data, 'All permissions removed from role');
 });
 

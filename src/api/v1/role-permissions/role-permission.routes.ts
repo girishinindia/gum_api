@@ -311,15 +311,18 @@ rolePermissionRoutes.get('/user/:userId', authMiddleware, authorize('permission.
  *                 code: { type: string, example: "UNAUTHORIZED" }
  *                 details: { type: 'null' }
  *       403:
- *         description: Forbidden (permission.manage required)
+ *         description: |
+ *           Forbidden. Possible reasons:
+ *           - Missing permission.manage (code: FORBIDDEN)
+ *           - Admin trying to modify admin/super_admin role permissions (code: ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Forbidden" }
- *                 code: { type: string, example: "FORBIDDEN" }
+ *                 message: { type: string, example: "Admins cannot modify permissions for Super Admin or Admin roles. Only Super Admin can do this." }
+ *                 code: { type: string, example: "ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS" }
  *                 details: { type: 'null' }
  *       404:
  *         description: Role or permission not found
@@ -408,15 +411,18 @@ rolePermissionRoutes.post('/assign', authMiddleware, authorize('permission.manag
  *                 code: { type: string, example: "UNAUTHORIZED" }
  *                 details: { type: 'null' }
  *       403:
- *         description: Forbidden (permission.manage required)
+ *         description: |
+ *           Forbidden. Possible reasons:
+ *           - Missing permission.manage (code: FORBIDDEN)
+ *           - Admin trying to modify admin/super_admin role permissions (code: ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Forbidden" }
- *                 code: { type: string, example: "FORBIDDEN" }
+ *                 message: { type: string, example: "Admins cannot modify permissions for Super Admin or Admin roles. Only Super Admin can do this." }
+ *                 code: { type: string, example: "ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS" }
  *                 details: { type: 'null' }
  */
 rolePermissionRoutes.post('/bulk-assign', authMiddleware, authorize('permission.manage'), validate(bulkAssignPermissionsDto), bulkAssignPermissions);
@@ -481,15 +487,18 @@ rolePermissionRoutes.post('/bulk-assign', authMiddleware, authorize('permission.
  *                 code: { type: string, example: "UNAUTHORIZED" }
  *                 details: { type: 'null' }
  *       403:
- *         description: Forbidden (permission.manage required)
+ *         description: |
+ *           Forbidden. Possible reasons:
+ *           - Missing permission.manage (code: FORBIDDEN)
+ *           - Admin trying to modify admin/super_admin role permissions (code: ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Forbidden" }
- *                 code: { type: string, example: "FORBIDDEN" }
+ *                 message: { type: string, example: "Admins cannot modify permissions for Super Admin or Admin roles. Only Super Admin can do this." }
+ *                 code: { type: string, example: "ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS" }
  *                 details: { type: 'null' }
  *       404:
  *         description: Role-permission mapping not found
@@ -546,15 +555,18 @@ rolePermissionRoutes.post('/remove', authMiddleware, authorize('permission.manag
  *                 code: { type: string, example: "UNAUTHORIZED" }
  *                 details: { type: 'null' }
  *       403:
- *         description: Forbidden (permission.manage required)
+ *         description: |
+ *           Forbidden. Possible reasons:
+ *           - Missing permission.manage (code: FORBIDDEN)
+ *           - Admin trying to modify admin/super_admin role permissions (code: ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Forbidden" }
- *                 code: { type: string, example: "FORBIDDEN" }
+ *                 message: { type: string, example: "Admins cannot modify permissions for Super Admin or Admin roles. Only Super Admin can do this." }
+ *                 code: { type: string, example: "ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS" }
  *                 details: { type: 'null' }
  *       404:
  *         description: Role not found
@@ -633,15 +645,18 @@ rolePermissionRoutes.delete('/role/:roleId', authMiddleware, authorize('permissi
  *                 code: { type: string, example: "UNAUTHORIZED" }
  *                 details: { type: 'null' }
  *       403:
- *         description: Forbidden (permission.manage required)
+ *         description: |
+ *           Forbidden. Possible reasons:
+ *           - Missing permission.manage (code: FORBIDDEN)
+ *           - Admin trying to modify admin/super_admin role permissions (code: ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS)
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Forbidden" }
- *                 code: { type: string, example: "FORBIDDEN" }
+ *                 message: { type: string, example: "Admins cannot modify permissions for Super Admin or Admin roles. Only Super Admin can do this." }
+ *                 code: { type: string, example: "ADMIN_CANNOT_MODIFY_ADMIN_PERMISSIONS" }
  *                 details: { type: 'null' }
  *       404:
  *         description: Role or permission not found
