@@ -340,8 +340,8 @@ rolePermissionRoutes.get('/user/:userId', authMiddleware, authorize('permission.
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Permission already assigned to role" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "This permission is already assigned to the role." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: 'null' }
  */
 rolePermissionRoutes.post('/assign', authMiddleware, authorize('permission.manage'), validate(assignPermissionDto), assignPermission);

@@ -93,9 +93,8 @@ async function callFunction(
 
   // If the UDF returned success: false, throw as a business error
   if (!result.success) {
-    // Parse common error patterns to set appropriate HTTP status codes
-    const statusCode = parseUdfErrorStatus(result.message);
-    throw new AppError(result.message, statusCode, 'UDF_ERROR');
+    const { statusCode, message, code } = parseUdfError(result.message);
+    throw new AppError(message, statusCode, code);
   }
 
   return result;
@@ -201,16 +200,83 @@ async function transaction<T>(
 
 // ─── Internal Helpers ────────────────────────────────────────
 
-/** Map common UDF error messages to HTTP status codes */
-function parseUdfErrorStatus(message: string): number {
-  const msg = message.toLowerCase();
+/**
+ * Parse UDF error messages into clean, API-friendly responses.
+ *
+ * UDFs sometimes return raw PostgreSQL error text (e.g. constraint names,
+ * duplicate key details). This function:
+ *  1. Maps the message to an appropriate HTTP status code
+ *  2. Replaces ugly internal messages with user-friendly text
+ *  3. Sets a descriptive error code instead of generic UDF_ERROR
+ */
+function parseUdfError(rawMessage: string): { statusCode: number; message: string; code: string } {
+  const msg = rawMessage.toLowerCase();
 
-  if (msg.includes('already exists') || msg.includes('duplicate')) return 409;
-  if (msg.includes('does not exist') || msg.includes('not found') || msg.includes('not deleted')) return 404;
-  if (msg.includes('cannot delete') || msg.includes('cannot change') || msg.includes('cannot restore')) return 403;
-  if (msg.includes('cannot be empty') || msg.includes('at least one') || msg.includes('invalid')) return 400;
+  // ─── Duplicate / unique constraint violations ──────────────
+  if (msg.includes('duplicate key') || msg.includes('unique constraint')) {
+    // Try to extract a friendly entity name from the constraint or message
+    const friendly = extractDuplicateEntity(msg);
+    return {
+      statusCode: 409,
+      message: friendly ?? 'A record with the same value already exists.',
+      code: 'DUPLICATE_ENTRY'
+    };
+  }
 
-  return 400; // Default: bad request for UDF business errors
+  if (msg.includes('already exists')) {
+    return { statusCode: 409, message: rawMessage, code: 'ALREADY_EXISTS' };
+  }
+
+  // ─── Not found ─────────────────────────────────────────────
+  if (msg.includes('does not exist') || msg.includes('not found') || msg.includes('not deleted')) {
+    return { statusCode: 404, message: rawMessage, code: 'NOT_FOUND' };
+  }
+
+  // ─── Forbidden / business rules ────────────────────────────
+  if (msg.includes('cannot delete') || msg.includes('cannot change') || msg.includes('cannot restore')) {
+    return { statusCode: 403, message: rawMessage, code: 'FORBIDDEN' };
+  }
+
+  // ─── Validation ────────────────────────────────────────────
+  if (msg.includes('cannot be empty') || msg.includes('at least one') || msg.includes('invalid')) {
+    return { statusCode: 400, message: rawMessage, code: 'VALIDATION_ERROR' };
+  }
+
+  // ─── Default ───────────────────────────────────────────────
+  return { statusCode: 400, message: rawMessage, code: 'UDF_ERROR' };
+}
+
+/**
+ * Extract a user-friendly duplicate message from constraint names or raw PG error text.
+ * Maps known constraint names to clean messages.
+ */
+function extractDuplicateEntity(msg: string): string | null {
+  // Known constraint → friendly message map
+  const constraintMap: Record<string, string> = {
+    uq_role_permission_unique: 'This permission is already assigned to the role.',
+    uq_users_email: 'A user with this email already exists.',
+    uq_users_mobile: 'A user with this mobile number already exists.',
+    uq_roles_code: 'A role with this code already exists.',
+    uq_modules_code: 'A module with this code already exists.',
+    uq_permissions_code: 'A permission with this code already exists.',
+    uq_menu_items_code: 'A menu item with this code already exists.',
+    uq_user_role_assignment: 'This role is already assigned to the user.',
+  };
+
+  for (const [constraint, friendlyMsg] of Object.entries(constraintMap)) {
+    if (msg.includes(constraint.toLowerCase())) {
+      return friendlyMsg;
+    }
+  }
+
+  // Fallback: try to extract entity from "Error <verb> <entity>" pattern
+  const entityMatch = msg.match(/error (?:creating|inserting|assigning|adding) (\w[\w\s]*?):/i);
+  if (entityMatch) {
+    const entity = entityMatch[1].trim().replace(/_/g, ' ');
+    return `A duplicate ${entity} already exists.`;
+  }
+
+  return null;
 }
 
 // ─── Export ──────────────────────────────────────────────────
@@ -220,5 +286,6 @@ export const db = {
   queryOne,
   callFunction,
   callTableFunction,
-  transaction
+  transaction,
+  parseUdfError
 };

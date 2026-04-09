@@ -283,8 +283,8 @@ roleRoutes.get('/:id', authMiddleware, authorize('role.read'), validate(roleIdPa
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Role code already exists" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "A role with this code already exists." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: "null" }
  */
 roleRoutes.post('/', authMiddleware, authorize('role.create'), validate(createRoleDto), createRole);

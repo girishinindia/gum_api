@@ -425,7 +425,7 @@ userRoutes.get('/:id', authMiddleware, authorize('user.read'), validate(userIdPa
  *               properties:
  *                 success: { type: boolean, example: false }
  *                 message: { type: string, example: "Email or mobile already exists" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: "null" }
  */
 userRoutes.post('/', authMiddleware, authorize('user.create'), validate(createUserDto), createUser);

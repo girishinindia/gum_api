@@ -267,8 +267,8 @@ moduleRoutes.get('/:id', authMiddleware, authorize('module.read'), validate(modu
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Module code already exists" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "A module with this code already exists." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: "null" }
  */
 moduleRoutes.post('/', authMiddleware, authorize('module.create'), validate(createModuleDto), createModule);

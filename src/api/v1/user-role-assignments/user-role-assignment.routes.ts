@@ -302,8 +302,8 @@ userRoleAssignmentRoutes.get('/:id', authMiddleware, authorize('role.assign'), v
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "User already has this role assignment" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "This role is already assigned to the user." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: 'null' }
  */
 userRoleAssignmentRoutes.post('/', authMiddleware, authorize('role.assign'), validate(createAssignmentDto), createAssignment);

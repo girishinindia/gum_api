@@ -1,3 +1,4 @@
+import { AppError } from '../../core/errors/app-error';
 import { db } from '../../database/db';
 import { RolePermissionRow, RolePermissionListQuery, UserPermissionRow } from './role-permission.types';
 
@@ -43,8 +44,8 @@ export const rolePermissionRepository = {
     );
     const row = result.rows[0]?.result;
     if (!row?.success) {
-      const { AppError } = await import('../../core/errors/app-error');
-      throw new AppError(row?.message ?? 'Bulk assign failed', 400, 'UDF_ERROR');
+      const { statusCode, message, code } = db.parseUdfError(row?.message ?? 'Bulk assign failed');
+      throw new AppError(message, statusCode, code);
     }
     return row;
   },
@@ -67,8 +68,8 @@ export const rolePermissionRepository = {
     );
     const row = result.rows[0]?.result;
     if (!row?.success) {
-      const { AppError } = await import('../../core/errors/app-error');
-      throw new AppError(row?.message ?? 'Bulk remove failed', 400, 'UDF_ERROR');
+      const { statusCode, message, code } = db.parseUdfError(row?.message ?? 'Bulk remove failed');
+      throw new AppError(message, statusCode, code);
     }
     return row;
   },
@@ -82,8 +83,8 @@ export const rolePermissionRepository = {
     );
     const row = result.rows[0]?.result;
     if (!row?.success) {
-      const { AppError } = await import('../../core/errors/app-error');
-      throw new AppError(row?.message ?? 'Replace failed', 400, 'UDF_ERROR');
+      const { statusCode, message, code } = db.parseUdfError(row?.message ?? 'Replace failed');
+      throw new AppError(message, statusCode, code);
     }
     return row;
   },

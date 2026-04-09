@@ -356,8 +356,8 @@ menuItemRoutes.get('/:id', authMiddleware, authorize('menu.read'), validate(menu
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Menu item code already exists" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "A menu item with this code already exists." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: 'null' }
  */
 menuItemRoutes.post('/', authMiddleware, authorize('menu.create'), validate(createMenuItemDto), createMenuItem);

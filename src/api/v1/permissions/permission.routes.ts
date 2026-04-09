@@ -289,8 +289,8 @@ permissionRoutes.get('/:id', authMiddleware, authorize('permission.manage'), val
  *               type: object
  *               properties:
  *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Permission code already exists" }
- *                 code: { type: string, example: "CONFLICT" }
+ *                 message: { type: string, example: "A permission with this code already exists." }
+ *                 code: { type: string, example: "DUPLICATE_ENTRY" }
  *                 details: { type: 'null' }
  */
 permissionRoutes.post('/', authMiddleware, authorize('permission.manage'), validate(createPermissionDto), createPermission);
