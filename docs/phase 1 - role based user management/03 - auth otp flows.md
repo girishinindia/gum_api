@@ -359,8 +359,24 @@ The contract that function enforces (and that the Node layer translates into HTT
 |---|---|---|
 | Must be at least 3 minutes since the previous send on this OTP row | `udf_otp_resend` refuses with `"Cannot resend yet. Please wait N minute(s)."` | `429 OTP_RESEND_TOO_SOON` with `details.waitMinutes` |
 | Maximum 3 resends per OTP row | Once `resend_count` reaches 3, the row is marked exhausted for 30 minutes before it can be recycled | `429 OTP_MAX_RESENDS` with `details.cooldownMinutes: 30` |
-| A pending OTP row must exist | If no `purpose + channel` OTP row in `pending` state is found for this user | `404 OTP_NOT_FOUND` |
+| A pending OTP row must exist | If no `purpose + channel` OTP row in `pending` state is found for this user | `404 OTP_NOT_FOUND` for `forgot_password` / `reset_password` / `change_*` flows; the four register-time and re-verify resend routes silently recover via the fallback below |
 | Happy path | Old OTP is invalidated; a new 6-digit code is generated; `resend_count` is incremented; destination is re-dispatched via the same mailer/SMS pipeline as the original initiate | `200` with `{ otpId, devOtp }` |
+
+### Resend recovery from expired rows
+
+`udf_otp_resend` only matches rows where `status = 'pending'`. After a code expires (10 minutes after generation), or after an unrelated flow flips the row to `invalidated` / `verified`, that filter no longer finds anything and the UDF returns `"No pending OTP found for this user, purpose, and channel"`. Without recovery, the user is permanently blocked from restarting verification through the resend endpoint — the only way out would be a fresh `register` call, which would conflict on the existing email/mobile.
+
+The Node service layer therefore opts the four register-time and re-verify resend routes into a `fallbackToGenerate: true` flag on `callOtpResend`. When the resend UDF reports `OTP_NOT_FOUND` *and* the caller has opted in, `auth-flows.service.ts` transparently calls `udf_otp_generate(userId, purpose, channel, destination)` instead and returns the freshly-issued row in the same `{ otpId, otpCode }` shape. The surrounding wrapper then dispatches via the same mailer/SMS pipeline it would have used on a normal resend, so the client sees an indistinguishable `200 { otpId, devOtp }` response.
+
+The fallback is **opt-in** so it doesn't bleed into the `forgot-password` / `reset-password` / `change-*` flows. Those flows have a fresh `*_initiate` step that the user can re-run; conflating "resend" and "regenerate" there would mask flow-state bugs and undermine the cooldown contract. Register-time and re-verify resends are different because they have no comparable "re-initiate" affordance — the original initiate happened during account creation (or an earlier verify-leg call) and can't be repeated.
+
+The fallback is also bounded by the same enumeration guards already in `registerResend`/`reVerifyResend` — if the channel is already verified or the user has no contact on file, the wrapper rejects with `ALREADY_VERIFIED` / `NO_EMAIL_ON_FILE` / `NO_MOBILE_ON_FILE` *before* `callOtpResend` runs, so the regenerate path can never be used to spin up OTPs against a contact the user never supplied.
+
+When the fallback fires it logs at `info` level with `{ userId, purpose, channel }` so this code path is observable in production:
+
+```
+[auth-flows] resend found no pending row; falling back to udf_otp_generate
+```
 
 **Dispatch matrix** (once the resend DB call succeeds):
 

@@ -850,6 +850,15 @@ const callOtpResend = async (args: {
     | 're_verification';
   channel: 'email' | 'mobile';
   destination: string;
+  // When true, an OTP_NOT_FOUND result from udf_otp_resend will be
+  // silently recovered by issuing a fresh udf_otp_generate call with
+  // the same (userId, purpose, channel, destination). This is the
+  // right behavior when the previous OTP row has aged into 'expired'
+  // (or was invalidated by an unrelated flow) — without it, the user
+  // would be permanently locked out of restarting verification because
+  // the resend UDF only matches `status = 'pending'`. Off by default
+  // so callers must opt in.
+  fallbackToGenerate?: boolean;
 }): Promise<{ otpId: number; otpCode: string }> => {
   const pool = getPool();
   const { rows } = await pool.query<{ result: Record<string, unknown> }>(
@@ -885,6 +894,17 @@ const callOtpResend = async (args: {
 
     // "No pending OTP found for this user, purpose, and channel"
     if (/no pending/i.test(msg)) {
+      if (args.fallbackToGenerate) {
+        logger.info(
+          {
+            userId: args.userId,
+            purpose: args.purpose,
+            channel: args.channel
+          },
+          '[auth-flows] resend found no pending row; falling back to udf_otp_generate'
+        );
+        return callOtpGenerateForResendFallback(args);
+      }
       throw new AppError(msg, 404, 'OTP_NOT_FOUND');
     }
 
@@ -896,6 +916,66 @@ const callOtpResend = async (args: {
   if (!otpId || !otpCode) {
     throw new AppError(
       'udf_otp_resend returned malformed payload',
+      500,
+      'UDF_BAD_RESULT'
+    );
+  }
+  return { otpId, otpCode };
+};
+
+// Recovery path used by callOtpResend when udf_otp_resend reports
+// "No pending OTP found" and the caller has opted into the fallback.
+// Issues a fresh udf_otp_generate row and returns its id/code in the
+// same shape as a successful resend, so the surrounding wrappers can
+// dispatch through their normal mailer/SMS pipelines unchanged.
+const callOtpGenerateForResendFallback = async (args: {
+  userId: number;
+  purpose:
+    | 'registration'
+    | 'forgot_password'
+    | 'reset_password'
+    | 'change_email'
+    | 'change_mobile'
+    | 're_verification';
+  channel: 'email' | 'mobile';
+  destination: string;
+}): Promise<{ otpId: number; otpCode: string }> => {
+  const pool = getPool();
+  const { rows } = await pool.query<{ result: Record<string, unknown> }>(
+    `SELECT udf_otp_generate(
+        $1::BIGINT,
+        $2::otp_purpose,
+        $3::otp_channel,
+        $4::TEXT
+      ) AS result`,
+    [args.userId, args.purpose, args.channel, args.destination]
+  );
+  const result = rows[0]?.result;
+  if (!result) {
+    throw new AppError(
+      'udf_otp_generate returned no result',
+      500,
+      'UDF_NO_RESULT'
+    );
+  }
+  if (!result.success) {
+    const msg = String(result.message ?? 'OTP generation failed');
+    if (/cooldown/i.test(msg)) {
+      throw new AppError(msg, 429, 'OTP_COOLDOWN');
+    }
+    if (/not found|does not exist/i.test(msg)) {
+      throw new AppError(msg, 404, 'NOT_FOUND');
+    }
+    if (/not active|inactive/i.test(msg)) {
+      throw new AppError(msg, 403, 'ACCOUNT_INACTIVE');
+    }
+    throw new AppError(msg, 400, 'OTP_GENERATE_FAILED');
+  }
+  const otpId = Number(result.id);
+  const otpCode = String(result.otp_code);
+  if (!otpId || !otpCode) {
+    throw new AppError(
+      'udf_otp_generate returned malformed payload (resend fallback)',
       500,
       'UDF_BAD_RESULT'
     );
@@ -948,7 +1028,12 @@ const registerResend = async (
     userId,
     purpose: 'registration',
     channel,
-    destination
+    destination,
+    // If the previous registration OTP row has aged into 'expired'
+    // (or been invalidated), recover by issuing a fresh one. Without
+    // this the user is permanently stuck — see auth-otp-flows docs
+    // §3.8 ("Resend recovery from expired rows").
+    fallbackToGenerate: true
   });
 
   // Dispatch through the same pipeline as register() itself.
@@ -1005,7 +1090,11 @@ const reVerifyResend = async (
     userId,
     purpose: 're_verification',
     channel,
-    destination
+    destination,
+    // Same recovery rationale as registerResend: a stale 're_verification'
+    // row that has expired should not permanently block a logged-in
+    // user from re-triggering verification.
+    fallbackToGenerate: true
   });
 
   if (channel === 'email' && contact.user_email) {

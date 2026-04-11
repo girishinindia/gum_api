@@ -831,6 +831,187 @@ const main = async (): Promise<void> => {
       }
     }
 
+    // ─── 0.6b Resend recovery from expired OTP rows ──────
+    //
+    // Regression test for the queenrana958 incident: a user whose
+    // registration OTP row aged into 'expired' before they tried to
+    // resend was previously locked out forever, because udf_otp_resend
+    // only matches `status = 'pending'`. The Node service layer now
+    // catches that OTP_NOT_FOUND from the UDF and silently falls back
+    // to udf_otp_generate (see auth-flows.service.ts callOtpResend
+    // `fallbackToGenerate` flag, and docs/03 §3.8 "Resend recovery
+    // from expired rows").
+    //
+    //   1. register fresh user → email + mobile OTPs in 'pending'
+    //   2. flip the email OTP row to 'expired' in the DB
+    //   3. resend-email → 200 with a new otpId (fallback fired)
+    //   4. the new OTP row is in 'pending' status
+    //   5. verify-email with the regenerated OTP → 200
+    //   6. same dance for mobile
+    header('0.6b Resend recovery from expired OTP rows');
+    {
+      const FB_EMAIL = `verify-flows-fb+${RUN_ID}@test.growupmore.local`;
+      const FB_MOBILE = `+91993${RAND9}`.slice(0, 14);
+      const FB_PASSWORD = 'FallbackPass2026';
+
+      const reg = await http<{
+        data?: {
+          userId: number;
+          emailOtpId: number;
+          mobileOtpId: number;
+        };
+      }>('POST', '/api/v1/auth/register', {
+        body: {
+          firstName: 'Fallback',
+          lastName: `Run${process.pid}`,
+          email: FB_EMAIL,
+          mobile: FB_MOBILE,
+          password: FB_PASSWORD,
+          roleCode: 'student'
+        }
+      });
+      record(
+        '0.6b',
+        'register fallback-test user → 201',
+        reg.status === 201 && typeof reg.body?.data?.userId === 'number',
+        `status=${reg.status}`
+      );
+
+      const userId = reg.body?.data?.userId ?? 0;
+      const origEmailOtpId = reg.body?.data?.emailOtpId ?? 0;
+      const origMobileOtpId = reg.body?.data?.mobileOtpId ?? 0;
+
+      // 1) Force the email OTP row into 'expired' status, mimicking
+      //    a row that aged out 10+ minutes after generation. We also
+      //    push expires_at into the past so the state is internally
+      //    consistent (the resend UDF doesn't check expires_at, only
+      //    status, but verify-* code paths do — keeping them in sync
+      //    avoids surprising follow-on tests).
+      if (origEmailOtpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET status = 'expired',
+                  expires_at = CURRENT_TIMESTAMP - INTERVAL '1 hour'
+            WHERE id = $1`,
+          [origEmailOtpId]
+        );
+      }
+
+      // 2) resend-email should NOT 404 — the Node fallback should
+      //    silently issue a fresh OTP via udf_otp_generate.
+      const recovered = await http<{
+        data?: { otpId: number; devOtp: string };
+        code?: string;
+      }>('POST', '/api/v1/auth/register/resend-email', {
+        body: { userId }
+      });
+      record(
+        '0.6b',
+        'resend-email on expired row → 200 (fallback recovered)',
+        recovered.status === 200 &&
+          typeof recovered.body?.data?.otpId === 'number' &&
+          recovered.body?.data?.otpId !== origEmailOtpId,
+        `status=${recovered.status} code=${recovered.body?.code} orig=${origEmailOtpId} new=${recovered.body?.data?.otpId}`
+      );
+      record(
+        '0.6b',
+        'fallback returns a fresh 6-digit devOtp',
+        /^[0-9]{4,8}$/.test(recovered.body?.data?.devOtp ?? ''),
+        `devOtp=${recovered.body?.data?.devOtp ?? '(empty)'}`
+      );
+
+      const recoveredOtpId = recovered.body?.data?.otpId ?? 0;
+      const recoveredOtp = recovered.body?.data?.devOtp ?? '';
+
+      // 3) The regenerated row must be in 'pending' status — that's
+      //    the whole point of the fallback. The original row stays
+      //    'expired' (the regenerate doesn't touch it).
+      if (recoveredOtpId > 0) {
+        const { rows } = await getPool().query<{ status: string }>(
+          'SELECT status FROM user_otps WHERE id = $1',
+          [recoveredOtpId]
+        );
+        record(
+          '0.6b',
+          'regenerated email OTP row is in pending status',
+          rows[0]?.status === 'pending',
+          `status=${rows[0]?.status}`
+        );
+      }
+      if (origEmailOtpId > 0) {
+        const { rows } = await getPool().query<{ status: string }>(
+          'SELECT status FROM user_otps WHERE id = $1',
+          [origEmailOtpId]
+        );
+        record(
+          '0.6b',
+          'original expired row remains expired (fallback did not touch it)',
+          rows[0]?.status === 'expired',
+          `status=${rows[0]?.status}`
+        );
+      }
+
+      // 4) Verify-email with the regenerated OTP → happy path.
+      const vEmail = await http<{
+        data?: { isEmailVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-email', {
+        body: { userId, otpId: recoveredOtpId, otpCode: recoveredOtp }
+      });
+      record(
+        '0.6b',
+        'verify-email with regenerated OTP → 200 + isEmailVerified=true',
+        vEmail.status === 200 && vEmail.body?.data?.isEmailVerified === true,
+        `status=${vEmail.status}`
+      );
+
+      // 5) Same recovery flow for the mobile channel.
+      if (origMobileOtpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET status = 'expired',
+                  expires_at = CURRENT_TIMESTAMP - INTERVAL '1 hour'
+            WHERE id = $1`,
+          [origMobileOtpId]
+        );
+      }
+      const recoveredMobile = await http<{
+        data?: { otpId: number; devOtp: string };
+        code?: string;
+      }>('POST', '/api/v1/auth/register/resend-mobile', {
+        body: { userId }
+      });
+      record(
+        '0.6b',
+        'resend-mobile on expired row → 200 (fallback recovered)',
+        recoveredMobile.status === 200 &&
+          typeof recoveredMobile.body?.data?.otpId === 'number' &&
+          recoveredMobile.body?.data?.otpId !== origMobileOtpId,
+        `status=${recoveredMobile.status} code=${recoveredMobile.body?.code}`
+      );
+
+      const vMobile = await http<{
+        data?: { isMobileVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-mobile', {
+        body: {
+          userId,
+          otpId: recoveredMobile.body?.data?.otpId ?? 0,
+          otpCode: recoveredMobile.body?.data?.devOtp ?? ''
+        }
+      });
+      record(
+        '0.6b',
+        'verify-mobile with regenerated OTP → 200',
+        vMobile.status === 200 &&
+          vMobile.body?.data?.isMobileVerified === true,
+        `status=${vMobile.status}`
+      );
+
+      // Cleanup
+      if (userId > 0) {
+        await getPool().query('DELETE FROM users WHERE id = $1', [userId]);
+      }
+    }
+
     // ─── 1. Auth gates ──────────────────────────────────
     header('1. Auth gates — anon vs public');
     {
