@@ -28,6 +28,25 @@ export const getRedisClient = (): Redis => {
   return redisClient;
 };
 
+/**
+ * Gracefully close the Redis connection. Used by verification
+ * scripts and shutdown hooks so the process can exit cleanly.
+ * Safe to call multiple times and safe to call when no client
+ * has been created.
+ */
+export const closeRedis = async (): Promise<void> => {
+  if (!redisClient) return;
+  try {
+    await redisClient.quit();
+  } catch {
+    // If quit races with an open command, force-disconnect as a
+    // last resort rather than leaving the event loop pinned.
+    redisClient.disconnect();
+  } finally {
+    redisClient = null;
+  }
+};
+
 // ─── Key Prefixes ────────────────────────────────────────────
 
 const KEYS = {
@@ -37,7 +56,8 @@ const KEYS = {
   otpCooldown: (identifier: string) => `otp_cooldown:${identifier}`,
   otpResendCount: (identifier: string) => `otp_resend:${identifier}`,
   pendingSession: (key: string) => `pending:${key}`,
-  cache: (key: string) => `cache:${key}`
+  cache: (key: string) => `cache:${key}`,
+  revoked: (jti: string) => `revoked:${jti}`
 } as const;
 
 // ─── Session Helpers ─────────────────────────────────────────
@@ -85,7 +105,20 @@ export const redisOtp = {
     return client.get(KEYS.otp(identifier));
   },
 
-  /** Verify OTP and track attempts */
+  /**
+   * Verify OTP and track attempts.
+   *
+   * Semantics (with OTP_MAX_ATTEMPTS = N):
+   *   - The user gets exactly N chances, counting both correct and incorrect
+   *     guesses.
+   *   - On the N-th guess — whether it succeeds or fails — the OTP is burned
+   *     (along with its attempts counter).
+   *   - `attemptsLeft` never goes negative.
+   *
+   * Prior versions used `attempts > N` which gave the user N+1 effective
+   * guesses AND returned `attemptsLeft=0` on the N-th wrong attempt without
+   * actually burning the OTP — both were incorrect.
+   */
   async verify(identifier: string, otp: string): Promise<{ valid: boolean; attemptsLeft: number }> {
     const client = getRedisClient();
     const stored = await client.get(KEYS.otp(identifier));
@@ -94,26 +127,21 @@ export const redisOtp = {
       return { valid: false, attemptsLeft: 0 };
     }
 
-    // Increment attempt counter
+    // Increment attempt counter (single atomic op)
     const attempts = await client.incr(KEYS.otpAttempts(identifier));
     await client.expire(KEYS.otpAttempts(identifier), env.REDIS_OTP_TTL);
 
-    if (attempts > env.OTP_MAX_ATTEMPTS) {
-      // Max attempts exceeded — burn the OTP
-      await client.del(KEYS.otp(identifier));
-      await client.del(KEYS.otpAttempts(identifier));
-      return { valid: false, attemptsLeft: 0 };
-    }
-
     const valid = stored === otp;
+    const exhausted = attempts >= env.OTP_MAX_ATTEMPTS;
+    const attemptsLeft = Math.max(env.OTP_MAX_ATTEMPTS - attempts, 0);
 
-    if (valid) {
-      // OTP used — clean up
+    // Burn the OTP on success OR when the user has exhausted their tries.
+    if (valid || exhausted) {
       await client.del(KEYS.otp(identifier));
       await client.del(KEYS.otpAttempts(identifier));
     }
 
-    return { valid, attemptsLeft: env.OTP_MAX_ATTEMPTS - attempts };
+    return { valid, attemptsLeft };
   },
 
   /** Check if resend cooldown is active */
@@ -186,6 +214,35 @@ export const redisPending = {
   async del(key: string): Promise<void> {
     const client = getRedisClient();
     await client.del(KEYS.pendingSession(key));
+  }
+};
+
+// ─── JWT Revocation Helpers (per-jti blocklist) ──────────────
+//
+// authenticate() does one EXISTS per request. That's O(1) on Redis
+// and gives us immediate revocation without the cost of a full
+// session lookup. The TTL should match the remaining life of the
+// access token so the key auto-expires and we never leak memory.
+
+export const redisRevoked = {
+  /** Add a jti to the blocklist with a TTL in seconds. */
+  async add(jti: string, ttlSeconds: number): Promise<void> {
+    if (ttlSeconds <= 0) return; // token is already expired — nothing to revoke
+    const client = getRedisClient();
+    await client.set(KEYS.revoked(jti), '1', 'EX', ttlSeconds);
+  },
+
+  /** True if the jti is on the blocklist. */
+  async isRevoked(jti: string): Promise<boolean> {
+    const client = getRedisClient();
+    const exists = await client.exists(KEYS.revoked(jti));
+    return exists === 1;
+  },
+
+  /** Remove a jti from the blocklist (not typically needed). */
+  async remove(jti: string): Promise<void> {
+    const client = getRedisClient();
+    await client.del(KEYS.revoked(jti));
   }
 };
 

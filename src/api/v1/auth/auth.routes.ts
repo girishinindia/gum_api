@@ -1,1049 +1,315 @@
+// ═══════════════════════════════════════════════════════════════
+// /api/v1/auth router — the full authentication surface area.
+//
+// Core spine (Steps 8/9):
+//   POST /register                 → create account + stub OTP delivery
+//   POST /login                    → identifier+password → tokens
+//   POST /logout                   → revoke current session
+//   POST /refresh                  → rotate tokens
+//   GET  /me                       → current user profile
+//
+// Step 11 OTP-driven flows:
+//   POST /forgot-password               (public, dual-channel initiate)
+//   POST /forgot-password/verify        (public, dual-channel complete)
+//   POST /reset-password                (auth, dual-channel initiate)
+//   POST /reset-password/verify         (auth, dual-channel complete)
+//   POST /verify-email                  (auth, single-channel initiate)
+//   POST /verify-email/confirm          (auth, single-channel complete)
+//   POST /verify-mobile                 (auth, single-channel initiate)
+//   POST /verify-mobile/confirm         (auth, single-channel complete)
+//   POST /change-email                  (auth, OTP to *new* address)
+//   POST /change-email/confirm          (auth, complete request)
+//   POST /change-mobile                 (auth, OTP to *new* number)
+//   POST /change-mobile/confirm         (auth, complete request)
+// ═══════════════════════════════════════════════════════════════
+
 import { Router } from 'express';
 
-import { authMiddleware } from '../../../core/middlewares/auth.middleware';
-import { authRateLimiter, otpResendRateLimiter } from '../../../core/middlewares/rate-limit.middleware';
-import { recaptchaMiddleware } from '../../../core/middlewares/recaptcha.middleware';
-import { validate } from '../../../core/middlewares/validate.middleware';
-
+import { verifyAccessToken } from '../../../core/auth/jwt';
+import { authenticate } from '../../../core/middlewares/authenticate';
+import { validate } from '../../../core/middlewares/validate';
+import { AppError } from '../../../core/errors/app-error';
+import { created, ok } from '../../../core/utils/api-response';
+import { asyncHandler } from '../../../core/utils/async-handler';
+import * as authService from '../../../modules/auth/auth.service';
+import * as authFlows from '../../../modules/auth/auth-flows.service';
 import {
-  registerInitiateDto,
-  registerVerifyOtpDto,
-  registerResendOtpDto,
-  loginDto,
-  refreshDto,
-  forgotPasswordInitiateDto,
-  forgotPasswordVerifyOtpDto,
-  forgotPasswordResetDto,
-  forgotPasswordResendOtpDto,
-  changePasswordInitiateDto,
-  changePasswordVerifyOtpDto,
-  changePasswordResendOtpDto,
-  changeEmailInitiateDto,
-  changeEmailVerifyOtpDto,
-  changeEmailResendOtpDto,
-  changeMobileInitiateDto,
-  changeMobileVerifyOtpDto,
-  changeMobileResendOtpDto
-} from './auth.dto';
-
+  loginBodySchema,
+  refreshBodySchema,
+  registerBodySchema
+} from '../../../modules/auth/auth.schemas';
 import {
-  registerInitiate,
-  registerVerifyOtp,
-  registerResendOtp,
-  login,
-  refresh,
-  logout,
-  forgotPasswordInitiate,
-  forgotPasswordVerifyOtp,
-  forgotPasswordReset,
-  forgotPasswordResendOtp,
-  changePasswordInitiate,
-  changePasswordVerifyOtp,
-  changePasswordResendOtp,
-  changeEmailInitiate,
-  changeEmailVerifyOtp,
-  changeEmailResendOtp,
-  changeMobileInitiate,
-  changeMobileVerifyOtp,
-  changeMobileResendOtp
-} from './auth.controller';
+  changeContactCompleteBodySchema,
+  changeEmailInitiateBodySchema,
+  changeMobileInitiateBodySchema,
+  forgotPasswordCompleteBodySchema,
+  forgotPasswordInitiateBodySchema,
+  resetPasswordCompleteBodySchema,
+  verifyContactCompleteBodySchema,
+  type ChangeContactCompleteBody,
+  type ChangeEmailInitiateBody,
+  type ChangeMobileInitiateBody,
+  type ForgotPasswordCompleteBody,
+  type ForgotPasswordInitiateBody,
+  type ResetPasswordCompleteBody,
+  type VerifyContactCompleteBody
+} from '../../../modules/auth/auth-flows.schemas';
 
-const authRoutes = Router();
+const router = Router();
 
-// ═══════════════════════════════════════════════════════════
-// Registration (public, multi-step with OTP)
-// ═══════════════════════════════════════════════════════════
+// ─── POST /register ──────────────────────────────────────────────
 
-/**
- * @swagger
- * /api/v1/auth/register/initiate:
- *   post:
- *     tags: [Auth]
- *     summary: Start registration
- *     description: Validates user details, checks email/mobile uniqueness, sends OTPs to email and mobile. Stores pending registration in Redis.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [firstName, lastName, email, mobile, password]
- *             properties:
- *               firstName: { type: string, minLength: 2, maxLength: 80, example: "Girish" }
- *               lastName: { type: string, minLength: 1, maxLength: 80, example: "Kumar" }
- *               email: { type: string, format: email, example: "girish@example.com" }
- *               mobile: { type: string, pattern: "^\\d{10}$", example: "9876543210" }
- *               password: { type: string, minLength: 8, maxLength: 128, example: "SecurePass1" }
- *               roleCode: { type: string, enum: [student, instructor], default: student, description: "Role to assign on registration. Defaults to student." }
- *               recaptchaToken: { type: string, description: "Required only when RECAPTCHA_ENABLED=true in production" }
- *     responses:
- *       200:
- *         description: OTPs sent to email and mobile
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTPs sent for registration" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessionKey: { type: string, example: "a1b2c3d4e5f6...", description: "Used for OTP verification" }
- *       400:
- *         description: Validation error (invalid email, weak password, etc.)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors:
- *                   type: object
- *                   properties:
- *                     fieldErrors: { type: object }
- *                     formErrors: { type: array, items: { type: string } }
- *       409:
- *         description: Email or mobile already registered
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Email already registered" }
- *                 code: { type: string, example: "EMAIL_ALREADY_REGISTERED" }
- *       429:
- *         description: Too many registration attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/register/initiate', authRateLimiter, recaptchaMiddleware('REGISTER'), validate(registerInitiateDto), registerInitiate);
-/**
- * @swagger
- * /api/v1/auth/register/verify-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Verify registration OTPs
- *     description: Verifies email and mobile OTPs, creates user account, auto-assigns role (student/instructor), returns access and refresh tokens.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey, emailOtp, mobileOtp]
- *             properties:
- *               sessionKey: { type: string, minLength: 20 }
- *               emailOtp: { type: string, minLength: 4, maxLength: 8 }
- *               mobileOtp: { type: string, minLength: 4, maxLength: 8 }
- *     responses:
- *       200:
- *         description: Registration successful, user account created, tokens returned
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Registration successful" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     accessToken: { type: string, description: "JWT access token" }
- *                     refreshToken: { type: string, description: "JWT refresh token" }
- *                     user:
- *                       type: object
- *                       properties:
- *                         id: { type: integer, example: 1 }
- *                         firstName: { type: string, example: "Girish" }
- *                         lastName: { type: string, example: "Kumar" }
- *                         email: { type: string, example: "girish@example.com" }
- *                         mobile: { type: string, example: "9876543210" }
- *                         isActive: { type: boolean, example: true }
- *                         isEmailVerified: { type: boolean, example: true }
- *                         isMobileVerified: { type: boolean, example: true }
- *       400:
- *         description: Invalid OTP, expired session, or race condition (duplicate registration)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid OTP" }
- *                 code: { type: string, example: "INVALID_OTP" }
- *       409:
- *         description: Race condition - email or mobile registered by another request
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Email already registered" }
- *                 code: { type: string, example: "EMAIL_ALREADY_REGISTERED" }
- */
-authRoutes.post('/register/verify-otp', authRateLimiter, validate(registerVerifyOtpDto), registerVerifyOtp);
-/**
- * @swagger
- * /api/v1/auth/register/resend-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Resend registration OTPs
- *     description: Resends OTPs for pending registration. Subject to cooldown and max resend limits.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey]
- *             properties:
- *               sessionKey: { type: string, minLength: 20 }
- *     responses:
- *       200:
- *         description: OTPs resent successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTPs resent" }
- *                 data: { type: object }
- *       400:
- *         description: Session expired or cooldown period still active
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Session expired" }
- *                 code: { type: string, example: "SESSION_EXPIRED" }
- *       429:
- *         description: Too many resend attempts within the window
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/register/resend-otp', otpResendRateLimiter, validate(registerResendOtpDto), registerResendOtp);
+router.post(
+  '/register',
+  validate({ body: registerBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as import('../../../modules/auth/auth.schemas').RegisterBody;
+    const result = await authService.register({
+      firstName: body.firstName,
+      lastName: body.lastName,
+      email: body.email,
+      mobile: body.mobile,
+      password: body.password,
+      roleCode: body.roleCode,
+      countryId: body.countryId
+    });
+    return created(res, result, 'User registered successfully');
+  })
+);
 
-// ═══════════════════════════════════════════════════════════
-// Login / Refresh / Logout
-// ═══════════════════════════════════════════════════════════
+// ─── POST /login ─────────────────────────────────────────────────
+
+router.post(
+  '/login',
+  validate({ body: loginBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as import('../../../modules/auth/auth.schemas').LoginBody;
+    const result = await authService.login({
+      identifier: body.identifier,
+      password: body.password,
+      ipAddress: req.ip ?? null,
+      userAgent: req.headers['user-agent'] ?? null
+    });
+    return ok(res, result, 'Login successful');
+  })
+);
+
+// ─── POST /logout ────────────────────────────────────────────────
 
 /**
- * @swagger
- * /api/v1/auth/login:
- *   post:
- *     tags: [Auth]
- *     summary: Login
- *     description: Authenticates user with email and password. Returns access token, refresh token, and user profile.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [email, password]
- *             properties:
- *               email: { type: string, format: email, example: "girish@example.com" }
- *               password: { type: string, minLength: 8, maxLength: 128 }
- *               recaptchaToken: { type: string, description: "Required only when RECAPTCHA_ENABLED=true" }
- *     responses:
- *       200:
- *         description: Login successful, credentials verified
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Login successful" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     accessToken: { type: string, description: "JWT access token" }
- *                     refreshToken: { type: string, description: "JWT refresh token" }
- *                     user:
- *                       type: object
- *                       properties:
- *                         id: { type: integer, example: 1 }
- *                         firstName: { type: string, example: "Girish" }
- *                         lastName: { type: string, example: "Kumar" }
- *                         email: { type: string, example: "girish@example.com" }
- *                         mobile: { type: string, example: "9876543210" }
- *                         isActive: { type: boolean, example: true }
- *                         isEmailVerified: { type: boolean, example: true }
- *                         isMobileVerified: { type: boolean, example: true }
- *       400:
- *         description: Validation error (invalid email format, missing fields)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors:
- *                   type: object
- *                   properties:
- *                     fieldErrors: { type: object }
- *                     formErrors: { type: array, items: { type: string } }
- *       401:
- *         description: Invalid email or password
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid credentials" }
- *                 code: { type: string, example: "INVALID_CREDENTIALS" }
- *       429:
- *         description: Too many login attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
+ * Logout uses `authenticate` to prove the caller actually holds a
+ * valid access token, then pulls the JWT payload off the header a
+ * second time so the service can read jti/exp for revocation. We
+ * don't stash the raw payload on req.user because the middleware
+ * deliberately keeps that interface clean.
  */
-authRoutes.post('/login', authRateLimiter, recaptchaMiddleware('LOGIN'), validate(loginDto), login);
-/**
- * @swagger
- * /api/v1/auth/refresh:
- *   post:
- *     tags: [Auth]
- *     summary: Refresh access token
- *     description: Exchanges a valid refresh token for a new access token.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [refreshToken]
- *             properties:
- *               refreshToken: { type: string, minLength: 20 }
- *     responses:
- *       200:
- *         description: New access token generated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Access token refreshed" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     accessToken: { type: string, description: "New JWT access token" }
- *       401:
- *         description: Invalid, expired, or revoked refresh token
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid refresh token" }
- *                 code: { type: string, example: "INVALID_REFRESH_TOKEN" }
- */
-authRoutes.post('/refresh', authRateLimiter, validate(refreshDto), refresh);
-/**
- * @swagger
- * /api/v1/auth/logout:
- *   post:
- *     tags: [Auth]
- *     summary: Logout
- *     description: Revokes the current session from Redis. Access token becomes invalid immediately.
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Session revoked successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Logged out successfully" }
- *                 data: { type: object }
- *       401:
- *         description: Not authenticated (missing or invalid JWT)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Not authenticated" }
- *                 code: { type: string, example: "NOT_AUTHENTICATED" }
- */
-authRoutes.post('/logout', authMiddleware, logout);
+router.post(
+  '/logout',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const header = req.headers.authorization ?? '';
+    const token = header.replace(/^Bearer\s+/i, '').trim();
+    if (!token) throw AppError.unauthorized('Missing bearer token');
 
-// ═══════════════════════════════════════════════════════════
-// Forgot Password (public, multi-step with OTP)
-// ═══════════════════════════════════════════════════════════
+    const payload = verifyAccessToken(token);
+    await authService.logout(payload);
+    return ok(res, { revoked: true }, 'Logged out');
+  })
+);
 
-/**
- * @swagger
- * /api/v1/auth/forgot-password/initiate:
- *   post:
- *     tags: [Auth]
- *     summary: Start password reset
- *     description: Sends OTPs to email and mobile for password reset verification.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [email, mobile]
- *             properties:
- *               email: { type: string, format: email }
- *               mobile: { type: string, pattern: "^\\d{10}$" }
- *     responses:
- *       200:
- *         description: Reset OTPs sent to email and mobile
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Reset OTPs sent" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessionKey: { type: string, description: "Used for OTP verification" }
- *       400:
- *         description: Validation error (invalid email or mobile format)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors: { type: object }
- *       404:
- *         description: User not found (email and mobile don't match any account)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "User not found" }
- *                 code: { type: string, example: "USER_NOT_FOUND" }
- *       429:
- *         description: Too many password reset attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/forgot-password/initiate', authRateLimiter, validate(forgotPasswordInitiateDto), forgotPasswordInitiate);
-/**
- * @swagger
- * /api/v1/auth/forgot-password/verify-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Verify password reset OTPs
- *     description: Verifies both OTPs and returns a reset token for setting the new password.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey, emailOtp, mobileOtp]
- *             properties:
- *               sessionKey: { type: string }
- *               emailOtp: { type: string }
- *               mobileOtp: { type: string }
- *     responses:
- *       200:
- *         description: OTPs verified, reset token issued
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTPs verified" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     resetToken: { type: string, description: "Token for password reset" }
- *       400:
- *         description: Invalid OTP or session expired
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid OTP" }
- *                 code: { type: string, example: "INVALID_OTP" }
- */
-authRoutes.post('/forgot-password/verify-otp', authRateLimiter, validate(forgotPasswordVerifyOtpDto), forgotPasswordVerifyOtp);
-/**
- * @swagger
- * /api/v1/auth/forgot-password/reset-password:
- *   post:
- *     tags: [Auth]
- *     summary: Set new password
- *     description: Sets a new password using the reset token obtained from verify-otp.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [resetToken, newPassword]
- *             properties:
- *               resetToken: { type: string }
- *               newPassword: { type: string, minLength: 8, maxLength: 128 }
- *     responses:
- *       200:
- *         description: Password updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Password reset successful" }
- *                 data: { type: object }
- *       400:
- *         description: Invalid, expired, or malformed reset token
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid reset token" }
- *                 code: { type: string, example: "INVALID_RESET_TOKEN" }
- */
-authRoutes.post('/forgot-password/reset-password', authRateLimiter, validate(forgotPasswordResetDto), forgotPasswordReset);
-/**
- * @swagger
- * /api/v1/auth/forgot-password/resend-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Resend password reset OTPs
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey]
- *             properties:
- *               sessionKey: { type: string }
- *     responses:
- *       200:
- *         description: Reset OTPs resent
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTPs resent" }
- *                 data: { type: object }
- *       400:
- *         description: Session expired or cooldown period active
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Session expired" }
- *                 code: { type: string, example: "SESSION_EXPIRED" }
- *       429:
- *         description: Too many resend attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/forgot-password/resend-otp', otpResendRateLimiter, validate(forgotPasswordResendOtpDto), forgotPasswordResendOtp);
+// ─── POST /refresh ───────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════
-// Change Password (authenticated, multi-step with OTP)
-// ═══════════════════════════════════════════════════════════
+router.post(
+  '/refresh',
+  validate({ body: refreshBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as import('../../../modules/auth/auth.schemas').RefreshBody;
+    const result = await authService.refresh(body.refreshToken);
+    return ok(res, result, 'Token refreshed');
+  })
+);
 
-/**
- * @swagger
- * /api/v1/auth/change-password/initiate:
- *   post:
- *     tags: [Auth]
- *     summary: Start password change
- *     description: Verifies old password, sends OTPs to email and mobile for confirmation.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [oldPassword, newPassword]
- *             properties:
- *               oldPassword: { type: string }
- *               newPassword: { type: string, minLength: 8, maxLength: 128 }
- *     responses:
- *       200:
- *         description: Old password verified, confirmation OTPs sent
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Confirmation OTPs sent" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessionKey: { type: string, description: "For OTP verification" }
- *       400:
- *         description: Validation error
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors: { type: object }
- *       401:
- *         description: Not authenticated or old password incorrect
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Old password incorrect" }
- *                 code: { type: string, example: "INVALID_PASSWORD" }
- */
-authRoutes.post('/change-password/initiate', authMiddleware, authRateLimiter, validate(changePasswordInitiateDto), changePasswordInitiate);
-/**
- * @swagger
- * /api/v1/auth/change-password/verify-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Verify password change OTPs
- *     description: Verifies OTPs and changes password. Forces logout from all sessions.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey, emailOtp, mobileOtp]
- *             properties:
- *               sessionKey: { type: string }
- *               emailOtp: { type: string }
- *               mobileOtp: { type: string }
- *     responses:
- *       200:
- *         description: Password changed, all sessions revoked
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Password changed successfully" }
- *                 data: { type: object }
- *       400:
- *         description: Invalid OTP or session expired
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid OTP" }
- *                 code: { type: string, example: "INVALID_OTP" }
- */
-authRoutes.post('/change-password/verify-otp', authMiddleware, authRateLimiter, validate(changePasswordVerifyOtpDto), changePasswordVerifyOtp);
-/**
- * @swagger
- * /api/v1/auth/change-password/resend-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Resend password change OTPs
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey]
- *             properties:
- *               sessionKey: { type: string }
- *     responses:
- *       200:
- *         description: OTPs resent successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTPs resent" }
- *                 data: { type: object }
- *       429:
- *         description: Too many resend attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/change-password/resend-otp', authMiddleware, otpResendRateLimiter, validate(changePasswordResendOtpDto), changePasswordResendOtp);
+// ─── GET /me ─────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════
-// Change Email (authenticated, multi-step with OTP)
-// ═══════════════════════════════════════════════════════════
+router.get(
+  '/me',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    // authenticate has guaranteed req.user is populated.
+    const me = await authService.getMe(req.user!);
+    return ok(res, me, 'OK');
+  })
+);
 
-/**
- * @swagger
- * /api/v1/auth/change-email/initiate:
- *   post:
- *     tags: [Auth]
- *     summary: Start email change
- *     description: Sends OTP to the new email address for verification.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [newEmail]
- *             properties:
- *               newEmail: { type: string, format: email }
- *     responses:
- *       200:
- *         description: Verification OTP sent to new email
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTP sent to new email" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessionKey: { type: string, description: "For OTP verification" }
- *       400:
- *         description: Validation error (invalid email format)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors: { type: object }
- *       401:
- *         description: Not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Not authenticated" }
- *                 code: { type: string, example: "NOT_AUTHENTICATED" }
- *       409:
- *         description: Email already registered to another account
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Email already registered" }
- *                 code: { type: string, example: "EMAIL_ALREADY_REGISTERED" }
- */
-authRoutes.post('/change-email/initiate', authMiddleware, authRateLimiter, validate(changeEmailInitiateDto), changeEmailInitiate);
-/**
- * @swagger
- * /api/v1/auth/change-email/verify-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Verify email change OTP
- *     description: Verifies OTP and updates email. Forces logout from all sessions.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey, emailOtp]
- *             properties:
- *               sessionKey: { type: string }
- *               emailOtp: { type: string }
- *     responses:
- *       200:
- *         description: Email updated, all sessions revoked
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Email changed successfully" }
- *                 data: { type: object }
- *       400:
- *         description: Invalid OTP or session expired
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid OTP" }
- *                 code: { type: string, example: "INVALID_OTP" }
- */
-authRoutes.post('/change-email/verify-otp', authMiddleware, authRateLimiter, validate(changeEmailVerifyOtpDto), changeEmailVerifyOtp);
-/**
- * @swagger
- * /api/v1/auth/change-email/resend-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Resend email change OTP
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey]
- *             properties:
- *               sessionKey: { type: string }
- *     responses:
- *       200:
- *         description: OTP resent to email
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTP resent" }
- *                 data: { type: object }
- *       429:
- *         description: Too many resend attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/change-email/resend-otp', authMiddleware, otpResendRateLimiter, validate(changeEmailResendOtpDto), changeEmailResendOtp);
+// ═══════════════════════════════════════════════════════════════
+//   Step 11 — OTP-driven flows
+// ═══════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════
-// Change Mobile (authenticated, multi-step with OTP)
-// ═══════════════════════════════════════════════════════════
+// ─── POST /forgot-password (public, dual-channel initiate) ──────
 
-/**
- * @swagger
- * /api/v1/auth/change-mobile/initiate:
- *   post:
- *     tags: [Auth]
- *     summary: Start mobile change
- *     description: Sends OTP to the new mobile number for verification.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [newMobile]
- *             properties:
- *               newMobile: { type: string, pattern: "^\\d{10}$" }
- *     responses:
- *       200:
- *         description: Verification OTP sent to new mobile
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTP sent to new mobile" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     sessionKey: { type: string, description: "For OTP verification" }
- *       400:
- *         description: Validation error (invalid mobile format)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Validation failed" }
- *                 errors: { type: object }
- *       401:
- *         description: Not authenticated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Not authenticated" }
- *                 code: { type: string, example: "NOT_AUTHENTICATED" }
- *       409:
- *         description: Mobile number already registered to another account
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Mobile already registered" }
- *                 code: { type: string, example: "MOBILE_ALREADY_REGISTERED" }
- */
-authRoutes.post('/change-mobile/initiate', authMiddleware, authRateLimiter, validate(changeMobileInitiateDto), changeMobileInitiate);
-/**
- * @swagger
- * /api/v1/auth/change-mobile/verify-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Verify mobile change OTP
- *     description: Verifies OTP and updates mobile number. Forces logout from all sessions.
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey, mobileOtp]
- *             properties:
- *               sessionKey: { type: string }
- *               mobileOtp: { type: string }
- *     responses:
- *       200:
- *         description: Mobile updated, all sessions revoked
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Mobile changed successfully" }
- *                 data: { type: object }
- *       400:
- *         description: Invalid OTP or session expired
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Invalid OTP" }
- *                 code: { type: string, example: "INVALID_OTP" }
- */
-authRoutes.post('/change-mobile/verify-otp', authMiddleware, authRateLimiter, validate(changeMobileVerifyOtpDto), changeMobileVerifyOtp);
-/**
- * @swagger
- * /api/v1/auth/change-mobile/resend-otp:
- *   post:
- *     tags: [Auth]
- *     summary: Resend mobile change OTP
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [sessionKey]
- *             properties:
- *               sessionKey: { type: string }
- *     responses:
- *       200:
- *         description: OTP resent to mobile
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "OTP resent" }
- *                 data: { type: object }
- *       429:
- *         description: Too many resend attempts
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: false }
- *                 message: { type: string, example: "Rate limit exceeded" }
- *                 code: { type: string, example: "RATE_LIMIT_EXCEEDED" }
- */
-authRoutes.post('/change-mobile/resend-otp', authMiddleware, otpResendRateLimiter, validate(changeMobileResendOtpDto), changeMobileResendOtp);
+router.post(
+  '/forgot-password',
+  validate({ body: forgotPasswordInitiateBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ForgotPasswordInitiateBody;
+    const result = await authFlows.forgotPasswordInitiate(body.email, body.mobile);
+    return ok(res, result, 'Verification codes sent');
+  })
+);
 
-export { authRoutes };
+// ─── POST /forgot-password/verify (public, dual-channel complete)
+
+router.post(
+  '/forgot-password/verify',
+  validate({ body: forgotPasswordCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ForgotPasswordCompleteBody;
+    const result = await authFlows.forgotPasswordComplete(body);
+    return ok(res, result, 'Password has been reset');
+  })
+);
+
+// ─── POST /reset-password (auth, dual-channel initiate) ─────────
+
+router.post(
+  '/reset-password',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await authFlows.resetPasswordInitiate(userId);
+    return ok(res, result, 'Verification codes sent');
+  })
+);
+
+// ─── POST /reset-password/verify (auth, dual-channel complete) ──
+
+router.post(
+  '/reset-password/verify',
+  authenticate,
+  validate({ body: resetPasswordCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ResetPasswordCompleteBody;
+    const userId = req.user!.id;
+    const result = await authFlows.resetPasswordComplete({
+      userId,
+      ...body
+    });
+    return ok(res, result, 'Password has been changed');
+  })
+);
+
+// ─── POST /verify-email (auth, single-channel initiate) ─────────
+
+router.post(
+  '/verify-email',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await authFlows.verifyEmailInitiate(userId);
+    return ok(res, result, 'Verification email sent');
+  })
+);
+
+// ─── POST /verify-email/confirm (auth, single-channel complete) ─
+
+router.post(
+  '/verify-email/confirm',
+  authenticate,
+  validate({ body: verifyContactCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as VerifyContactCompleteBody;
+    const userId = req.user!.id;
+    const result = await authFlows.verifyEmailComplete({
+      userId,
+      otpId: body.otpId,
+      otpCode: body.otpCode
+    });
+    return ok(res, result, 'Email verified');
+  })
+);
+
+// ─── POST /verify-mobile (auth, single-channel initiate) ────────
+
+router.post(
+  '/verify-mobile',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await authFlows.verifyMobileInitiate(userId);
+    return ok(res, result, 'Verification SMS sent');
+  })
+);
+
+// ─── POST /verify-mobile/confirm (auth, single-channel complete)
+
+router.post(
+  '/verify-mobile/confirm',
+  authenticate,
+  validate({ body: verifyContactCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as VerifyContactCompleteBody;
+    const userId = req.user!.id;
+    const result = await authFlows.verifyMobileComplete({
+      userId,
+      otpId: body.otpId,
+      otpCode: body.otpCode
+    });
+    return ok(res, result, 'Mobile verified');
+  })
+);
+
+// ─── POST /change-email (auth, OTP to new address) ──────────────
+
+router.post(
+  '/change-email',
+  authenticate,
+  validate({ body: changeEmailInitiateBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ChangeEmailInitiateBody;
+    const userId = req.user!.id;
+    const result = await authFlows.changeEmailInitiate(userId, body.newEmail);
+    return ok(res, result, 'Verification code sent to new email');
+  })
+);
+
+// ─── POST /change-email/confirm (auth, complete request) ────────
+
+router.post(
+  '/change-email/confirm',
+  authenticate,
+  validate({ body: changeContactCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ChangeContactCompleteBody;
+    const result = await authFlows.changeEmailComplete(body);
+    return ok(res, result, 'Email changed; please re-login');
+  })
+);
+
+// ─── POST /change-mobile (auth, OTP to new number) ──────────────
+
+router.post(
+  '/change-mobile',
+  authenticate,
+  validate({ body: changeMobileInitiateBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ChangeMobileInitiateBody;
+    const userId = req.user!.id;
+    const result = await authFlows.changeMobileInitiate(userId, body.newMobile);
+    return ok(res, result, 'Verification code sent to new mobile');
+  })
+);
+
+// ─── POST /change-mobile/confirm (auth, complete request) ───────
+
+router.post(
+  '/change-mobile/confirm',
+  authenticate,
+  validate({ body: changeContactCompleteBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as ChangeContactCompleteBody;
+    const result = await authFlows.changeMobileComplete(body);
+    return ok(res, result, 'Mobile changed; please re-login');
+  })
+);
+
+export default router;

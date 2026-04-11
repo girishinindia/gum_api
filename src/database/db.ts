@@ -12,6 +12,12 @@ export interface UdfMutationResult {
   success: boolean;
   message: string;
   id?: number | null;
+  /**
+   * Companion translation row id returned by combined parent+translation insert
+   * UDFs (e.g. udf_categories_insert, udf_sub_categories_insert). Null when the
+   * caller did not supply translation params.
+   */
+  translationId?: number | null;
   removed_count?: number;
   added_count?: number;
 }

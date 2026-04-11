@@ -1,72 +1,78 @@
 import { Router } from 'express';
 
-import { getHealth, getDebugHealth } from './health.controller';
+import { env } from '../../../config/env';
+import { asyncHandler } from '../../../core/utils/async-handler';
+import { ok } from '../../../core/utils/api-response';
+import { getPool } from '../../../database/pg-pool';
+import { getRedisClient } from '../../../database/redis';
 
-const healthRoutes = Router();
+const router = Router();
 
 /**
- * @swagger
+ * @openapi
  * /api/v1/health:
  *   get:
  *     tags: [Health]
- *     summary: Health check
- *     description: Returns API status, version, and timezone. No authentication required.
+ *     summary: Liveness probe
  *     responses:
  *       200:
- *         description: API is running and healthy
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "API is healthy" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     status: { type: string, example: "OK" }
- *                     version: { type: string, example: "1.0.0" }
- *                     timestamp: { type: string, format: date-time }
- *                     timezone: { type: string, example: "UTC" }
+ *         description: Service is alive
  */
-healthRoutes.get('/', getHealth);
+router.get(
+  '/',
+  asyncHandler(async (_req, res) => {
+    return ok(
+      res,
+      {
+        app: env.APP_NAME,
+        env: env.NODE_ENV,
+        version: env.API_VERSION,
+        timestamp: new Date().toISOString()
+      },
+      'Service is alive'
+    );
+  })
+);
 
-// ⚠️  Debug endpoint — REMOVE after identifying the production issue
 /**
- * @swagger
- * /api/v1/health/debug:
+ * @openapi
+ * /api/v1/health/ready:
  *   get:
  *     tags: [Health]
- *     summary: Debug health check
- *     description: Returns extended debug information including database and Redis connectivity. For development/troubleshooting only.
+ *     summary: Readiness probe (checks DB + Redis)
  *     responses:
  *       200:
- *         description: Extended debug information returned
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success: { type: boolean, example: true }
- *                 message: { type: string, example: "Debug info" }
- *                 data:
- *                   type: object
- *                   properties:
- *                     status: { type: string, example: "OK" }
- *                     version: { type: string, example: "1.0.0" }
- *                     timestamp: { type: string, format: date-time }
- *                     timezone: { type: string, example: "UTC" }
- *                     database:
- *                       type: object
- *                       properties:
- *                         connected: { type: boolean, example: true }
- *                         latency: { type: integer, description: "Response time in milliseconds" }
- *                     redis:
- *                       type: object
- *                       properties:
- *                         connected: { type: boolean, example: true }
- *                         latency: { type: integer, description: "Response time in milliseconds" }
+ *         description: All dependencies healthy
+ *       503:
+ *         description: One or more dependencies unavailable
  */
-healthRoutes.get('/debug', getDebugHealth);
+router.get(
+  '/ready',
+  asyncHandler(async (_req, res) => {
+    const checks: Record<string, 'ok' | 'fail'> = {};
 
-export { healthRoutes };
+    try {
+      await getPool().query('SELECT 1');
+      checks.database = 'ok';
+    } catch {
+      checks.database = 'fail';
+    }
+
+    try {
+      const redis = getRedisClient();
+      const pong = await redis.ping();
+      checks.redis = pong === 'PONG' ? 'ok' : 'fail';
+    } catch {
+      checks.redis = 'fail';
+    }
+
+    const allOk = Object.values(checks).every((v) => v === 'ok');
+    return res.status(allOk ? 200 : 503).json({
+      success: allOk,
+      message: allOk ? 'Ready' : 'Not ready',
+      data: checks
+    });
+  })
+);
+
+export default router;

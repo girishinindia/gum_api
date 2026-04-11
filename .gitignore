@@ -1,14 +1,42 @@
-node_modules
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment
 .env
-/dist
-/logs
-/uploads/*
-!/uploads/.gitkeep
-.DS_Store
-coverage
+.env.local
+.env.*.local
+
+# Logs
+logs/
 *.log
-documentation_api/
-hosting/
-Database_Schema/
-email_template_preview/
-docs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+*.swp
+*.swo
+.cache/
+
+logs/
+tests/
+.env
+.env.example

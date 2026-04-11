@@ -1,718 +1,414 @@
-import crypto from 'crypto';
+// ═══════════════════════════════════════════════════════════════
+// auth.service — UDF wrappers + JWT glue for the auth module.
+//
+// Rules:
+//   • NO naked SQL. Everything goes through `db.callFunction` /
+//     `db.callTableFunction` / `db.query` with parameters.
+//   • Handlers only call this layer; they don't touch the db module.
+//   • `db.callFunction` already throws AppError on { success: false }
+//     via parseUdfError, so we rarely need try/catch here.
+// ═══════════════════════════════════════════════════════════════
 
-import { AppError } from '../../core/errors/app-error';
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../core/utils/jwt';
-import { redisSession, redisPending } from '../../database/redis';
-import { brevoService } from '../../integrations/email/brevo.service';
-import { welcomeTemplate } from '../../integrations/email/templates/welcome.template';
-
-import { passwordChangedTemplate } from '../../integrations/email/templates/password-changed.template';
-import { emailChangedNotifyTemplate, emailChangedWelcomeTemplate } from '../../integrations/email/templates/email-changed.template';
-import { mobileChangedTemplate } from '../../integrations/email/templates/mobile-changed.template';
+import crypto from 'node:crypto';
 
 import { db } from '../../database/db';
-import { logger } from '../../core/logger/logger';
-import { authRepository } from './auth.repository';
-import { otpService } from './otp.service';
+import { getPool } from '../../database/pg-pool';
+import { redisRevoked } from '../../database/redis';
 import {
-  AuthUserRow,
-  AuthUserPublic,
-  LoginInput,
-  RegisterInitiateInput,
-  ForgotPasswordInitiateInput,
-  ChangePasswordInitiateInput,
-  ChangeEmailInitiateInput,
-  ChangeMobileInitiateInput,
-  PendingRegisterSession,
-  PendingForgotPasswordSession,
-  PendingChangePasswordSession,
-  PendingChangeEmailSession,
-  PendingChangeMobileSession
-} from './auth.types';
-
-// ─── Row → Public User Mapper ──────────────────────────────
-
-const toPublicUser = (row: AuthUserRow): AuthUserPublic => ({
-  id: row.user_id,
-  firstName: row.user_first_name,
-  lastName: row.user_last_name,
-  email: row.user_email,
-  mobile: row.user_mobile,
-  isActive: row.user_is_active,
-  isEmailVerified: row.user_is_email_verified,
-  isMobileVerified: row.user_is_mobile_verified,
-  lastLogin: row.user_last_login,
-  createdAt: row.user_created_at,
-  updatedAt: row.user_updated_at
-});
-
-/** Generate a random session key for multi-step flows */
-const generateSessionKey = (): string => crypto.randomBytes(24).toString('hex');
-
-// ═══════════════════════════════════════════════════════════
-// AUTH SERVICE
-// ═══════════════════════════════════════════════════════════
-
-class AuthService {
-
-  // ─────────────────────────────────────────────────────────
-  // 1. REGISTRATION (multi-step with OTP)
-  // ─────────────────────────────────────────────────────────
-
-  /** Step 1: Validate, check existence, send OTPs, store pending data */
-  async registerInitiate(input: RegisterInitiateInput) {
-    // Check email not already registered
-    const emailExists = await authRepository.emailExists(input.email);
-    if (emailExists) {
-      throw new AppError('Email is already registered.', 409, 'EMAIL_ALREADY_EXISTS');
-    }
-
-    // Check mobile not already registered
-    const mobileExists = await authRepository.mobileExists(input.mobile);
-    if (mobileExists) {
-      throw new AppError('Mobile number is already registered.', 409, 'MOBILE_ALREADY_EXISTS');
-    }
-
-    // Generate session key for this registration flow
-    const sessionKey = generateSessionKey();
-    const userName = `${input.firstName} ${input.lastName}`.trim();
-
-    // Store pending registration data in Redis
-    const pendingData: PendingRegisterSession = {
-      firstName: input.firstName,
-      lastName: input.lastName,
-      email: input.email,
-      mobile: input.mobile,
-      password: input.password,
-      roleCode: input.roleCode
-    };
-    await redisPending.store(`register:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
-
-    // Send OTPs to both email and mobile
-    await otpService.sendToBoth({
-      flow: 'register',
-      sessionKey,
-      email: input.email,
-      mobile: input.mobile,
-      userName
-    });
-
-    return {
-      sessionKey,
-      message: 'OTPs sent to your email and mobile. Please verify to complete registration.'
-    };
-  }
-
-  /** Step 2: Verify both OTPs and create user */
-  async registerVerifyOtp(sessionKey: string, emailOtp: string, mobileOtp: string) {
-    // Get pending session
-    const pending = await redisPending.get<PendingRegisterSession>(`register:${sessionKey}`);
-    if (!pending) {
-      throw new AppError('Registration session expired or invalid. Please start over.', 400, 'SESSION_EXPIRED');
-    }
-
-    // Verify both OTPs
-    await otpService.verifyBoth('register', sessionKey, emailOtp, mobileOtp);
-
-    // Re-check existence (race condition guard)
-    const emailExists = await authRepository.emailExists(pending.email);
-    if (emailExists) {
-      throw new AppError('Email was registered by another user during verification.', 409, 'EMAIL_ALREADY_EXISTS');
-    }
-    const mobileExists = await authRepository.mobileExists(pending.mobile);
-    if (mobileExists) {
-      throw new AppError('Mobile was registered by another user during verification.', 409, 'MOBILE_ALREADY_EXISTS');
-    }
-
-    // Create user (both email & mobile verified since OTPs confirmed)
-    const { id } = await authRepository.createUser({
-      firstName: pending.firstName,
-      lastName: pending.lastName,
-      email: pending.email,
-      mobile: pending.mobile,
-      password: pending.password
-    });
-
-    // Auto-assign role based on roleCode (student or instructor)
-    const roleCode = pending.roleCode ?? 'student';
-    try {
-      await db.query(
-        `INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
-         SELECT $1, r.id, $1
-         FROM roles r
-         WHERE r.code = $2 AND r.is_deleted = FALSE`,
-        [id, roleCode]
-      );
-    } catch (err) {
-      // Log but don't fail registration — role can be assigned manually
-      logger.error({ err, userId: id, roleCode }, 'Failed to auto-assign role on registration');
-    }
-
-    // Clean up pending session and OTP keys
-    await otpService.cleanup('register', sessionKey);
-
-    // Fetch created user and build auth response
-    const user = await authRepository.findById(id);
-    if (!user) {
-      throw new AppError('User creation failed.', 500, 'USER_CREATION_FAILED');
-    }
-
-    const authResponse = await this.buildAuthResponse(user);
-
-    // Send welcome email (fire-and-forget)
-    const fullName = `${user.user_first_name} ${user.user_last_name}`.trim();
-    brevoService
-      .sendWithAdminNotify({
-        to: pending.email,
-        toName: fullName,
-        subject: `Welcome to Grow Up More, ${user.user_first_name}!`,
-        html: welcomeTemplate(fullName)
-      })
-      .catch(() => {});
-
-    return authResponse;
-  }
-
-  /** Step 3: Resend registration OTPs */
-  async registerResendOtp(sessionKey: string) {
-    const pending = await redisPending.get<PendingRegisterSession>(`register:${sessionKey}`);
-    if (!pending) {
-      throw new AppError('Registration session expired or invalid. Please start over.', 400, 'SESSION_EXPIRED');
-    }
-
-    const userName = `${pending.firstName} ${pending.lastName}`.trim();
-
-    await otpService.sendToBoth({
-      flow: 'register',
-      sessionKey,
-      email: pending.email,
-      mobile: pending.mobile,
-      userName
-    });
-
-    return { message: 'OTPs resent to your email and mobile.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 2. LOGIN (unchanged — single step)
-  // ─────────────────────────────────────────────────────────
-
-  async login(input: LoginInput) {
-    const user = await authRepository.verifyCredentials(input.email, input.password);
-
-    if (!user) {
-      throw new AppError('Invalid email or password.', 401, 'INVALID_CREDENTIALS');
-    }
-
-    if (!user.user_is_active) {
-      throw new AppError('Your account has been deactivated.', 403, 'ACCOUNT_DEACTIVATED');
-    }
-
-    // Update last_login (fire-and-forget)
-    authRepository.updateLastLogin(user.user_id).catch(() => {});
-
-    return this.buildAuthResponse(user);
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 3. REFRESH TOKEN
-  // ─────────────────────────────────────────────────────────
-
-  async refresh(refreshToken: string) {
-    let payload;
-
-    try {
-      payload = verifyRefreshToken(refreshToken);
-    } catch {
-      throw new AppError('Invalid or expired refresh token.', 401, 'INVALID_REFRESH_TOKEN');
-    }
-
-    const userId = String(payload.userId);
-    const isValid = await redisSession.isValid(userId, refreshToken);
-    if (!isValid) {
-      throw new AppError('Refresh token has been revoked.', 401, 'REFRESH_TOKEN_REVOKED');
-    }
-
-    const user = await authRepository.findById(payload.userId);
-    if (!user) {
-      throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
-    }
-
-    if (!user.user_is_active) {
-      throw new AppError('Your account has been deactivated.', 403, 'ACCOUNT_DEACTIVATED');
-    }
-
-    return this.buildAuthResponse(user);
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 4. LOGOUT
-  // ─────────────────────────────────────────────────────────
-
-  async logout(userId: string) {
-    await redisSession.revoke(userId);
-    return { message: 'Logged out successfully.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 5. FORGOT PASSWORD (multi-step with OTP)
-  // ─────────────────────────────────────────────────────────
-
-  /** Step 1: Validate email+mobile combo, send OTPs */
-  async forgotPasswordInitiate(input: ForgotPasswordInitiateInput) {
-    // Check email+mobile belong to same non-deleted user
-    const user = await authRepository.findByEmailMobile(input.email, input.mobile);
-    if (!user) {
-      throw new AppError(
-        'No account found with this email and mobile combination.',
-        404,
-        'USER_NOT_FOUND'
-      );
-    }
-
-    if (!user.user_is_active) {
-      throw new AppError('Your account has been deactivated.', 403, 'ACCOUNT_DEACTIVATED');
-    }
-
-    const sessionKey = generateSessionKey();
-    const userName = `${user.user_first_name} ${user.user_last_name}`.trim();
-
-    // Store pending session
-    const pendingData: PendingForgotPasswordSession = {
-      userId: user.user_id,
-      email: input.email,
-      mobile: input.mobile
-    };
-    await redisPending.store(`forgot_password:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
-
-    // Send OTPs to both
-    await otpService.sendToBoth({
-      flow: 'forgot_password',
-      sessionKey,
-      email: input.email,
-      mobile: input.mobile,
-      userName
-    });
-
-    return {
-      sessionKey,
-      message: 'OTPs sent to your email and mobile. Please verify to reset your password.'
-    };
-  }
-
-  /** Step 2: Verify OTPs — returns a reset token (the same sessionKey, now verified) */
-  async forgotPasswordVerifyOtp(sessionKey: string, emailOtp: string, mobileOtp: string) {
-    const pending = await redisPending.get<PendingForgotPasswordSession>(`forgot_password:${sessionKey}`);
-    if (!pending) {
-      throw new AppError('Password reset session expired or invalid. Please start over.', 400, 'SESSION_EXPIRED');
-    }
-
-    await otpService.verifyBoth('forgot_password', sessionKey, emailOtp, mobileOtp);
-
-    // Mark session as verified (extend TTL for password reset step)
-    await redisPending.store(`forgot_password_verified:${sessionKey}`, {
-      userId: pending.userId
-    }, 600); // 10 minutes to enter new password
-
-    // Clean up OTP keys but keep verified session
-    await redisPending.del(`forgot_password:${sessionKey}`);
-
-    return {
-      resetToken: sessionKey,
-      message: 'OTPs verified. Please set your new password.'
-    };
-  }
-
-  /** Step 3: Reset password (after OTP verified) */
-  async forgotPasswordReset(resetToken: string, newPassword: string) {
-    const verified = await redisPending.get<{ userId: number }>(`forgot_password_verified:${resetToken}`);
-    if (!verified) {
-      throw new AppError('Reset token expired or invalid. Please start the process again.', 400, 'SESSION_EXPIRED');
-    }
-
-    await authRepository.updatePassword(verified.userId, newPassword);
-
-    // Clean up
-    await redisPending.del(`forgot_password_verified:${resetToken}`);
-
-    // Revoke existing sessions (force re-login)
-    await redisSession.revoke(String(verified.userId));
-
-    // Send password changed confirmation email (fire-and-forget)
-    const fpUser = await authRepository.findById(verified.userId);
-    if (fpUser?.user_email) {
-      const fpName = `${fpUser.user_first_name} ${fpUser.user_last_name}`.trim();
-      brevoService.sendToOne({
-        to: fpUser.user_email,
-        toName: fpName,
-        subject: 'Password Changed - Grow Up More',
-        html: passwordChangedTemplate(fpName)
-      }).catch(() => {});
-    }
-
-    return { message: 'Password reset successfully. Please login with your new password.' };
-  }
-
-  /** Resend forgot-password OTPs */
-  async forgotPasswordResendOtp(sessionKey: string) {
-    const pending = await redisPending.get<PendingForgotPasswordSession>(`forgot_password:${sessionKey}`);
-    if (!pending) {
-      throw new AppError('Password reset session expired or invalid. Please start over.', 400, 'SESSION_EXPIRED');
-    }
-
-    // Get user name for SMS template
-    const user = await authRepository.findById(pending.userId);
-    const userName = user ? `${user.user_first_name} ${user.user_last_name}`.trim() : 'User';
-
-    await otpService.sendToBoth({
-      flow: 'forgot_password',
-      sessionKey,
-      email: pending.email,
-      mobile: pending.mobile,
-      userName
-    });
-
-    return { message: 'OTPs resent to your email and mobile.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 6. CHANGE PASSWORD (authenticated, multi-step OTP)
-  // ─────────────────────────────────────────────────────────
-
-  /** Step 1: Verify old password, send OTPs to user's email + mobile */
-  async changePasswordInitiate(userId: number, input: ChangePasswordInitiateInput) {
-    // Verify old password
-    const isValid = await authRepository.verifyPassword(userId, input.oldPassword);
-    if (!isValid) {
-      throw new AppError('Current password is incorrect.', 401, 'INVALID_PASSWORD');
-    }
-
-    // Fetch user for email + mobile
-    const user = await authRepository.findById(userId);
-    if (!user) {
-      throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
-    }
-
-    if (!user.user_email || !user.user_mobile) {
-      throw new AppError('Both email and mobile are required for password change.', 400, 'MISSING_CONTACT_INFO');
-    }
-
-    const sessionKey = generateSessionKey();
-    const userName = `${user.user_first_name} ${user.user_last_name}`.trim();
-
-    // Store pending session
-    const pendingData: PendingChangePasswordSession = {
-      userId,
-      email: user.user_email,
-      mobile: user.user_mobile,
-      newPassword: input.newPassword
-    };
-    await redisPending.store(`change_password:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
-
-    // Send OTPs to both
-    await otpService.sendToBoth({
-      flow: 'change_password',
-      sessionKey,
-      email: user.user_email,
-      mobile: user.user_mobile,
-      userName
-    });
-
-    return {
-      sessionKey,
-      message: 'OTPs sent to your email and mobile. Please verify to change your password.'
-    };
-  }
-
-  /** Step 2: Verify OTPs, save new password, force logout */
-  async changePasswordVerifyOtp(userId: number, sessionKey: string, emailOtp: string, mobileOtp: string) {
-    const pending = await redisPending.get<PendingChangePasswordSession>(`change_password:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Password change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    await otpService.verifyBoth('change_password', sessionKey, emailOtp, mobileOtp);
-
-    // Update password
-    await authRepository.updatePassword(userId, pending.newPassword);
-
-    // Clean up
-    await otpService.cleanup('change_password', sessionKey);
-
-    // Force logout (revoke sessions)
-    await redisSession.revoke(String(userId));
-
-    // Send password changed confirmation email (fire-and-forget)
-    const cpUser = await authRepository.findById(userId);
-    if (cpUser?.user_email) {
-      const cpName = `${cpUser.user_first_name} ${cpUser.user_last_name}`.trim();
-      brevoService.sendToOne({
-        to: cpUser.user_email,
-        toName: cpName,
-        subject: 'Password Changed - Grow Up More',
-        html: passwordChangedTemplate(cpName)
-      }).catch(() => {});
-    }
-
-    return { message: 'Password changed successfully. Please login with your new password.' };
-  }
-
-  /** Resend change-password OTPs */
-  async changePasswordResendOtp(userId: number, sessionKey: string) {
-    const pending = await redisPending.get<PendingChangePasswordSession>(`change_password:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Password change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    const user = await authRepository.findById(userId);
-    const userName = user ? `${user.user_first_name} ${user.user_last_name}`.trim() : 'User';
-
-    await otpService.sendToBoth({
-      flow: 'change_password',
-      sessionKey,
-      email: pending.email,
-      mobile: pending.mobile,
-      userName
-    });
-
-    return { message: 'OTPs resent to your email and mobile.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 7. CHANGE EMAIL (authenticated, OTP to new email)
-  // ─────────────────────────────────────────────────────────
-
-  /** Step 1: Check new email not taken, send OTP to new email */
-  async changeEmailInitiate(userId: number, input: ChangeEmailInitiateInput) {
-    // Check new email not already registered
-    const emailExists = await authRepository.emailExists(input.newEmail);
-    if (emailExists) {
-      throw new AppError('This email is already registered.', 409, 'EMAIL_ALREADY_EXISTS');
-    }
-
-    const user = await authRepository.findById(userId);
-    if (!user) {
-      throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
-    }
-
-    const sessionKey = generateSessionKey();
-    const userName = `${user.user_first_name} ${user.user_last_name}`.trim();
-
-    // Store pending session
-    const pendingData: PendingChangeEmailSession = {
-      userId,
-      newEmail: input.newEmail
-    };
-    await redisPending.store(`change_email:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
-
-    // Send OTP to new email only
-    await otpService.sendToEmail({
-      flow: 'change_email',
-      sessionKey,
-      email: input.newEmail,
-      userName
-    });
-
-    return {
-      sessionKey,
-      message: 'OTP sent to your new email. Please verify to complete the change.'
-    };
-  }
-
-  /** Step 2: Verify OTP, update email, force logout */
-  async changeEmailVerifyOtp(userId: number, sessionKey: string, emailOtp: string) {
-    const pending = await redisPending.get<PendingChangeEmailSession>(`change_email:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Email change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    await otpService.verifyEmail('change_email', sessionKey, emailOtp);
-
-    // Re-check email (race condition guard)
-    const emailExists = await authRepository.emailExists(pending.newEmail);
-    if (emailExists) {
-      throw new AppError('This email was registered by another user during verification.', 409, 'EMAIL_ALREADY_EXISTS');
-    }
-
-    // Get user info before update (for old email notification)
-    const ceUser = await authRepository.findById(userId);
-    const ceName = ceUser ? `${ceUser.user_first_name} ${ceUser.user_last_name}`.trim() : 'User';
-    const oldEmail = ceUser?.user_email;
-
-    // Update email (mark as verified)
-    await authRepository.updateEmail(userId, pending.newEmail);
-
-    // Clean up
-    await otpService.cleanup('change_email', sessionKey);
-
-    // Force logout
-    await redisSession.revoke(String(userId));
-
-    // Send notification to OLD email (fire-and-forget)
-    if (oldEmail) {
-      brevoService.sendToOne({
-        to: oldEmail,
-        toName: ceName,
-        subject: 'Email Address Changed - Grow Up More',
-        html: emailChangedNotifyTemplate(ceName, pending.newEmail)
-      }).catch(() => {});
-    }
-
-    // Send welcome to NEW email (fire-and-forget)
-    brevoService.sendToOne({
-      to: pending.newEmail,
-      toName: ceName,
-      subject: 'Email Updated Successfully - Grow Up More',
-      html: emailChangedWelcomeTemplate(ceName)
-    }).catch(() => {});
-
-    return { message: 'Email changed successfully. Please login with your new email.' };
-  }
-
-  /** Resend change-email OTP */
-  async changeEmailResendOtp(userId: number, sessionKey: string) {
-    const pending = await redisPending.get<PendingChangeEmailSession>(`change_email:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Email change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    const user = await authRepository.findById(userId);
-    const userName = user ? `${user.user_first_name} ${user.user_last_name}`.trim() : 'User';
-
-    await otpService.sendToEmail({
-      flow: 'change_email',
-      sessionKey,
-      email: pending.newEmail,
-      userName
-    });
-
-    return { message: 'OTP resent to your new email.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // 8. CHANGE MOBILE (authenticated, OTP to new mobile)
-  // ─────────────────────────────────────────────────────────
-
-  /** Step 1: Check new mobile not taken, send OTP to new mobile */
-  async changeMobileInitiate(userId: number, input: ChangeMobileInitiateInput) {
-    // Check new mobile not already registered
-    const mobileExists = await authRepository.mobileExists(input.newMobile);
-    if (mobileExists) {
-      throw new AppError('This mobile number is already registered.', 409, 'MOBILE_ALREADY_EXISTS');
-    }
-
-    const user = await authRepository.findById(userId);
-    if (!user) {
-      throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
-    }
-
-    const sessionKey = generateSessionKey();
-    const userName = `${user.user_first_name} ${user.user_last_name}`.trim();
-
-    // Store pending session
-    const pendingData: PendingChangeMobileSession = {
-      userId,
-      newMobile: input.newMobile
-    };
-    await redisPending.store(`change_mobile:${sessionKey}`, pendingData as unknown as Record<string, unknown>);
-
-    // Send OTP to new mobile only
-    await otpService.sendToMobile({
-      flow: 'change_mobile',
-      sessionKey,
-      mobile: input.newMobile,
-      userName
-    });
-
-    return {
-      sessionKey,
-      message: 'OTP sent to your new mobile. Please verify to complete the change.'
-    };
-  }
-
-  /** Step 2: Verify OTP, update mobile, force logout */
-  async changeMobileVerifyOtp(userId: number, sessionKey: string, mobileOtp: string) {
-    const pending = await redisPending.get<PendingChangeMobileSession>(`change_mobile:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Mobile change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    await otpService.verifyMobile('change_mobile', sessionKey, mobileOtp);
-
-    // Re-check mobile (race condition guard)
-    const mobileExists = await authRepository.mobileExists(pending.newMobile);
-    if (mobileExists) {
-      throw new AppError('This mobile was registered by another user during verification.', 409, 'MOBILE_ALREADY_EXISTS');
-    }
-
-    // Update mobile (mark as verified)
-    await authRepository.updateMobile(userId, pending.newMobile);
-
-    // Clean up
-    await otpService.cleanup('change_mobile', sessionKey);
-
-    // Force logout
-    await redisSession.revoke(String(userId));
-
-    // Send mobile changed confirmation email (fire-and-forget)
-    const cmUser = await authRepository.findById(userId);
-    if (cmUser?.user_email) {
-      const cmName = `${cmUser.user_first_name} ${cmUser.user_last_name}`.trim();
-      brevoService.sendToOne({
-        to: cmUser.user_email,
-        toName: cmName,
-        subject: 'Mobile Number Changed - Grow Up More',
-        html: mobileChangedTemplate(cmName, pending.newMobile)
-      }).catch(() => {});
-    }
-
-    return { message: 'Mobile changed successfully. Please login again.' };
-  }
-
-  /** Resend change-mobile OTP */
-  async changeMobileResendOtp(userId: number, sessionKey: string) {
-    const pending = await redisPending.get<PendingChangeMobileSession>(`change_mobile:${sessionKey}`);
-    if (!pending || pending.userId !== userId) {
-      throw new AppError('Mobile change session expired or invalid.', 400, 'SESSION_EXPIRED');
-    }
-
-    const user = await authRepository.findById(userId);
-    const userName = user ? `${user.user_first_name} ${user.user_last_name}`.trim() : 'User';
-
-    await otpService.sendToMobile({
-      flow: 'change_mobile',
-      sessionKey,
-      mobile: pending.newMobile,
-      userName
-    });
-
-    return { message: 'OTP resent to your new mobile.' };
-  }
-
-  // ─────────────────────────────────────────────────────────
-  // Private: Build Auth Response (JWT + user data)
-  // ─────────────────────────────────────────────────────────
-
-  private async buildAuthResponse(user: AuthUserRow) {
-    const tokenPayload = {
-      userId: user.user_id,
-      email: user.user_email ?? ''
-    };
-
-    const accessToken = signAccessToken(tokenPayload);
-    const refreshToken = signRefreshToken(tokenPayload);
-
-    // Store refresh token in Redis for revocable sessions
-    await redisSession.store(String(user.user_id), refreshToken);
-
-    return {
-      user: toPublicUser(user),
-      tokens: {
-        accessToken,
-        refreshToken
-      }
-    };
-  }
+  secondsUntilExpiry,
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken
+} from '../../core/auth/jwt';
+import { AppError } from '../../core/errors/app-error';
+import { logger } from '../../core/logger/logger';
+import type { AuthUser, JwtPayload, TokenPair } from '../../core/types/auth.types';
+import { env } from '../../config/env';
+import { mailer } from '../../integrations/email/mailer.service';
+
+// ─── Types ───────────────────────────────────────────────────────
+
+export interface RegisterInput {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  mobile?: string;
+  password: string;
+  roleCode: 'student' | 'instructor';
+  countryId: number;
 }
 
-export const authService = new AuthService();
+export interface RegisterOutput {
+  userId: number;
+  // Only populated in non-production mode — we log the OTP but also
+  // surface it in the HTTP response so the verify flow can be tested
+  // end-to-end without a real mail/SMS gateway.
+  devEmailOtp?: string | null;
+  devMobileOtp?: string | null;
+}
+
+export interface LoginInput {
+  identifier: string;
+  password: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+export interface LoginOutput extends TokenPair {
+  user: AuthUser;
+  sessionId: number;
+}
+
+// ─── Internals ───────────────────────────────────────────────────
+
+interface EffectivePermsRow {
+  permission_code: string | null;
+  role_code: string;
+}
+
+/**
+ * Fetch the effective permission list + role code for a user via
+ * udf_auth_get_user_permissions. Returns a ready-to-bake AuthUser
+ * claim set (no firstName/lastName — those come from udf_get_users
+ * when /me is hit).
+ *
+ * The UDF always returns at least one row for an active user: when
+ * the user has zero effective permissions, a single sentinel row
+ * with permission_code = NULL carries the role code. Zero rows →
+ * user is inactive / deleted / role-less.
+ */
+const loadAuthUser = async (
+  userId: number,
+  email: string
+): Promise<AuthUser> => {
+  const { rows } = await db.callTableFunction<EffectivePermsRow>(
+    'udf_auth_get_user_permissions',
+    { p_user_id: userId }
+  );
+
+  if (rows.length === 0) {
+    throw new AppError(
+      'User has no active role',
+      403,
+      'ACCOUNT_INACTIVE'
+    );
+  }
+
+  const roleCode = rows[0].role_code;
+  const permissions = rows
+    .map((r) => r.permission_code)
+    .filter((code): code is string => typeof code === 'string' && code.length > 0);
+
+  return {
+    id: userId,
+    email,
+    firstName: null,
+    lastName: null,
+    roles: [roleCode],
+    permissions
+  };
+};
+
+// ─── Register ────────────────────────────────────────────────────
+
+export const register = async (
+  input: RegisterInput
+): Promise<RegisterOutput> => {
+  // Raw pg call because the UDF returns extra dev-only fields
+  // (email_otp / mobile_otp) that the shared callFunction helper
+  // discards. We want them in dev mode.
+  const pool = getPool();
+  const params = [
+    input.firstName,
+    input.lastName,
+    input.email ?? null,
+    input.mobile ?? null,
+    input.password,
+    input.roleCode,
+    input.countryId
+  ];
+  const sql = `
+    SELECT udf_auth_register(
+      p_first_name := $1,
+      p_last_name  := $2,
+      p_email      := $3,
+      p_mobile     := $4,
+      p_password   := $5,
+      p_role_code  := $6,
+      p_country_id := $7
+    ) AS result
+  `;
+
+  const { rows } = await pool.query<{ result: Record<string, unknown> }>(
+    sql,
+    params
+  );
+  const result = rows[0]?.result;
+  if (!result) {
+    throw new AppError('udf_auth_register returned no result', 500, 'UDF_NO_RESULT');
+  }
+
+  if (!result.success) {
+    const msg = String(result.message ?? 'Registration failed');
+    // Common business errors: duplicate email/mobile → 409
+    if (/already registered|already exists/i.test(msg)) {
+      throw new AppError(msg, 409, 'DUPLICATE_ENTRY');
+    }
+    if (/invalid role|inactive role/i.test(msg)) {
+      throw new AppError(msg, 400, 'VALIDATION_ERROR');
+    }
+    throw new AppError(msg, 400, 'REGISTRATION_FAILED');
+  }
+
+  const userId = Number(result.id);
+  const emailOtp = (result.email_otp ?? null) as string | null;
+  const mobileOtp = (result.mobile_otp ?? null) as string | null;
+
+  // Dev echo (kept for the verify-auth-flows harness in non-prod).
+  // Production delivery happens via mailer below — failures there
+  // are logged but never roll back the registration.
+  if (emailOtp) {
+    logger.info(
+      { userId, channel: 'email', target: input.email, otp: emailOtp },
+      '[auth.register] stubbed email OTP'
+    );
+  }
+  if (mobileOtp) {
+    logger.info(
+      { userId, channel: 'mobile', target: input.mobile, otp: mobileOtp },
+      '[auth.register] stubbed mobile OTP'
+    );
+  }
+
+  // Best-effort mailer dispatch. Fire-and-forget — `safeSend` inside
+  // the mailer swallows any Brevo failure so a flaky email provider
+  // never blocks user registration.
+  if (emailOtp && input.email) {
+    void mailer.sendOtp({
+      to: input.email,
+      name: input.firstName,
+      otp: emailOtp,
+      flow: 'register'
+    });
+  }
+
+  const includeOtpInResponse = env.NODE_ENV !== 'production';
+  return {
+    userId,
+    devEmailOtp: includeOtpInResponse ? emailOtp : null,
+    devMobileOtp: includeOtpInResponse ? mobileOtp : null
+  };
+};
+
+// ─── Login ───────────────────────────────────────────────────────
+
+export const login = async (input: LoginInput): Promise<LoginOutput> => {
+  const pool = getPool();
+
+  // udf_auth_login requires p_session_token. We hand it an opaque
+  // UUID per attempt (the UDF stores it as the session's "session
+  // token" column). The Node layer keeps its own session identity
+  // via the JWT's jti claim, which we set to String(session_id).
+  const sessionTokenStub = crypto.randomUUID();
+  const refreshTokenStub = crypto.randomUUID();
+
+  const sql = `
+    SELECT udf_auth_login(
+      p_identifier    := $1,
+      p_password      := $2,
+      p_session_token := $3,
+      p_refresh_token := $4,
+      p_ip_address    := $5::INET,
+      p_user_agent    := $6
+    ) AS result
+  `;
+  const params = [
+    input.identifier,
+    input.password,
+    sessionTokenStub,
+    refreshTokenStub,
+    input.ipAddress ?? null,
+    input.userAgent ?? null
+  ];
+
+  const { rows } = await pool.query<{ result: Record<string, unknown> }>(
+    sql,
+    params
+  );
+  const result = rows[0]?.result;
+  if (!result) {
+    throw new AppError('udf_auth_login returned no result', 500, 'UDF_NO_RESULT');
+  }
+
+  if (!result.success) {
+    const msg = String(result.message ?? 'Login failed');
+    // The UDF handles both "bad credentials" and "account locked"
+    // cases. We map everything to 401 unless the message looks like
+    // a lockout, which is 423.
+    if (/locked|too many|exceeded/i.test(msg)) {
+      throw new AppError(msg, 423, 'ACCOUNT_LOCKED');
+    }
+    throw new AppError(msg, 401, 'INVALID_CREDENTIALS');
+  }
+
+  const userId = Number(result.user_id);
+  const sessionId = Number(result.session_id);
+  if (!userId || !sessionId) {
+    throw new AppError(
+      'udf_auth_login returned malformed payload',
+      500,
+      'UDF_BAD_RESULT'
+    );
+  }
+
+  // Load the user's effective permission set for the JWT claims.
+  // Normalize identifier → email shape stored on the token. (For
+  // mobile-based logins we still need an email claim; fall back to
+  // udf_get_users with p_id := userId if the identifier wasn't an
+  // email.)
+  let email = input.identifier;
+  if (!email.includes('@')) {
+    const { rows: userRows } = await db.callTableFunction<{ user_email: string | null }>(
+      'udf_get_users',
+      { p_id: userId }
+    );
+    email = userRows[0]?.user_email ?? `user${userId}@unknown.local`;
+  }
+
+  const authUser = await loadAuthUser(userId, email);
+
+  // Sign the JWT pair with jti = String(sessionId). This ties the
+  // JWT lifecycle to the DB session row so logout can revoke both.
+  const jti = String(sessionId);
+  const { token: accessToken } = signAccessToken({ user: authUser, jti });
+  const { token: refreshToken } = signRefreshToken({ user: authUser, jti });
+
+  return {
+    user: authUser,
+    sessionId,
+    accessToken,
+    refreshToken,
+    accessExpiresIn: env.JWT_ACCESS_EXPIRES_IN,
+    refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN
+  };
+};
+
+// ─── Logout ──────────────────────────────────────────────────────
+
+/**
+ * Revoke a session by jti. Two side-effects:
+ *  1. Call udf_auth_logout(session_id) to flip the DB row.
+ *  2. Add the jti to the Redis blocklist (TTL = remaining access
+ *     token lifetime, so the key expires naturally).
+ *
+ * We accept a JwtPayload so the caller (typically the /logout
+ * handler) can hand us both the jti and the exp in one shot.
+ */
+export const logout = async (payload: JwtPayload): Promise<void> => {
+  const jti = payload.jti ?? '';
+  if (!jti) throw AppError.unauthorized('Token has no session id');
+
+  const sessionId = Number.parseInt(jti, 10);
+  if (Number.isNaN(sessionId) || sessionId <= 0) {
+    throw new AppError('Malformed session id in token', 401, 'INVALID_TOKEN');
+  }
+
+  // Fire UDF; ignore "already revoked" because the blocklist
+  // is the authoritative runtime check anyway.
+  try {
+    await db.callFunction('udf_auth_logout', { p_session_id: sessionId });
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode === 404) {
+      // Already revoked — still add to the blocklist below.
+    } else {
+      throw err;
+    }
+  }
+
+  const ttl = secondsUntilExpiry(payload);
+  await redisRevoked.add(jti, ttl);
+};
+
+// ─── Refresh ─────────────────────────────────────────────────────
+
+export const refresh = async (
+  refreshToken: string
+): Promise<TokenPair & { user: AuthUser }> => {
+  const payload = verifyRefreshToken(refreshToken);
+
+  const jti = payload.jti ?? '';
+  if (!jti) throw AppError.unauthorized('Refresh token has no session id');
+
+  // If the blocklist already has this jti, the session was logged
+  // out — reject the refresh.
+  if (await redisRevoked.isRevoked(jti)) {
+    throw new AppError('Session has been revoked', 401, 'TOKEN_REVOKED');
+  }
+
+  // Re-load the auth user so a permission change mid-session is
+  // reflected on the next refresh (the short-lived access token
+  // will catch up within JWT_ACCESS_EXPIRES_IN).
+  const authUser = await loadAuthUser(payload.sub, payload.email);
+
+  // Re-use the SAME jti so logout still kills the whole chain.
+  const { token: accessToken } = signAccessToken({ user: authUser, jti });
+  const { token: newRefreshToken } = signRefreshToken({ user: authUser, jti });
+
+  return {
+    user: authUser,
+    accessToken,
+    refreshToken: newRefreshToken,
+    accessExpiresIn: env.JWT_ACCESS_EXPIRES_IN,
+    refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN
+  };
+};
+
+// ─── /me ─────────────────────────────────────────────────────────
+
+export interface MeOutput {
+  id: number;
+  email: string | null;
+  mobile: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  isActive: boolean;
+  isEmailVerified: boolean;
+  isMobileVerified: boolean;
+  roles: string[];
+  permissions: string[];
+}
+
+interface UserViewRow {
+  user_id: number | string;
+  user_first_name: string | null;
+  user_last_name: string | null;
+  user_email: string | null;
+  user_mobile: string | null;
+  user_is_active: boolean;
+  user_is_email_verified: boolean;
+  user_is_mobile_verified: boolean;
+  role_code: string | null;
+}
+
+export const getMe = async (authUser: AuthUser): Promise<MeOutput> => {
+  const { rows } = await db.callTableFunction<UserViewRow>('udf_get_users', {
+    p_id: authUser.id
+  });
+  const row = rows[0];
+  if (!row) {
+    throw AppError.notFound('User not found');
+  }
+
+  return {
+    id: Number(row.user_id),
+    email: row.user_email,
+    mobile: row.user_mobile,
+    firstName: row.user_first_name,
+    lastName: row.user_last_name,
+    isActive: row.user_is_active,
+    isEmailVerified: row.user_is_email_verified,
+    isMobileVerified: row.user_is_mobile_verified,
+    roles: row.role_code ? [row.role_code] : authUser.roles,
+    permissions: authUser.permissions
+  };
+};
