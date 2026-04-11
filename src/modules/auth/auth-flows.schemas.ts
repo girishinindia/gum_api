@@ -98,6 +98,18 @@ export const registerVerifyBodySchema = z.object({
 });
 export type RegisterVerifyBody = z.infer<typeof registerVerifyBodySchema>;
 
+// ─── Register-time resend (public, no JWT) ───────────────────────
+//
+// Public resend for a freshly-registered user whose initial OTP has
+// expired or never arrived. Takes only the userId (no JWT yet). The
+// server looks up the pending OTP for purpose='registration' on the
+// requested channel and, if eligible per udf_otp_resend rules
+// (3-min wait, max 3 resends), generates and dispatches a new code.
+export const registerResendBodySchema = z.object({
+  userId: bigintIdSchema
+});
+export type RegisterResendBody = z.infer<typeof registerResendBodySchema>;
+
 // ─── Change email (authenticated) ────────────────────────────────
 
 export const changeEmailInitiateBodySchema = z.object({

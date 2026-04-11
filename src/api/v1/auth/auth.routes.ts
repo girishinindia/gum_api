@@ -5,6 +5,8 @@
 //   POST /register                 → create account + dual-channel OTP delivery
 //   POST /register/verify-email    → public; mark registration email verified
 //   POST /register/verify-mobile   → public; mark registration mobile verified
+//   POST /register/resend-email    → public; regenerate registration email OTP
+//   POST /register/resend-mobile   → public; regenerate registration mobile OTP
 //   POST /login                    → identifier+password → tokens (403 if unverified)
 //   POST /logout                   → revoke current session
 //   POST /refresh                  → rotate tokens
@@ -17,8 +19,10 @@
 //   POST /reset-password/verify         (auth, dual-channel complete)
 //   POST /verify-email                  (auth, single-channel initiate)
 //   POST /verify-email/confirm          (auth, single-channel complete)
+//   POST /verify-email/resend           (auth, regenerate re-verify email OTP)
 //   POST /verify-mobile                 (auth, single-channel initiate)
 //   POST /verify-mobile/confirm         (auth, single-channel complete)
+//   POST /verify-mobile/resend          (auth, regenerate re-verify mobile OTP)
 //   POST /change-email                  (auth, OTP to *new* address)
 //   POST /change-email/confirm          (auth, complete request)
 //   POST /change-mobile                 (auth, OTP to *new* number)
@@ -46,6 +50,7 @@ import {
   changeMobileInitiateBodySchema,
   forgotPasswordCompleteBodySchema,
   forgotPasswordInitiateBodySchema,
+  registerResendBodySchema,
   registerVerifyBodySchema,
   resetPasswordCompleteBodySchema,
   verifyContactCompleteBodySchema,
@@ -54,6 +59,7 @@ import {
   type ChangeMobileInitiateBody,
   type ForgotPasswordCompleteBody,
   type ForgotPasswordInitiateBody,
+  type RegisterResendBody,
   type RegisterVerifyBody,
   type ResetPasswordCompleteBody,
   type VerifyContactCompleteBody
@@ -116,6 +122,37 @@ router.post(
       otpCode: body.otpCode
     });
     return ok(res, result, 'Mobile verified');
+  })
+);
+
+// ─── POST /register/resend-email (public, no JWT) ───────────────
+//
+// Public resend for a freshly-registered user whose registration
+// email OTP expired or never arrived. Takes only { userId }: the
+// pending OTP row, purpose, channel, and destination are all read
+// server-side from the existing user_otps row. Bounded by
+// udf_otp_resend's 3-minute wait + max-3-resends + 30-minute
+// cooldown rules (see 07-user-otps/06_fn_resend.sql).
+
+router.post(
+  '/register/resend-email',
+  validate({ body: registerResendBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as RegisterResendBody;
+    const result = await authFlows.registerResendEmail(body.userId);
+    return ok(res, result, 'Verification email resent');
+  })
+);
+
+// ─── POST /register/resend-mobile (public, no JWT) ──────────────
+
+router.post(
+  '/register/resend-mobile',
+  validate({ body: registerResendBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as RegisterResendBody;
+    const result = await authFlows.registerResendMobile(body.userId);
+    return ok(res, result, 'Verification SMS resent');
   })
 );
 
@@ -270,6 +307,18 @@ router.post(
   })
 );
 
+// ─── POST /verify-email/resend (auth, re-verify regen OTP) ──────
+
+router.post(
+  '/verify-email/resend',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await authFlows.verifyEmailResend(userId);
+    return ok(res, result, 'Verification email resent');
+  })
+);
+
 // ─── POST /verify-mobile (auth, single-channel initiate) ────────
 
 router.post(
@@ -297,6 +346,18 @@ router.post(
       otpCode: body.otpCode
     });
     return ok(res, result, 'Mobile verified');
+  })
+);
+
+// ─── POST /verify-mobile/resend (auth, re-verify regen OTP) ─────
+
+router.post(
+  '/verify-mobile/resend',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const result = await authFlows.verifyMobileResend(userId);
+    return ok(res, result, 'Verification SMS resent');
   })
 );
 

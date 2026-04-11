@@ -92,7 +92,9 @@ The canonical sequence is:
        ↓  returns { accessToken, refreshToken, user }
 ```
 
-The verify-email and verify-mobile routes in [03 auth otp flows](03%20-%20auth%20otp%20flows.md#33-verify-email--authenticated-single-channel) §3.3 and §3.4 are the **re-verification** path for already-logged-in users (profile update, email change, etc.) — they require a JWT. The §2.1a/§2.1b routes below are the **first-time verification** path for newly-registered users, and they are public by design because the user cannot hold a JWT until both flags flip.
+**If an OTP expired or never arrived**, the user can call the public resend routes `POST /auth/register/resend-email` (§2.1c) and `POST /auth/register/resend-mobile` (§2.1d) with just `{ userId }` — the server looks up the pending row and generates a fresh OTP, subject to the 3-min wait / max-3-resends / 30-min cooldown rules in [03 auth otp flows §3.8](03%20-%20auth%20otp%20flows.md#38-otp-resend-rules). The resend response returns a new `otpId` which replaces the original `emailOtpId`/`mobileOtpId` on the next verify call.
+
+The verify-email and verify-mobile routes in [03 auth otp flows](03%20-%20auth%20otp%20flows.md#33-verify-email--authenticated-single-channel) §3.3 and §3.4 are the **re-verification** path for already-logged-in users (profile update, email change, etc.) — they require a JWT, and have their own authenticated resend routes in §3.3c and §3.4c. The §2.1a–§2.1d routes below are the **first-time verification** path for newly-registered users, and they are public by design because the user cannot hold a JWT until both flags flip.
 
 ---
 
@@ -161,6 +163,93 @@ Public. Same shape as §2.1a but for the mobile channel. Uses `mobileOtpId` from
 The OTP itself is dispatched during `/auth/register` via the shared `sendMobileOtp(...)` helper in `auth-flows.service.ts`, gated by the [SMS dispatch gate](03%20-%20auth%20otp%20flows.md#sms-dispatch-gate): real SMS fires only in production OR when `SMS_FORCE_SEND=true`, otherwise the code is available via `devMobileOtp` in the register response and the application log.
 
 Error table is identical to §2.1a.
+
+---
+
+## 2.1c `POST /api/v1/auth/register/resend-email`
+
+Public. Regenerates the registration email OTP for a user whose initial code has expired or never arrived. Takes only `userId` — the pending OTP row, purpose, channel, and destination are all looked up server-side from the existing `user_otps` row.
+
+> **Why this is public.** Same reason as §2.1a/§2.1b: a freshly-registered user has no JWT because login is gated on both-verified. The resend path needs to be reachable *before* that gate flips.
+
+> **Rate-limiting.** The underlying `udf_otp_resend` enforces a 3-minute wait between resends, a maximum of 3 resends per OTP row, and a 30-minute cooldown once the ceiling is hit. See [03 auth otp flows §3.8](03%20-%20auth%20otp%20flows.md#38-otp-resend-rules) for the authoritative contract.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | int | yes | From the `/auth/register` response. |
+
+**Sample request**
+
+```json
+{ "userId": 42 }
+```
+
+**Response 200 (development)**
+
+```json
+{
+  "success": true,
+  "message": "Verification email resent",
+  "data": {
+    "otpId": 7831,
+    "devOtp": "194702"
+  }
+}
+```
+
+> In **production** `devOtp` is `null`. `otpId` is always returned — the client should use it as the new `emailOtpId` when calling `/auth/register/verify-email`.
+
+**Errors**
+
+| HTTP | code | Cause |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Body shape wrong. |
+| 400 | `ALREADY_VERIFIED` | `is_email_verified` is already `true`; nothing to resend. |
+| 400 | `NO_EMAIL_ON_FILE` | The user was registered with mobile only. |
+| 400 | `OTP_RESEND_FAILED` | Catch-all for unexpected UDF refusal. |
+| 404 | `OTP_NOT_FOUND` | No pending registration OTP for this user + channel. The user never started the flow, or the old row has already been consumed/expired out. |
+| 429 | `OTP_RESEND_TOO_SOON` | 3-minute wait has not elapsed since the previous send. `details.waitMinutes` tells the client how long to back off. |
+| 429 | `OTP_MAX_RESENDS` | Exceeded 3 resends on this OTP row. `details.cooldownMinutes` is `30`. Client should wait out the cooldown and then hit the endpoint again to start a fresh OTP row. |
+
+**Sample `OTP_RESEND_TOO_SOON` response**
+
+```json
+{
+  "success": false,
+  "message": "Cannot resend yet. Please wait 3 minutes.",
+  "code": "OTP_RESEND_TOO_SOON",
+  "details": { "waitMinutes": 3 }
+}
+```
+
+---
+
+## 2.1d `POST /api/v1/auth/register/resend-mobile`
+
+Public. Identical shape to §2.1c but for the mobile channel. Dispatches via the shared `sendMobileOtp(...)` helper (SMS dispatch gate applies).
+
+**Sample request**
+
+```json
+{ "userId": 42 }
+```
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "Verification SMS resent",
+  "data": {
+    "otpId": 7832,
+    "devOtp": "826341"
+  }
+}
+```
+
+Error table is identical to §2.1c, with `NO_EMAIL_ON_FILE` replaced by `NO_MOBILE_ON_FILE` (the user was registered with email only).
 
 ---
 

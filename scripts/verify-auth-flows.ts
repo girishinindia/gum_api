@@ -598,6 +598,215 @@ const main = async (): Promise<void> => {
       }
     }
 
+    // ─── 0.6 Register resend routes ─────────────────────
+    //
+    // Fresh user so we don't race the 0.5 cleanup.
+    //
+    //   1. register → OTP rows created with resend_available_at = +3m
+    //   2. resend-email immediately → 429 OTP_RESEND_TOO_SOON
+    //   3. push resend_available_at back into the past
+    //   4. resend-email → 200 + new otpId + new devOtp
+    //   5. verify-email (with the resent OTP) → 200
+    //   6. resend-email again after verified → 400 ALREADY_VERIFIED
+    //   7. resend-mobile happy path (advance clock, no too-soon repeat)
+    header('0.6 Register resend routes — public');
+    {
+      const RESEND_EMAIL = `verify-flows-r+${RUN_ID}@test.growupmore.local`;
+      const RESEND_MOBILE = `+91994${RAND9}`.slice(0, 14);
+      const RESEND_PASSWORD = 'ResendPass2026';
+
+      const reg = await http<{
+        data?: {
+          userId: number;
+          emailOtpId: number;
+          mobileOtpId: number;
+          devEmailOtp?: string;
+          devMobileOtp?: string;
+        };
+      }>('POST', '/api/v1/auth/register', {
+        body: {
+          firstName: 'Resend',
+          lastName: `Run${process.pid}`,
+          email: RESEND_EMAIL,
+          mobile: RESEND_MOBILE,
+          password: RESEND_PASSWORD,
+          roleCode: 'student'
+        }
+      });
+      record(
+        '0.6',
+        'register resend-test user → 201',
+        reg.status === 201 && typeof reg.body?.data?.userId === 'number',
+        `status=${reg.status}`
+      );
+
+      const userId = reg.body?.data?.userId ?? 0;
+      const origEmailOtpId = reg.body?.data?.emailOtpId ?? 0;
+      const origMobileOtpId = reg.body?.data?.mobileOtpId ?? 0;
+
+      // 1) Immediate resend → 429 OTP_RESEND_TOO_SOON.
+      const tooSoon = await http<{
+        code?: string;
+        details?: { waitMinutes?: number };
+      }>('POST', '/api/v1/auth/register/resend-email', {
+        body: { userId }
+      });
+      record(
+        '0.6',
+        'resend-email immediately → 429 OTP_RESEND_TOO_SOON',
+        tooSoon.status === 429 && tooSoon.body?.code === 'OTP_RESEND_TOO_SOON',
+        `status=${tooSoon.status} code=${tooSoon.body?.code}`
+      );
+      record(
+        '0.6',
+        'resend-email 429 details.waitMinutes is a positive number',
+        typeof tooSoon.body?.details?.waitMinutes === 'number' &&
+          (tooSoon.body?.details?.waitMinutes ?? 0) > 0,
+        `waitMinutes=${tooSoon.body?.details?.waitMinutes}`
+      );
+
+      // 2) Push the email OTP's resend_available_at into the past so
+      //    the next call succeeds. This is the same trick the resend
+      //    UDF's own test block uses (see 06_fn_resend.sql comments).
+      if (origEmailOtpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET resend_available_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+            WHERE id = $1`,
+          [origEmailOtpId]
+        );
+      }
+
+      const okEmail = await http<{
+        data?: { otpId: number; devOtp: string };
+      }>('POST', '/api/v1/auth/register/resend-email', {
+        body: { userId }
+      });
+      record(
+        '0.6',
+        'resend-email after advancing clock → 200',
+        okEmail.status === 200 && typeof okEmail.body?.data?.otpId === 'number',
+        `status=${okEmail.status}`
+      );
+      record(
+        '0.6',
+        'resend-email returns a fresh 6-digit devOtp',
+        /^[0-9]{4,8}$/.test(okEmail.body?.data?.devOtp ?? ''),
+        `devOtp=${okEmail.body?.data?.devOtp ?? '(empty)'}`
+      );
+      record(
+        '0.6',
+        'resend-email returns a new otpId (supersedes original)',
+        (okEmail.body?.data?.otpId ?? 0) > 0 &&
+          okEmail.body?.data?.otpId !== origEmailOtpId,
+        `orig=${origEmailOtpId} new=${okEmail.body?.data?.otpId}`
+      );
+
+      const newEmailOtpId = okEmail.body?.data?.otpId ?? 0;
+      const newEmailOtp = okEmail.body?.data?.devOtp ?? '';
+
+      // 3) The original email OTP row must now be 'invalidated' so it
+      //    can't be verified against — the UDF side-effect we rely on.
+      if (origEmailOtpId > 0) {
+        const { rows } = await getPool().query<{ status: string }>(
+          'SELECT status FROM user_otps WHERE id = $1',
+          [origEmailOtpId]
+        );
+        record(
+          '0.6',
+          'original email OTP row is invalidated after resend',
+          rows[0]?.status === 'invalidated',
+          `status=${rows[0]?.status}`
+        );
+      }
+
+      // 4) Happy path: verify-email using the resent OTP.
+      const vEmail = await http<{
+        data?: { isEmailVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-email', {
+        body: { userId, otpId: newEmailOtpId, otpCode: newEmailOtp }
+      });
+      record(
+        '0.6',
+        'verify-email with resent OTP → 200 + isEmailVerified=true',
+        vEmail.status === 200 && vEmail.body?.data?.isEmailVerified === true,
+        `status=${vEmail.status}`
+      );
+
+      // 5) After email is verified, resend-email must refuse with
+      //    400 ALREADY_VERIFIED (nothing to resend).
+      const already = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/register/resend-email',
+        { body: { userId } }
+      );
+      record(
+        '0.6',
+        'resend-email after verified → 400 ALREADY_VERIFIED',
+        already.status === 400 && already.body?.code === 'ALREADY_VERIFIED',
+        `status=${already.status} code=${already.body?.code}`
+      );
+
+      // 6) Mobile resend happy path (advance clock, then resend).
+      if (origMobileOtpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET resend_available_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+            WHERE id = $1`,
+          [origMobileOtpId]
+        );
+      }
+      const okMobile = await http<{
+        data?: { otpId: number; devOtp: string };
+      }>('POST', '/api/v1/auth/register/resend-mobile', {
+        body: { userId }
+      });
+      record(
+        '0.6',
+        'resend-mobile after advancing clock → 200',
+        okMobile.status === 200 &&
+          typeof okMobile.body?.data?.otpId === 'number' &&
+          /^[0-9]{4,8}$/.test(okMobile.body?.data?.devOtp ?? ''),
+        `status=${okMobile.status}`
+      );
+
+      // 7) Verify mobile with resent OTP and then resend-mobile must
+      //    refuse with 400 ALREADY_VERIFIED too.
+      const vMobile = await http<{
+        data?: { isMobileVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-mobile', {
+        body: {
+          userId,
+          otpId: okMobile.body?.data?.otpId ?? 0,
+          otpCode: okMobile.body?.data?.devOtp ?? ''
+        }
+      });
+      record(
+        '0.6',
+        'verify-mobile with resent OTP → 200',
+        vMobile.status === 200 && vMobile.body?.data?.isMobileVerified === true,
+        `status=${vMobile.status}`
+      );
+
+      const alreadyMobile = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/register/resend-mobile',
+        { body: { userId } }
+      );
+      record(
+        '0.6',
+        'resend-mobile after verified → 400 ALREADY_VERIFIED',
+        alreadyMobile.status === 400 &&
+          alreadyMobile.body?.code === 'ALREADY_VERIFIED',
+        `status=${alreadyMobile.status} code=${alreadyMobile.body?.code}`
+      );
+
+      // Cleanup
+      if (userId > 0) {
+        await getPool().query('DELETE FROM users WHERE id = $1', [userId]);
+      }
+    }
+
     // ─── 1. Auth gates ──────────────────────────────────
     header('1. Auth gates — anon vs public');
     {
@@ -654,8 +863,54 @@ const main = async (): Promise<void> => {
         `status=${init.status} otpId=${init.body?.data?.otpId}`
       );
 
-      const otpId = init.body?.data?.otpId ?? 0;
-      const otpCode = init.body?.data?.devOtpCode ?? '';
+      let otpId = init.body?.data?.otpId ?? 0;
+      let otpCode = init.body?.data?.devOtpCode ?? '';
+
+      // /verify-email/resend (authenticated) — exercise the 429 and
+      // 200 paths before confirming with the resent OTP.
+      const resendTooSoon = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/verify-email/resend',
+        { token: subjectAccessToken }
+      );
+      record(
+        '2',
+        '/verify-email/resend immediately → 429 OTP_RESEND_TOO_SOON',
+        resendTooSoon.status === 429 &&
+          resendTooSoon.body?.code === 'OTP_RESEND_TOO_SOON',
+        `status=${resendTooSoon.status} code=${resendTooSoon.body?.code}`
+      );
+
+      if (otpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET resend_available_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+            WHERE id = $1`,
+          [otpId]
+        );
+      }
+
+      const resendOk = await http<{
+        data?: { otpId: number; devOtp: string };
+      }>('POST', '/api/v1/auth/verify-email/resend', {
+        token: subjectAccessToken
+      });
+      record(
+        '2',
+        '/verify-email/resend after advancing clock → 200 + new otpId',
+        resendOk.status === 200 &&
+          (resendOk.body?.data?.otpId ?? 0) > 0 &&
+          resendOk.body?.data?.otpId !== otpId &&
+          /^[0-9]{4,8}$/.test(resendOk.body?.data?.devOtp ?? ''),
+        `status=${resendOk.status} new=${resendOk.body?.data?.otpId}`
+      );
+
+      // Swap in the resent OTP for the confirm leg (original row is
+      // now 'invalidated' by the resend UDF).
+      if (resendOk.body?.data?.otpId) {
+        otpId = resendOk.body.data.otpId;
+        otpCode = resendOk.body.data.devOtp;
+      }
 
       const confirm = await http(
         'POST',
@@ -667,7 +922,7 @@ const main = async (): Promise<void> => {
       );
       record(
         '2',
-        'confirm /verify-email → 200',
+        'confirm /verify-email → 200 (using resent OTP)',
         confirm.status === 200,
         `status=${confirm.status}`
       );
@@ -716,8 +971,51 @@ const main = async (): Promise<void> => {
         `status=${init.status} otpId=${init.body?.data?.otpId}`
       );
 
-      const otpId = init.body?.data?.otpId ?? 0;
-      const otpCode = init.body?.data?.devOtpCode ?? '';
+      let otpId = init.body?.data?.otpId ?? 0;
+      let otpCode = init.body?.data?.devOtpCode ?? '';
+
+      // /verify-mobile/resend — same contract as /verify-email/resend.
+      const resendTooSoon = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/verify-mobile/resend',
+        { token: subjectAccessToken }
+      );
+      record(
+        '3',
+        '/verify-mobile/resend immediately → 429 OTP_RESEND_TOO_SOON',
+        resendTooSoon.status === 429 &&
+          resendTooSoon.body?.code === 'OTP_RESEND_TOO_SOON',
+        `status=${resendTooSoon.status} code=${resendTooSoon.body?.code}`
+      );
+
+      if (otpId > 0) {
+        await getPool().query(
+          `UPDATE user_otps
+              SET resend_available_at = CURRENT_TIMESTAMP - INTERVAL '1 minute'
+            WHERE id = $1`,
+          [otpId]
+        );
+      }
+
+      const resendOk = await http<{
+        data?: { otpId: number; devOtp: string };
+      }>('POST', '/api/v1/auth/verify-mobile/resend', {
+        token: subjectAccessToken
+      });
+      record(
+        '3',
+        '/verify-mobile/resend after advancing clock → 200 + new otpId',
+        resendOk.status === 200 &&
+          (resendOk.body?.data?.otpId ?? 0) > 0 &&
+          resendOk.body?.data?.otpId !== otpId &&
+          /^[0-9]{4,8}$/.test(resendOk.body?.data?.devOtp ?? ''),
+        `status=${resendOk.status} new=${resendOk.body?.data?.otpId}`
+      );
+
+      if (resendOk.body?.data?.otpId) {
+        otpId = resendOk.body.data.otpId;
+        otpCode = resendOk.body.data.devOtp;
+      }
 
       const confirm = await http(
         'POST',
@@ -729,7 +1027,7 @@ const main = async (): Promise<void> => {
       );
       record(
         '3',
-        'confirm /verify-mobile → 200',
+        'confirm /verify-mobile → 200 (using resent OTP)',
         confirm.status === 200,
         `status=${confirm.status}`
       );

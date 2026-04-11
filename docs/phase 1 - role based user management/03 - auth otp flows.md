@@ -209,6 +209,36 @@ Authenticated.
 }
 ```
 
+### `POST /api/v1/auth/verify-email/resend`
+
+Authenticated. No body — `userId` is pulled from the JWT. Regenerates the re-verification email OTP when the user's previous code expired or never arrived. Uses the same `udf_otp_resend` rules documented in [§3.8](#38-otp-resend-rules): 3-minute wait between sends, max 3 resends, 30-minute cooldown once the ceiling is hit.
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "Verification email resent",
+  "data": {
+    "otpId": 8011,
+    "devOtp": "583019"
+  }
+}
+```
+
+> In **production** `devOtp` is `null`. The returned `otpId` supersedes the previous one — clients must use it for the next `/verify-email/confirm` call.
+
+**Errors**
+
+| HTTP | code | Cause |
+|---|---|---|
+| 400 | `NO_EMAIL_ON_FILE` | User record has no email (shouldn't happen for a logged-in user that reached this flow). |
+| 400 | `OTP_RESEND_FAILED` | Catch-all for unexpected UDF refusal. |
+| 401 | `UNAUTHORIZED` | Missing/invalid token. |
+| 404 | `OTP_NOT_FOUND` | No pending re-verification OTP for this user + channel. Start the flow with `POST /verify-email` first. |
+| 429 | `OTP_RESEND_TOO_SOON` | 3-minute wait has not elapsed. `details.waitMinutes` carries the remaining wait. |
+| 429 | `OTP_MAX_RESENDS` | Exceeded 3 resends; `details.cooldownMinutes` is `30`. |
+
 ---
 
 ## 3.4 Verify mobile — authenticated, single-channel
@@ -220,6 +250,7 @@ Same shape as 3.3 but for the mobile channel. Endpoints:
 
 - `POST /api/v1/auth/verify-mobile`           — initiate (no body)
 - `POST /api/v1/auth/verify-mobile/confirm`   — `{ otpId, otpCode }`
+- `POST /api/v1/auth/verify-mobile/resend`    — regen OTP (no body); same contract as §3.3 resend, same error table with `NO_EMAIL_ON_FILE` replaced by `NO_MOBILE_ON_FILE`
 
 **Confirm response 200**
 
@@ -231,7 +262,17 @@ Same shape as 3.3 but for the mobile channel. Endpoints:
 }
 ```
 
-When the [SMS dispatch gate](#sms-dispatch-gate) is open, the OTP is dispatched to the user's mobile in fully qualified E.164 form (e.g., `+919662278990`), built from the user's `country_id → countries.phone_code` joined with `users.mobile`.
+**Resend response 200**
+
+```json
+{
+  "success": true,
+  "message": "Verification SMS resent",
+  "data": { "otpId": 8022, "devOtp": "711205" }
+}
+```
+
+When the [SMS dispatch gate](#sms-dispatch-gate) is open, the OTP is dispatched to the user's mobile in fully qualified E.164 form (e.g., `+919662278990`), built from the user's `country_id → countries.phone_code` joined with `users.mobile`. The resend route uses the same helper and the same gate.
 
 ---
 
@@ -305,3 +346,41 @@ Same shape as 3.5 but for the mobile channel.
 - `POST /api/v1/auth/change-mobile/confirm` — body `{ requestId, otpId, otpCode }`
 
 When the [SMS dispatch gate](#sms-dispatch-gate) is open, the OTP is dispatched to the new mobile in E.164 form (using the user's country code).
+
+---
+
+## 3.8 OTP resend rules
+
+All resend routes — both the public `/auth/register/resend-email` + `/auth/register/resend-mobile` ([02 §2.1c / §2.1d](02%20-%20auth%20core.md#21c-post-apiv1authregisterresend-email)) and the authenticated `/auth/verify-email/resend` + `/auth/verify-mobile/resend` (§3.3 / §3.4 above) — route through the `udf_otp_resend(p_user_id, p_purpose, p_channel, p_destination)` function defined in `phase-01-role-based-user-management/07-user-otps/06_fn_resend.sql`.
+
+The contract that function enforces (and that the Node layer translates into HTTP error codes):
+
+| Rule | Behaviour | Surfaced as |
+|---|---|---|
+| Must be at least 3 minutes since the previous send on this OTP row | `udf_otp_resend` refuses with `"Cannot resend yet. Please wait N minute(s)."` | `429 OTP_RESEND_TOO_SOON` with `details.waitMinutes` |
+| Maximum 3 resends per OTP row | Once `resend_count` reaches 3, the row is marked exhausted for 30 minutes before it can be recycled | `429 OTP_MAX_RESENDS` with `details.cooldownMinutes: 30` |
+| A pending OTP row must exist | If no `purpose + channel` OTP row in `pending` state is found for this user | `404 OTP_NOT_FOUND` |
+| Happy path | Old OTP is invalidated; a new 6-digit code is generated; `resend_count` is incremented; destination is re-dispatched via the same mailer/SMS pipeline as the original initiate | `200` with `{ otpId, devOtp }` |
+
+**Dispatch matrix** (once the resend DB call succeeds):
+
+| Flow | Email dispatch | SMS dispatch |
+|---|---|---|
+| `/auth/register/resend-email` | `mailer.sendOtp(flow='register')` | — |
+| `/auth/register/resend-mobile` | — | `sendMobileOtp(...)` via [SMS dispatch gate](#sms-dispatch-gate) |
+| `/auth/verify-email/resend` | `mailer.sendOtp(flow='verify_email')` | — |
+| `/auth/verify-mobile/resend` | — | `sendMobileOtp(...)` via [SMS dispatch gate](#sms-dispatch-gate) |
+
+All dispatches are fire-and-forget: a failing mailer or SMS gateway is logged at `warn`/`error` but never rolls back the resend — the new OTP row is already committed and the user can retry the verify leg with the `otpId` returned in the resend response.
+
+> **Why only these four flows.** The `forgot-password`, `reset-password`, `change-email`, and `change-mobile` flows already terminate in a *complete* call shortly after *initiate*; if the user times out, they just re-run the full initiate which generates a fresh OTP row from scratch. The register-time and re-verify flows are different because the `initiate` step is coupled to a state transition (`register` creates the user; the re-verify initiate was already burned) that we don't want to re-run just to re-dispatch a code.
+
+---
+
+## Things the UDF layer exposes that the HTTP layer doesn't (yet)
+
+Scanned the `12-auth` UDF directory and the `07-user-otps` / `11-sessions` helpers to catch anything that has a working database contract but no Node wrapper. As of this commit:
+
+- **`udf_auth_logout_all(p_user_id)`** — revokes every active session for a user (handy for "log out everywhere" in a profile/security screen). Not yet wired. When we ship it, it should live as `POST /auth/logout-all`, authenticated, no body, and also push every session's `jti` onto the Redis blocklist so the access tokens are invalidated in flight (not just the DB session rows).
+
+Everything else in the `12-auth` directory (register, login, logout, refresh, me, forgot password, reset password, verify email, verify mobile, change email, change mobile, now plus the four resend wrappers documented above) has a Node route. If we add another UDF, update this list at the same time.

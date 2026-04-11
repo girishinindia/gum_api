@@ -817,6 +817,221 @@ export const registerVerifyMobile = async (input: {
 };
 
 // ═══════════════════════════════════════════════════════════════
+//   OTP RESEND (shared helper + four route-facing wrappers)
+// ═══════════════════════════════════════════════════════════════
+//
+// `udf_otp_resend(p_user_id, p_purpose, p_channel, p_destination)`
+// enforces the timing rules (3-min wait between resends, max 3
+// resends, 30-min cooldown after the cap is hit). The Node wrappers
+// below:
+//   • look up the user's current email/mobile (destination),
+//   • call the UDF,
+//   • map the three failure paths to distinct 4xx codes,
+//   • re-dispatch via the same mailer/SMS pipeline as the initiate
+//     call, so all the log-and-continue guarantees apply.
+//
+// Shape is symmetric: register-time resend is public and takes
+// { userId } from the body; re-verify resend is authenticated and
+// pulls userId from the JWT.
+
+export interface ResendOtpOutput {
+  otpId: number;
+  devOtp: string | null;
+}
+
+const callOtpResend = async (args: {
+  userId: number;
+  purpose:
+    | 'registration'
+    | 'forgot_password'
+    | 'reset_password'
+    | 'change_email'
+    | 'change_mobile'
+    | 're_verification';
+  channel: 'email' | 'mobile';
+  destination: string;
+}): Promise<{ otpId: number; otpCode: string }> => {
+  const pool = getPool();
+  const { rows } = await pool.query<{ result: Record<string, unknown> }>(
+    `SELECT udf_otp_resend(
+        p_user_id     := $1::BIGINT,
+        p_purpose     := $2::otp_purpose,
+        p_channel     := $3::otp_channel,
+        p_destination := $4::TEXT
+      ) AS result`,
+    [args.userId, args.purpose, args.channel, args.destination]
+  );
+  const result = rows[0]?.result;
+  if (!result) {
+    throw new AppError('udf_otp_resend returned no result', 500, 'UDF_NO_RESULT');
+  }
+  if (!result.success) {
+    const msg = String(result.message ?? 'OTP resend failed');
+
+    // "Cannot resend yet. Please wait N minutes."
+    const waitMatch = /wait\s+(\d+)\s*minute/i.exec(msg);
+    if (waitMatch) {
+      throw new AppError(msg, 429, 'OTP_RESEND_TOO_SOON', {
+        waitMinutes: Number(waitMatch[1])
+      });
+    }
+
+    // "Maximum resend attempts exceeded. Please try again after 30 minutes."
+    if (/maximum|exceeded/i.test(msg)) {
+      throw new AppError(msg, 429, 'OTP_MAX_RESENDS', {
+        cooldownMinutes: 30
+      });
+    }
+
+    // "No pending OTP found for this user, purpose, and channel"
+    if (/no pending/i.test(msg)) {
+      throw new AppError(msg, 404, 'OTP_NOT_FOUND');
+    }
+
+    throw new AppError(msg, 400, 'OTP_RESEND_FAILED');
+  }
+
+  const otpId = Number(result.id);
+  const otpCode = String(result.otp_code);
+  if (!otpId || !otpCode) {
+    throw new AppError(
+      'udf_otp_resend returned malformed payload',
+      500,
+      'UDF_BAD_RESULT'
+    );
+  }
+  return { otpId, otpCode };
+};
+
+// ─── Register-time resend (public) ──────────────────────────────
+
+const registerResend = async (
+  userId: number,
+  channel: 'email' | 'mobile'
+): Promise<ResendOtpOutput> => {
+  const contact = await loadContact(userId);
+
+  // Enumeration/abuse guard: refuse if the channel is already
+  // verified (nothing to resend to) or the other channel is missing
+  // on file (the user never supplied that contact).
+  if (channel === 'email') {
+    if (!contact.user_email) {
+      throw new AppError('User has no email on file', 400, 'NO_EMAIL_ON_FILE');
+    }
+    if (contact.user_is_email_verified) {
+      throw new AppError(
+        'Email is already verified',
+        400,
+        'ALREADY_VERIFIED'
+      );
+    }
+  } else {
+    if (!contact.user_mobile) {
+      throw new AppError('User has no mobile on file', 400, 'NO_MOBILE_ON_FILE');
+    }
+    if (contact.user_is_mobile_verified) {
+      throw new AppError(
+        'Mobile is already verified',
+        400,
+        'ALREADY_VERIFIED'
+      );
+    }
+  }
+
+  const destination =
+    channel === 'email'
+      ? (contact.user_email as string)
+      : formatMobileE164(contact.country_phone_code, contact.user_mobile) ??
+        (contact.user_mobile as string);
+
+  const { otpId, otpCode } = await callOtpResend({
+    userId,
+    purpose: 'registration',
+    channel,
+    destination
+  });
+
+  // Dispatch through the same pipeline as register() itself.
+  if (channel === 'email' && contact.user_email) {
+    void mailer.sendOtp({
+      to: contact.user_email,
+      name: contact.user_first_name ?? 'User',
+      otp: otpCode,
+      flow: 'register'
+    });
+  } else if (channel === 'mobile') {
+    void sendMobileOtp({ userId, otpId, otpCode });
+  }
+
+  return {
+    otpId,
+    devOtp: env.NODE_ENV !== 'production' ? otpCode : null
+  };
+};
+
+export const registerResendEmail = (userId: number): Promise<ResendOtpOutput> =>
+  registerResend(userId, 'email');
+
+export const registerResendMobile = (userId: number): Promise<ResendOtpOutput> =>
+  registerResend(userId, 'mobile');
+
+// ─── Re-verify resend (authenticated) ───────────────────────────
+//
+// For already-logged-in users who started the /verify-email or
+// /verify-mobile flow and now need a fresh OTP. Purpose on the DB
+// side is 're_verification' (matches what verifyEmailInitiate /
+// verifyMobileInitiate write).
+
+const reVerifyResend = async (
+  userId: number,
+  channel: 'email' | 'mobile'
+): Promise<ResendOtpOutput> => {
+  const contact = await loadContact(userId);
+
+  if (channel === 'email' && !contact.user_email) {
+    throw new AppError('User has no email on file', 400, 'NO_EMAIL_ON_FILE');
+  }
+  if (channel === 'mobile' && !contact.user_mobile) {
+    throw new AppError('User has no mobile on file', 400, 'NO_MOBILE_ON_FILE');
+  }
+
+  const destination =
+    channel === 'email'
+      ? (contact.user_email as string)
+      : formatMobileE164(contact.country_phone_code, contact.user_mobile) ??
+        (contact.user_mobile as string);
+
+  const { otpId, otpCode } = await callOtpResend({
+    userId,
+    purpose: 're_verification',
+    channel,
+    destination
+  });
+
+  if (channel === 'email' && contact.user_email) {
+    void mailer.sendOtp({
+      to: contact.user_email,
+      name: contact.user_first_name ?? 'User',
+      otp: otpCode,
+      flow: 'verify_email'
+    });
+  } else if (channel === 'mobile') {
+    void sendMobileOtp({ userId, otpId, otpCode });
+  }
+
+  return {
+    otpId,
+    devOtp: env.NODE_ENV !== 'production' ? otpCode : null
+  };
+};
+
+export const verifyEmailResend = (userId: number): Promise<ResendOtpOutput> =>
+  reVerifyResend(userId, 'email');
+
+export const verifyMobileResend = (userId: number): Promise<ResendOtpOutput> =>
+  reVerifyResend(userId, 'mobile');
+
+// ═══════════════════════════════════════════════════════════════
 //   CHANGE EMAIL (authenticated)
 // ═══════════════════════════════════════════════════════════════
 
