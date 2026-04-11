@@ -75,18 +75,28 @@ interface EffectivePermsRow {
 
 /**
  * Fetch the effective permission list + role code for a user via
- * udf_auth_get_user_permissions. Returns a ready-to-bake AuthUser
- * claim set (no firstName/lastName — those come from udf_get_users
- * when /me is hit).
+ * udf_auth_get_user_permissions and fold them into a ready-to-bake
+ * AuthUser claim set.
  *
- * The UDF always returns at least one row for an active user: when
- * the user has zero effective permissions, a single sentinel row
- * with permission_code = NULL carries the role code. Zero rows →
- * user is inactive / deleted / role-less.
+ * Name resolution:
+ *   • Callers that already have the user's first/last name (e.g.
+ *     login() — the login UDF payload carries them) should pass
+ *     `names` so we don't hit udf_get_users.
+ *   • Callers that don't (e.g. refresh()) omit `names` and we do
+ *     a second round-trip through udf_get_users to populate them.
+ *   • If udf_get_users doesn't know the user (shouldn't happen for
+ *     a user that just passed udf_auth_get_user_permissions), the
+ *     names fall back to null — the token still gets issued.
+ *
+ * The perms UDF always returns at least one row for an active user:
+ * when the user has zero effective permissions, a single sentinel
+ * row with permission_code = NULL carries the role code. Zero rows
+ * → user is inactive / deleted / role-less.
  */
 const loadAuthUser = async (
   userId: number,
-  email: string
+  email: string,
+  names?: { firstName: string | null; lastName: string | null }
 ): Promise<AuthUser> => {
   const { rows } = await db.callTableFunction<EffectivePermsRow>(
     'udf_auth_get_user_permissions',
@@ -106,11 +116,32 @@ const loadAuthUser = async (
     .map((r) => r.permission_code)
     .filter((code): code is string => typeof code === 'string' && code.length > 0);
 
+  let firstName: string | null = names?.firstName ?? null;
+  let lastName: string | null = names?.lastName ?? null;
+  if (!names) {
+    // Refresh path (or anywhere we don't already have the names).
+    // Pay the extra round-trip to keep the response shape consistent
+    // with login. Silently tolerate a missing row — the token still
+    // gets issued with null names, matching the old behaviour.
+    try {
+      const { rows: userRows } = await db.callTableFunction<{
+        user_first_name: string | null;
+        user_last_name: string | null;
+      }>('udf_get_users', { p_id: userId });
+      if (userRows[0]) {
+        firstName = userRows[0].user_first_name;
+        lastName = userRows[0].user_last_name;
+      }
+    } catch {
+      /* non-fatal — leave names null */
+    }
+  }
+
   return {
     id: userId,
     email,
-    firstName: null,
-    lastName: null,
+    firstName,
+    lastName,
     roles: [roleCode],
     permissions
   };
@@ -321,21 +352,26 @@ export const login = async (input: LoginInput): Promise<LoginOutput> => {
     );
   }
 
-  // Load the user's effective permission set for the JWT claims.
-  // Normalize identifier → email shape stored on the token. (For
-  // mobile-based logins we still need an email claim; fall back to
-  // udf_get_users with p_id := userId if the identifier wasn't an
-  // email.)
-  let email = input.identifier;
-  if (!email.includes('@')) {
-    const { rows: userRows } = await db.callTableFunction<{ user_email: string | null }>(
-      'udf_get_users',
-      { p_id: userId }
-    );
-    email = userRows[0]?.user_email ?? `user${userId}@unknown.local`;
-  }
+  // udf_auth_login now returns first_name, last_name, email, mobile
+  // on the success path. We trust the UDF's email over the submitted
+  // identifier so mobile-based logins still get the real email on
+  // the JWT claim (and we don't need a second udf_get_users round
+  // trip to resolve it).
+  const emailFromUdf = typeof result.email === 'string' ? result.email : null;
+  const email = emailFromUdf
+    ?? (input.identifier.includes('@')
+      ? input.identifier
+      : `user${userId}@unknown.local`);
 
-  const authUser = await loadAuthUser(userId, email);
+  const firstNameFromUdf =
+    typeof result.first_name === 'string' ? result.first_name : null;
+  const lastNameFromUdf =
+    typeof result.last_name === 'string' ? result.last_name : null;
+
+  const authUser = await loadAuthUser(userId, email, {
+    firstName: firstNameFromUdf,
+    lastName: lastNameFromUdf
+  });
 
   // Sign the JWT pair with jti = String(sessionId). This ties the
   // JWT lifecycle to the DB session row so logout can revoke both.

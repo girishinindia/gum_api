@@ -577,18 +577,42 @@ const main = async (): Promise<void> => {
       );
 
       // Attempt 3: login with BOTH verified → 200 + token.
-      const l3 = await http<{ data?: { accessToken?: string } }>(
-        'POST',
-        '/api/v1/auth/login',
-        {
-          body: { identifier: GATE_EMAIL, password: GATE_PASSWORD }
-        }
-      );
+      const l3 = await http<{
+        data?: {
+          accessToken?: string;
+          user?: {
+            id?: number;
+            email?: string;
+            firstName?: string | null;
+            lastName?: string | null;
+            roles?: string[];
+          };
+        };
+      }>('POST', '/api/v1/auth/login', {
+        body: { identifier: GATE_EMAIL, password: GATE_PASSWORD }
+      });
       record(
         '0.5',
         'login (both verified) → 200 + accessToken',
         l3.status === 200 && !!l3.body?.data?.accessToken,
         `status=${l3.status}`
+      );
+
+      // firstName/lastName must be populated on the login response —
+      // udf_auth_login was enriched to return them so the Node layer
+      // no longer hard-codes null. Before this fix both were always
+      // null and clients had to hit /auth/me for display names.
+      record(
+        '0.5',
+        `login response user.firstName === "${GATE_FIRST}"`,
+        l3.body?.data?.user?.firstName === GATE_FIRST,
+        `got=${l3.body?.data?.user?.firstName}`
+      );
+      record(
+        '0.5',
+        `login response user.lastName === "${GATE_LAST}"`,
+        l3.body?.data?.user?.lastName === GATE_LAST,
+        `got=${l3.body?.data?.user?.lastName}`
       );
 
       // Cleanup: hard-delete the gate user so re-runs are idempotent

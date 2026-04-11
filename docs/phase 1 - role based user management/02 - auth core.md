@@ -297,6 +297,8 @@ Public. Exchanges credentials for a JWT pair.
 }
 ```
 
+> **Where the names come from.** `firstName`, `lastName`, `email`, and the role code are returned by `udf_auth_login` directly on its success payload (it already has the row in hand for the password check), so the Node layer does not need a second round-trip through `udf_get_users` just to render the post-login greeting. The `permissions` array is loaded separately via `udf_auth_get_user_permissions` because effective perms are computed dynamically from role grants. For mobile-identifier logins (where the client posts a phone number instead of an email), the UDF still returns the user's real email here — the JWT's email claim is built from this, not from the submitted identifier.
+
 **Errors**
 
 | HTTP | code | Cause |
