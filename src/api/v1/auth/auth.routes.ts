@@ -2,8 +2,10 @@
 // /api/v1/auth router — the full authentication surface area.
 //
 // Core spine (Steps 8/9):
-//   POST /register                 → create account + stub OTP delivery
-//   POST /login                    → identifier+password → tokens
+//   POST /register                 → create account + dual-channel OTP delivery
+//   POST /register/verify-email    → public; mark registration email verified
+//   POST /register/verify-mobile   → public; mark registration mobile verified
+//   POST /login                    → identifier+password → tokens (403 if unverified)
 //   POST /logout                   → revoke current session
 //   POST /refresh                  → rotate tokens
 //   GET  /me                       → current user profile
@@ -44,6 +46,7 @@ import {
   changeMobileInitiateBodySchema,
   forgotPasswordCompleteBodySchema,
   forgotPasswordInitiateBodySchema,
+  registerVerifyBodySchema,
   resetPasswordCompleteBodySchema,
   verifyContactCompleteBodySchema,
   type ChangeContactCompleteBody,
@@ -51,6 +54,7 @@ import {
   type ChangeMobileInitiateBody,
   type ForgotPasswordCompleteBody,
   type ForgotPasswordInitiateBody,
+  type RegisterVerifyBody,
   type ResetPasswordCompleteBody,
   type VerifyContactCompleteBody
 } from '../../../modules/auth/auth-flows.schemas';
@@ -74,6 +78,44 @@ router.post(
       countryId: body.countryId
     });
     return created(res, result, 'User registered successfully');
+  })
+);
+
+// ─── POST /register/verify-email (public, no JWT) ───────────────
+//
+// Public sibling of /verify-email/confirm. A freshly-registered user
+// has no JWT yet (login is gated on both-verified), so these two
+// routes take { userId, otpId, otpCode } from the body. The service
+// layer binds the OTP row to the claimed userId and refuses anything
+// that isn't a purpose='registration' row.
+
+router.post(
+  '/register/verify-email',
+  validate({ body: registerVerifyBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as RegisterVerifyBody;
+    const result = await authFlows.registerVerifyEmail({
+      userId: body.userId,
+      otpId: body.otpId,
+      otpCode: body.otpCode
+    });
+    return ok(res, result, 'Email verified');
+  })
+);
+
+// ─── POST /register/verify-mobile (public, no JWT) ──────────────
+
+router.post(
+  '/register/verify-mobile',
+  validate({ body: registerVerifyBodySchema }),
+  asyncHandler(async (req, res) => {
+    const body = req.body as RegisterVerifyBody;
+    const result = await authFlows.registerVerifyMobile({
+      userId: body.userId,
+      otpId: body.otpId,
+      otpCode: body.otpCode
+    });
+    return ok(res, result, 'Mobile verified');
   })
 );
 

@@ -84,6 +84,20 @@ export type VerifyContactCompleteBody = z.infer<
   typeof verifyContactCompleteBodySchema
 >;
 
+// ─── Register-time verify (public, no JWT) ───────────────────────
+//
+// Shape matches /forgot-password/verify: the OTP row id plus the
+// claimed user id (which must be bound to the row in the DB). Used
+// by /auth/register/verify-email and /auth/register/verify-mobile.
+// A freshly-registered user has no JWT yet — the OTP codes ARE the
+// authentication.
+export const registerVerifyBodySchema = z.object({
+  userId: bigintIdSchema,
+  otpId: bigintIdSchema,
+  otpCode: otpCodeSchema
+});
+export type RegisterVerifyBody = z.infer<typeof registerVerifyBodySchema>;
+
 // ─── Change email (authenticated) ────────────────────────────────
 
 export const changeEmailInitiateBodySchema = z.object({

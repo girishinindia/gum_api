@@ -81,6 +81,12 @@ const schema = z.object({
   SMS_FLASH: z.string().min(1),              // Flash SMS: 0
   SMS_ENTITY_ID: z.string().min(1),          // DLT entity ID
   SMS_DLT_TEMPLATE_ID: z.string().min(1),    // DLT template ID for OTP messages
+  // When 'true', real SMS is dispatched even outside production. Default
+  // is 'false' — dev/test runs rely on the dev OTP echo channel (logger +
+  // devMobileOtp in the response) so the verify-auth-flows harness never
+  // burns SMSGatewayHub credits. Flip this to 'true' in a local .env to
+  // test actual SMS delivery end-to-end without setting NODE_ENV=production.
+  SMS_FORCE_SEND: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
 
   // ─── Razorpay (payments) ───────────────────────────────────
   RAZORPAY_KEY_ID: z.string().min(1),

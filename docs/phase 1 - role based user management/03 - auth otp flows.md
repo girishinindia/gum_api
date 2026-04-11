@@ -8,6 +8,29 @@ Six self-service flows that all share a common shape: an **initiate** call gener
 
 ---
 
+## SMS dispatch gate
+
+Every flow below that sends a mobile OTP ultimately calls the shared `sendMobileOtp(...)` helper in `auth-flows.service.ts`. The helper re-reads the OTP's destination out of `user_otps` (already formatted to E.164 by the initiate UDFs using `countries.phone_code`), strips the leading `+`, and calls `smsGatewayService.sendOtp({ phone, name, otp })` which wraps the SMSGatewayHub `SendSMS` endpoint with the DLT-compliant template baked in.
+
+The helper's dispatch gate is:
+
+```
+if (env.NODE_ENV !== 'production' && !env.SMS_FORCE_SEND) return;
+```
+
+In plain English: real SMS only fires when the node is in production mode **or** when the `SMS_FORCE_SEND` env flag is `true`. With both unset (the default for local dev), the helper is a no-op and the flow relies on the dev OTP echo channel — every initiate response carries a `devMobileOtp` field in non-production and the OTP also lands in the application logger at `info` level. This is what keeps the `verify-auth-flows` harness working without burning SMSGatewayHub credits.
+
+| Env | `NODE_ENV` | `SMS_FORCE_SEND` | Real SMS fires? | `devMobileOtp` in response? |
+|---|---|---|---|---|
+| Local dev (default) | `development` | `false` | No | Yes |
+| Local dev (forced) | `development` | `true` | Yes | Yes |
+| CI / test | `test` | `false` | No | Yes |
+| Production | `production` | any | Yes | No |
+
+Failures from the gateway are logged at `warn`/`error` but never surfaced to the caller — the OTP row is still verifiable from the DB and the client can retry. This matches the email dispatch contract from [11 — email notifications](11%20-%20email%20notifications.md): delivery is fire-and-forget, never transactional.
+
+---
+
 ## 3.1 Forgot password — public, dual-channel
 
 ### `POST /api/v1/auth/forgot-password`
@@ -190,7 +213,7 @@ Authenticated.
 
 ## 3.4 Verify mobile — authenticated, single-channel
 
-> **Side effect → email + SMS.** Initiate fires `mailer.sendOtp(..., flow='verify_mobile')` to the user's email AND dispatches the SMS via `smsGatewayService.sendOtp(...)` (production only). See [11 — email notifications](11%20-%20email%20notifications.md).
+> **Side effect → email + SMS.** Initiate fires `mailer.sendOtp(..., flow='verify_mobile')` to the user's email AND dispatches the SMS via the shared `sendMobileOtp(...)` helper. SMS dispatch is gated by `NODE_ENV === 'production'` OR `SMS_FORCE_SEND === true` — see [SMS dispatch gate](#sms-dispatch-gate). See also [11 — email notifications](11%20-%20email%20notifications.md).
 
 
 Same shape as 3.3 but for the mobile channel. Endpoints:
@@ -208,7 +231,7 @@ Same shape as 3.3 but for the mobile channel. Endpoints:
 }
 ```
 
-In production the OTP is dispatched to the user's mobile in fully qualified E.164 form (e.g., `+919662278990`), built from the user's `country_id → countries.phone_code` joined with `users.mobile`.
+When the [SMS dispatch gate](#sms-dispatch-gate) is open, the OTP is dispatched to the user's mobile in fully qualified E.164 form (e.g., `+919662278990`), built from the user's `country_id → countries.phone_code` joined with `users.mobile`.
 
 ---
 
@@ -273,7 +296,7 @@ Authenticated. Commits the change and forces a re-login (so existing tokens stop
 
 ## 3.6 Change mobile — authenticated
 
-> **Side effect → email + SMS.** Initiate fires `mailer.sendOtp(..., flow='change_mobile')` to the user's **email** (a trusted side-channel for confirming a mobile swap) AND dispatches the SMS to the new number. The `change-mobile/confirm` complete leg fires `mailer.sendMobileChanged(...)` to the user's email after success. See [11 — email notifications](11%20-%20email%20notifications.md).
+> **Side effect → email + SMS.** Initiate fires `mailer.sendOtp(..., flow='change_mobile')` to the user's **email** (a trusted side-channel for confirming a mobile swap) AND dispatches the SMS to the new number via the shared `sendMobileOtp(...)` helper — gated by the [SMS dispatch gate](#sms-dispatch-gate). The `change-mobile/confirm` complete leg fires `mailer.sendMobileChanged(...)` to the user's email after success. See [11 — email notifications](11%20-%20email%20notifications.md).
 
 
 Same shape as 3.5 but for the mobile channel.
@@ -281,4 +304,4 @@ Same shape as 3.5 but for the mobile channel.
 - `POST /api/v1/auth/change-mobile` — body `{ "newMobile": "9123456789" }`
 - `POST /api/v1/auth/change-mobile/confirm` — body `{ requestId, otpId, otpCode }`
 
-The OTP is dispatched to the new mobile in E.164 form (using the user's country code).
+When the [SMS dispatch gate](#sms-dispatch-gate) is open, the OTP is dispatched to the new mobile in E.164 form (using the user's country code).

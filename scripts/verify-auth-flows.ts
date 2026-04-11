@@ -372,6 +372,232 @@ const main = async (): Promise<void> => {
       }
     }
 
+    // ─── 0.5 Register-verification gate ──────────────────
+    //
+    // Register a brand-new user WITHOUT the verifyContactsInDb
+    // bypass, then walk through the actual user-facing path:
+    //   1. POST /auth/login          → 403 ACCOUNT_NOT_VERIFIED
+    //                                   with unverifiedChannels
+    //                                   = ["email","mobile"]
+    //   2. POST /auth/register/verify-email  (public)
+    //   3. POST /auth/login          → still 403 (mobile unverified)
+    //                                   unverifiedChannels=["mobile"]
+    //   4. POST /auth/register/verify-mobile (public)
+    //   5. POST /auth/login          → 200 + tokens
+    //
+    // Also covers OTP_INVALID tamper paths so the security shape
+    // of the public routes is exercised end-to-end.
+    header('0.5 Register-verification gate — dual-channel path');
+    {
+      const GATE_EMAIL = `verify-flows-g+${RUN_ID}@test.growupmore.local`;
+      const GATE_MOBILE = `+91993${RAND9}`.slice(0, 14);
+      const GATE_PASSWORD = 'GatePass2026';
+      const GATE_FIRST = 'Gate';
+      const GATE_LAST = `Run${process.pid}`;
+
+      const reg = await http<{
+        data?: {
+          userId: number;
+          emailOtpId: number;
+          mobileOtpId: number;
+          devEmailOtp?: string;
+          devMobileOtp?: string;
+        };
+      }>('POST', '/api/v1/auth/register', {
+        body: {
+          firstName: GATE_FIRST,
+          lastName: GATE_LAST,
+          email: GATE_EMAIL,
+          mobile: GATE_MOBILE,
+          password: GATE_PASSWORD,
+          roleCode: 'student'
+        }
+      });
+      record(
+        '0.5',
+        'register gate user → 201',
+        reg.status === 201 && typeof reg.body?.data?.userId === 'number',
+        `status=${reg.status}`
+      );
+      const gateData = reg.body?.data;
+      const gateUserId = gateData?.userId ?? 0;
+      const gateEmailOtpId = gateData?.emailOtpId ?? 0;
+      const gateMobileOtpId = gateData?.mobileOtpId ?? 0;
+      const gateEmailOtp = gateData?.devEmailOtp ?? '';
+      const gateMobileOtp = gateData?.devMobileOtp ?? '';
+
+      record(
+        '0.5',
+        'register response carries emailOtpId + mobileOtpId',
+        gateEmailOtpId > 0 && gateMobileOtpId > 0,
+        `emailOtpId=${gateEmailOtpId} mobileOtpId=${gateMobileOtpId}`
+      );
+      record(
+        '0.5',
+        'register response carries devEmailOtp + devMobileOtp (dev mode)',
+        /^[0-9]{4,8}$/.test(gateEmailOtp) && /^[0-9]{4,8}$/.test(gateMobileOtp),
+        `emailOtp=${gateEmailOtp || '(empty)'} mobileOtp=${gateMobileOtp || '(empty)'}`
+      );
+
+      // Attempt 1: login before any verification → 403 with both channels
+      const l1 = await http<{
+        code?: string;
+        details?: { userId?: number; unverifiedChannels?: string[]; failureReason?: string };
+      }>('POST', '/api/v1/auth/login', {
+        body: { identifier: GATE_EMAIL, password: GATE_PASSWORD }
+      });
+      record(
+        '0.5',
+        'login (no verify) → 403 ACCOUNT_NOT_VERIFIED',
+        l1.status === 403 && l1.body?.code === 'ACCOUNT_NOT_VERIFIED',
+        `status=${l1.status} code=${l1.body?.code}`
+      );
+      const l1Channels = l1.body?.details?.unverifiedChannels ?? [];
+      record(
+        '0.5',
+        'login 403 details.unverifiedChannels = ["email","mobile"]',
+        l1Channels.length === 2 &&
+          l1Channels.includes('email') &&
+          l1Channels.includes('mobile'),
+        `channels=${JSON.stringify(l1Channels)}`
+      );
+      record(
+        '0.5',
+        'login 403 details.failureReason = both_not_verified',
+        l1.body?.details?.failureReason === 'both_not_verified',
+        `reason=${l1.body?.details?.failureReason}`
+      );
+      record(
+        '0.5',
+        'login 403 details.userId echoes registered id',
+        l1.body?.details?.userId === gateUserId,
+        `got=${l1.body?.details?.userId} expected=${gateUserId}`
+      );
+
+      // Tamper path 1: /register/verify-email with the mobile OTP id
+      //                → 400 OTP_INVALID (wrong channel).
+      const vBadChannel = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/register/verify-email',
+        {
+          body: {
+            userId: gateUserId,
+            otpId: gateMobileOtpId,
+            otpCode: gateMobileOtp
+          }
+        }
+      );
+      record(
+        '0.5',
+        'verify-email with mobile otpId → 400 OTP_INVALID',
+        vBadChannel.status === 400 && vBadChannel.body?.code === 'OTP_INVALID',
+        `status=${vBadChannel.status} code=${vBadChannel.body?.code}`
+      );
+
+      // Tamper path 2: /register/verify-email with a different user id
+      //                → 400 OTP_INVALID (row does not belong).
+      const vBadUser = await http<{ code?: string }>(
+        'POST',
+        '/api/v1/auth/register/verify-email',
+        {
+          body: {
+            userId: gateUserId + 999999,
+            otpId: gateEmailOtpId,
+            otpCode: gateEmailOtp
+          }
+        }
+      );
+      record(
+        '0.5',
+        'verify-email with wrong userId → 400 OTP_INVALID',
+        vBadUser.status === 400 && vBadUser.body?.code === 'OTP_INVALID',
+        `status=${vBadUser.status} code=${vBadUser.body?.code}`
+      );
+
+      // Happy path: verify email
+      const vEmail = await http<{
+        data?: { userId?: number; isEmailVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-email', {
+        body: {
+          userId: gateUserId,
+          otpId: gateEmailOtpId,
+          otpCode: gateEmailOtp
+        }
+      });
+      record(
+        '0.5',
+        'verify-email happy path → 200 + isEmailVerified=true',
+        vEmail.status === 200 && vEmail.body?.data?.isEmailVerified === true,
+        `status=${vEmail.status}`
+      );
+
+      // Attempt 2: login with email verified, mobile still not
+      //            → 403 but unverifiedChannels=["mobile"] only.
+      const l2 = await http<{
+        code?: string;
+        details?: { unverifiedChannels?: string[]; failureReason?: string };
+      }>('POST', '/api/v1/auth/login', {
+        body: { identifier: GATE_EMAIL, password: GATE_PASSWORD }
+      });
+      record(
+        '0.5',
+        'login (email-only verified) → 403 ACCOUNT_NOT_VERIFIED',
+        l2.status === 403 && l2.body?.code === 'ACCOUNT_NOT_VERIFIED',
+        `status=${l2.status} code=${l2.body?.code}`
+      );
+      const l2Channels = l2.body?.details?.unverifiedChannels ?? [];
+      record(
+        '0.5',
+        'login 403 details.unverifiedChannels = ["mobile"]',
+        l2Channels.length === 1 && l2Channels[0] === 'mobile',
+        `channels=${JSON.stringify(l2Channels)}`
+      );
+      record(
+        '0.5',
+        'login 403 details.failureReason = mobile_not_verified',
+        l2.body?.details?.failureReason === 'mobile_not_verified',
+        `reason=${l2.body?.details?.failureReason}`
+      );
+
+      // Happy path: verify mobile
+      const vMobile = await http<{
+        data?: { userId?: number; isMobileVerified?: boolean };
+      }>('POST', '/api/v1/auth/register/verify-mobile', {
+        body: {
+          userId: gateUserId,
+          otpId: gateMobileOtpId,
+          otpCode: gateMobileOtp
+        }
+      });
+      record(
+        '0.5',
+        'verify-mobile happy path → 200 + isMobileVerified=true',
+        vMobile.status === 200 && vMobile.body?.data?.isMobileVerified === true,
+        `status=${vMobile.status}`
+      );
+
+      // Attempt 3: login with BOTH verified → 200 + token.
+      const l3 = await http<{ data?: { accessToken?: string } }>(
+        'POST',
+        '/api/v1/auth/login',
+        {
+          body: { identifier: GATE_EMAIL, password: GATE_PASSWORD }
+        }
+      );
+      record(
+        '0.5',
+        'login (both verified) → 200 + accessToken',
+        l3.status === 200 && !!l3.body?.data?.accessToken,
+        `status=${l3.status}`
+      );
+
+      // Cleanup: hard-delete the gate user so re-runs are idempotent
+      // and section 10 cleanup doesn't need to know about this user.
+      if (gateUserId > 0) {
+        await getPool().query('DELETE FROM users WHERE id = $1', [gateUserId]);
+      }
+    }
+
     // ─── 1. Auth gates ──────────────────────────────────
     header('1. Auth gates — anon vs public');
     {

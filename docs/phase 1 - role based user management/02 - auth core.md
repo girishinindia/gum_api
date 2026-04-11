@@ -12,6 +12,8 @@ Public. Creates a new account with role `student` or `instructor` and emits OTPs
 
 > **Side effect → email.** On success, fires `mailer.sendOtp(..., flow='register')` to the new user's email address. Best-effort: a Brevo failure logs at WARN but does not roll back the registration. See [11 — email notifications](11%20-%20email%20notifications.md).
 
+> **Side effect → SMS.** On success, the mobile OTP is dispatched via the shared `sendMobileOtp(...)` helper through SMSGatewayHub. The helper only fires when `NODE_ENV === 'production'` **OR** the `SMS_FORCE_SEND` env flag is `true` — both unset means it's a no-op and the dev OTP echo channel (`devMobileOtp` in the response + `logger.info` line) is how local dev/test picks up the code. Failures are log-and-continue: a flaky gateway never rolls back the registration. See [03 auth otp flows](03%20-%20auth%20otp%20flows.md#sms-dispatch-gate).
+
 **Request body**
 
 | Field | Type | Required | Notes |
@@ -46,13 +48,15 @@ Public. Creates a new account with role `student` or `instructor` and emits OTPs
   "message": "User registered successfully",
   "data": {
     "userId": 42,
+    "emailOtpId": 7821,
+    "mobileOtpId": 7822,
     "devEmailOtp": "493017",
     "devMobileOtp": "820146"
   }
 }
 ```
 
-> In **production** `devEmailOtp` and `devMobileOtp` are `null`. The mobile OTP is dispatched to the E.164 destination `+919662278990` (country `+91` joined with the local number).
+> In **production** `devEmailOtp` and `devMobileOtp` are `null`. `emailOtpId` and `mobileOtpId` are always returned — the client needs them to call the verify routes in §2.1a and §2.1b. The mobile OTP is dispatched to the E.164 destination `+919662278990` (country `+91` joined with the local number).
 
 **Errors**
 
@@ -61,6 +65,102 @@ Public. Creates a new account with role `student` or `instructor` and emits OTPs
 | 400 | `VALIDATION_ERROR` | Body failed Zod validation (e.g., weak password, neither email nor mobile supplied). |
 | 400 | `REGISTRATION_FAILED` | UDF refused (e.g., self-register tried for an admin role). |
 | 409 | `DUPLICATE_ENTRY` | Email or mobile already registered. |
+
+---
+
+## What happens between register and login
+
+A freshly-registered user **cannot log in** until both `is_email_verified` AND `is_mobile_verified` are `true`. The gate is enforced at the database layer by `udf_auth_login` (see `phase-01-role-based-user-management/12-auth/04_fn_login.sql` lines 143–185) — if either flag is `false`, the UDF refuses and returns `{ success: false, failure_reason, unverified_channels }`. The Node `login()` wrapper surfaces this as `403 ACCOUNT_NOT_VERIFIED` with a `details` object the client can route on. See §2.2 "Errors" for the exact shape.
+
+The canonical sequence is:
+
+```
+1.  POST /auth/register
+       ↓  response contains { userId, emailOtpId, mobileOtpId, devEmailOtp?, devMobileOtp? }
+       ↓  no JWT issued
+
+2a. POST /auth/register/verify-email        (public, §2.1a below)
+       body: { userId, otpId: emailOtpId, otpCode }
+       ↓  marks is_email_verified = true
+
+2b. POST /auth/register/verify-mobile       (public, §2.1b below)
+       body: { userId, otpId: mobileOtpId, otpCode }
+       ↓  marks is_mobile_verified = true
+
+3.  POST /auth/login                        (§2.2 below)
+       ↓  DB gate passes because both flags are now true
+       ↓  returns { accessToken, refreshToken, user }
+```
+
+The verify-email and verify-mobile routes in [03 auth otp flows](03%20-%20auth%20otp%20flows.md#33-verify-email--authenticated-single-channel) §3.3 and §3.4 are the **re-verification** path for already-logged-in users (profile update, email change, etc.) — they require a JWT. The §2.1a/§2.1b routes below are the **first-time verification** path for newly-registered users, and they are public by design because the user cannot hold a JWT until both flags flip.
+
+---
+
+## 2.1a `POST /api/v1/auth/register/verify-email`
+
+Public. Marks a newly-registered user's email as verified. Takes the `userId` + `emailOtpId` returned by `/auth/register` plus the OTP code the user received by email.
+
+> **Security shape.** The service layer binds the OTP row to the claimed `userId` before calling `udf_auth_verify_email`. It refuses if (a) the OTP row does not exist, (b) the OTP row belongs to a different user, (c) the OTP channel is `mobile` (wrong route), or (d) the OTP `purpose` is not `registration`. All four cases return `400 OTP_INVALID` to avoid leaking which condition failed.
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | int | yes | From the `/auth/register` response. |
+| `otpId` | int | yes | The `emailOtpId` from the `/auth/register` response. |
+| `otpCode` | string | yes | 4–8 digits. Delivered to the user's email via Brevo. |
+
+**Sample request**
+
+```json
+{ "userId": 42, "otpId": 7821, "otpCode": "493017" }
+```
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "Email verified",
+  "data": { "userId": 42, "isEmailVerified": true }
+}
+```
+
+**Errors**
+
+| HTTP | code | Cause |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Body shape is wrong (missing field, OTP not 4–8 digits, etc.). |
+| 400 | `OTP_INVALID` | OTP row doesn't belong to this user, wrong channel, wrong purpose, or wrong code. |
+| 404 | `OTP_NOT_FOUND` | `otpId` does not exist. |
+| 410 | `OTP_EXPIRED` | OTP older than 10 minutes, or already consumed by a previous successful verify. |
+| 429 | `OTP_EXHAUSTED` | 5 wrong attempts on this OTP row. Must request a resend via the forgot-password flow. |
+
+---
+
+## 2.1b `POST /api/v1/auth/register/verify-mobile`
+
+Public. Same shape as §2.1a but for the mobile channel. Uses `mobileOtpId` from the `/auth/register` response.
+
+**Sample request**
+
+```json
+{ "userId": 42, "otpId": 7822, "otpCode": "820146" }
+```
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "Mobile verified",
+  "data": { "userId": 42, "isMobileVerified": true }
+}
+```
+
+The OTP itself is dispatched during `/auth/register` via the shared `sendMobileOtp(...)` helper in `auth-flows.service.ts`, gated by the [SMS dispatch gate](03%20-%20auth%20otp%20flows.md#sms-dispatch-gate): real SMS fires only in production OR when `SMS_FORCE_SEND=true`, otherwise the code is available via `devMobileOtp` in the register response and the application log.
+
+Error table is identical to §2.1a.
 
 ---
 
@@ -114,8 +214,27 @@ Public. Exchanges credentials for a JWT pair.
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | Missing/short identifier or password. |
 | 401 | `INVALID_CREDENTIALS` | Wrong password or unknown identifier. |
-| 401 | `UNAUTHORIZED` | UDF reported the account is unverified or inactive. |
+| 403 | `ACCOUNT_NOT_VERIFIED` | User exists and password is correct, but `is_email_verified` and/or `is_mobile_verified` is still `false`. The `details` block carries `{ userId, failureReason, unverifiedChannels }` so the client can route straight to §2.1a / §2.1b. |
 | 423 | `ACCOUNT_LOCKED` | Too many failed attempts; wait for the lockout window to elapse. |
+
+**Sample `ACCOUNT_NOT_VERIFIED` response**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ACCOUNT_NOT_VERIFIED",
+    "message": "Email and/or mobile verification required before login",
+    "details": {
+      "userId": 42,
+      "failureReason": "both_not_verified",
+      "unverifiedChannels": ["email", "mobile"]
+    }
+  }
+}
+```
+
+`failureReason` is one of `email_not_verified` | `mobile_not_verified` | `both_not_verified`. `unverifiedChannels` is the authoritative array the client should iterate to decide which verify routes to hit — if it contains `"email"`, call `/auth/register/verify-email`; if it contains `"mobile"`, call `/auth/register/verify-mobile`.
 
 ---
 

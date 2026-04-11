@@ -25,6 +25,7 @@ import { logger } from '../../core/logger/logger';
 import type { AuthUser, JwtPayload, TokenPair } from '../../core/types/auth.types';
 import { env } from '../../config/env';
 import { mailer } from '../../integrations/email/mailer.service';
+import { sendMobileOtp } from './auth-flows.service';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -40,6 +41,12 @@ export interface RegisterInput {
 
 export interface RegisterOutput {
   userId: number;
+  // OTP row ids so the client can call the public
+  // /auth/register/verify-email and /register/verify-mobile routes
+  // with { userId, otpId, otpCode } — no JWT required (the user
+  // cannot log in yet because both verified flags are false).
+  emailOtpId: number | null;
+  mobileOtpId: number | null;
   // Only populated in non-production mode — we log the OTP but also
   // surface it in the HTTP response so the verify flow can be tested
   // end-to-end without a real mail/SMS gateway.
@@ -161,12 +168,18 @@ export const register = async (
   }
 
   const userId = Number(result.id);
+  const emailOtpIdRaw = result.email_otp_id;
+  const mobileOtpIdRaw = result.mobile_otp_id;
+  const emailOtpId =
+    emailOtpIdRaw != null ? Number(emailOtpIdRaw) : null;
+  const mobileOtpId =
+    mobileOtpIdRaw != null ? Number(mobileOtpIdRaw) : null;
   const emailOtp = (result.email_otp ?? null) as string | null;
   const mobileOtp = (result.mobile_otp ?? null) as string | null;
 
   // Dev echo (kept for the verify-auth-flows harness in non-prod).
-  // Production delivery happens via mailer below — failures there
-  // are logged but never roll back the registration.
+  // Production delivery happens via mailer + sendMobileOtp below —
+  // failures there are logged but never roll back the registration.
   if (emailOtp) {
     logger.info(
       { userId, channel: 'email', target: input.email, otp: emailOtp },
@@ -192,9 +205,24 @@ export const register = async (
     });
   }
 
+  // Best-effort SMS dispatch. Fire-and-forget via the shared
+  // sendMobileOtp helper which:
+  //   • only fires when NODE_ENV === 'production' OR SMS_FORCE_SEND,
+  //   • re-reads the E.164 destination from user_otps,
+  //   • strips the leading '+' and calls SMSGatewayHub,
+  //   • swallows gateway failures into a warn/error log so a flaky
+  //     SMS provider never rolls back the registration.
+  // The user can still verify from the devMobileOtp echo in non-prod,
+  // or request a resend via the forgot-password flow in prod.
+  if (mobileOtpId != null && mobileOtp) {
+    void sendMobileOtp({ userId, otpId: mobileOtpId, otpCode: mobileOtp });
+  }
+
   const includeOtpInResponse = env.NODE_ENV !== 'production';
   return {
     userId,
+    emailOtpId,
+    mobileOtpId,
     devEmailOtp: includeOtpInResponse ? emailOtp : null,
     devMobileOtp: includeOtpInResponse ? mobileOtp : null
   };
@@ -242,6 +270,38 @@ export const login = async (input: LoginInput): Promise<LoginOutput> => {
 
   if (!result.success) {
     const msg = String(result.message ?? 'Login failed');
+
+    // The UDF returns a structured `failure_reason` for the
+    // account-not-verified path:
+    //   • 'email_not_verified'
+    //   • 'mobile_not_verified'
+    //   • 'both_not_verified'
+    // along with an `unverified_channels` JSONB array like ["email"]
+    // or ["email","mobile"]. We surface this as 403 ACCOUNT_NOT_VERIFIED
+    // with a `details` object so the client can route the user to the
+    // correct register-verify screen.
+    const failureReason = result.failure_reason as string | undefined;
+    if (
+      failureReason === 'email_not_verified' ||
+      failureReason === 'mobile_not_verified' ||
+      failureReason === 'both_not_verified'
+    ) {
+      const unverifiedChannels = Array.isArray(result.unverified_channels)
+        ? (result.unverified_channels as string[])
+        : [];
+      const userIdFromUdf = result.user_id != null ? Number(result.user_id) : null;
+      throw new AppError(
+        msg,
+        403,
+        'ACCOUNT_NOT_VERIFIED',
+        {
+          userId: userIdFromUdf,
+          failureReason,
+          unverifiedChannels
+        }
+      );
+    }
+
     // The UDF handles both "bad credentials" and "account locked"
     // cases. We map everything to 401 unless the message looks like
     // a lockout, which is 423.

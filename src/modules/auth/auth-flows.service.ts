@@ -231,7 +231,7 @@ const callDualChannelInitiate = async (
   // formatted to E.164 inside the *_initiate UDF; we read it back
   // from user_otps so the gateway gets a fully-qualified number.
   if (mobileOtpId != null && mobileOtpCode && userId > 0) {
-    await sendMobileOtpIfProd({
+    await sendMobileOtp({
       userId,
       otpId: mobileOtpId,
       otpCode: mobileOtpCode
@@ -345,7 +345,7 @@ const generateSingleOtp = async (
 
   // Production-only SMS dispatch for mobile-channel OTPs.
   if (channel === 'mobile' && otpCode) {
-    await sendMobileOtpIfProd({ userId, otpId, otpCode });
+    await sendMobileOtp({ userId, otpId, otpCode });
   }
 
   // Email-channel OTPs go through the mailer (best-effort).
@@ -434,23 +434,28 @@ export const formatMobileE164 = (
 
 // ─── SMS dispatch helper ─────────────────────────────────────────
 //
-// Production-only OTP delivery through SMSGatewayHub. We pull the
-// destination back out of user_otps (the *_initiate UDFs already
-// formatted it as E.164 by joining countries.phone_code) and call
-// the gateway with the digits-only form the gateway expects.
+// OTP delivery through SMSGatewayHub. We pull the destination back
+// out of user_otps (the *_initiate UDFs already formatted it as E.164
+// by joining countries.phone_code) and call the gateway with the
+// digits-only form the gateway expects.
 //
-// Failures are logged but not surfaced to the caller — the OTP
-// row is still verifiable from the DB and the user can retry from
-// the client side. We don't want a flaky SMS provider to break the
-// whole auth flow. In dev/test the helper is a no-op so the
-// verify-auth-flows harness keeps working through the dev OTP
-// echo channel.
-const sendMobileOtpIfProd = async (input: {
+// Failures are logged but not surfaced to the caller — the OTP row
+// is still verifiable from the DB and the user can retry from the
+// client side. We don't want a flaky SMS provider to break the whole
+// auth flow.
+//
+// Dispatch gate: fires if NODE_ENV === 'production' OR if the
+// `SMS_FORCE_SEND` env flag is set. The flag lets a local dev run
+// real SMS end-to-end without flipping NODE_ENV. With both unset,
+// the helper is a no-op and the verify-auth-flows harness keeps
+// working through the dev OTP echo channel so it never burns
+// SMSGatewayHub credits.
+export const sendMobileOtp = async (input: {
   userId: number;
   otpId: number;
   otpCode: string;
 }): Promise<void> => {
-  if (env.NODE_ENV !== 'production') return;
+  if (env.NODE_ENV !== 'production' && !env.SMS_FORCE_SEND) return;
 
   const { rows } = await getPool().query<{
     destination: string;
@@ -725,6 +730,93 @@ export const verifyMobileComplete = async (input: {
 };
 
 // ═══════════════════════════════════════════════════════════════
+//   REGISTER-TIME VERIFY (public, no JWT)
+// ═══════════════════════════════════════════════════════════════
+//
+// A freshly-registered user cannot log in until BOTH is_email_verified
+// AND is_mobile_verified are true (enforced by udf_auth_login lines
+// 144-182). But the /verify-email and /verify-mobile endpoints above
+// require authentication — which the user cannot yet obtain. So we
+// expose a pair of public siblings that take { userId, otpId, otpCode }
+// from the body instead of pulling userId from the JWT.
+//
+// Security shape:
+//   • Before calling udf_auth_verify_email/_mobile we bind the OTP row
+//     to the claimed userId and assert it is a 'registration' purpose
+//     row. This prevents a malicious caller from using a forgot-password
+//     or change-email OTP to mark a stranger's contact as verified.
+//   • We also refuse if the user is already verified for that channel
+//     (idempotence + a tiny amount of enumeration resistance).
+//
+// Both endpoints are idempotent-on-success: calling them twice with the
+// same { userId, otpId, otpCode } after a successful first call returns
+// 410 OTP_EXPIRED from udf_otp_verify (the OTP row is consumed).
+
+const assertRegistrationOtpBelongsTo = async (
+  userId: number,
+  otpId: number,
+  channel: 'email' | 'mobile'
+): Promise<void> => {
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    user_id: number;
+    channel: string;
+    purpose: string;
+  }>(
+    `SELECT user_id::INT AS user_id, channel::TEXT AS channel, purpose::TEXT AS purpose
+       FROM user_otps
+      WHERE id = $1::BIGINT
+      LIMIT 1`,
+    [otpId]
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new AppError('OTP record not found', 404, 'OTP_NOT_FOUND');
+  }
+  if (row.user_id !== userId) {
+    // Same error code as the UDF would return for a bad code — don't
+    // leak whether the otpId exists for some other user.
+    throw new AppError('OTP does not belong to this user', 400, 'OTP_INVALID');
+  }
+  if (row.channel !== channel) {
+    throw new AppError(
+      `Expected ${channel} OTP, got ${row.channel}`,
+      400,
+      'OTP_INVALID'
+    );
+  }
+  if (row.purpose !== 'registration') {
+    throw new AppError(
+      'OTP purpose is not registration',
+      400,
+      'OTP_INVALID'
+    );
+  }
+};
+
+export const registerVerifyEmail = async (input: {
+  userId: number;
+  otpId: number;
+  otpCode: string;
+}): Promise<{ userId: number; isEmailVerified: true }> => {
+  await assertRegistrationOtpBelongsTo(input.userId, input.otpId, 'email');
+  await verifyOtp(input.otpId, input.otpCode, 'email');
+  await db.callFunction('udf_auth_verify_email', { p_user_id: input.userId });
+  return { userId: input.userId, isEmailVerified: true };
+};
+
+export const registerVerifyMobile = async (input: {
+  userId: number;
+  otpId: number;
+  otpCode: string;
+}): Promise<{ userId: number; isMobileVerified: true }> => {
+  await assertRegistrationOtpBelongsTo(input.userId, input.otpId, 'mobile');
+  await verifyOtp(input.otpId, input.otpCode, 'mobile');
+  await db.callFunction('udf_auth_verify_mobile', { p_user_id: input.userId });
+  return { userId: input.userId, isMobileVerified: true };
+};
+
+// ═══════════════════════════════════════════════════════════════
 //   CHANGE EMAIL (authenticated)
 // ═══════════════════════════════════════════════════════════════
 
@@ -910,7 +1002,7 @@ export const changeMobileInitiate = async (
   // Production-only SMS dispatch. The UDF already wrote the E.164
   // destination (country phone_code + new mobile) into user_otps.
   if (otpCode) {
-    await sendMobileOtpIfProd({ userId, otpId, otpCode });
+    await sendMobileOtp({ userId, otpId, otpCode });
   }
 
   // Also dispatch via email — the user's existing email address is
