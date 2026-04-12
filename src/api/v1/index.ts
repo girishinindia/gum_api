@@ -47,6 +47,24 @@ import courseModuleTopicsRoutes from './course-module-topics/course-module-topic
 import courseSubCategoriesRoutes from './course-sub-categories/course-sub-categories.routes';
 import courseSubjectsRoutes from './course-subjects/course-subjects.routes';
 import coursesRoutes from './courses/courses.routes';
+import mcqQuestionsRoutes from './mcq-questions/mcq-questions.routes';
+import mcqQuestionTranslationsRoutes from './mcq-question-translations/mcq-question-translations.routes';
+import mcqOptionsRoutes from './mcq-options/mcq-options.routes';
+import mcqOptionTranslationsRoutes from './mcq-option-translations/mcq-option-translations.routes';
+import oneWordQuestionsRoutes from './one-word-questions/one-word-questions.routes';
+import oneWordQuestionTranslationsRoutes from './one-word-question-translations/one-word-question-translations.routes';
+import oneWordSynonymsRoutes from './one-word-synonyms/one-word-synonyms.routes';
+import oneWordSynonymTranslationsRoutes from './one-word-synonym-translations/one-word-synonym-translations.routes';
+import descriptiveQuestionsRoutes from './descriptive-questions/descriptive-questions.routes';
+import descriptiveQuestionTranslationsRoutes from './descriptive-question-translations/descriptive-question-translations.routes';
+import matchingQuestionsRoutes from './matching-questions/matching-questions.routes';
+import matchingQuestionTranslationsRoutes from './matching-question-translations/matching-question-translations.routes';
+import matchingPairsRoutes from './matching-pairs/matching-pairs.routes';
+import matchingPairTranslationsRoutes from './matching-pair-translations/matching-pair-translations.routes';
+import orderingQuestionsRoutes from './ordering-questions/ordering-questions.routes';
+import orderingQuestionTranslationsRoutes from './ordering-question-translations/ordering-question-translations.routes';
+import orderingItemsRoutes from './ordering-items/ordering-items.routes';
+import orderingItemTranslationsRoutes from './ordering-item-translations/ordering-item-translations.routes';
 import usersRoutes from './users/users.routes';
 
 // ═══════════════════════════════════════════════════════════════
@@ -104,5 +122,23 @@ v1Router.use('/course-modules', courseModulesRoutes);
 v1Router.use('/course-sub-categories', courseSubCategoriesRoutes);
 v1Router.use('/course-subjects', courseSubjectsRoutes);
 v1Router.use('/courses', coursesRoutes);
+v1Router.use('/mcq-questions', mcqQuestionsRoutes);
+v1Router.use('/mcq-question-translations', mcqQuestionTranslationsRoutes);
+v1Router.use('/mcq-options', mcqOptionsRoutes);
+v1Router.use('/mcq-option-translations', mcqOptionTranslationsRoutes);
+v1Router.use('/one-word-questions', oneWordQuestionsRoutes);
+v1Router.use('/one-word-question-translations', oneWordQuestionTranslationsRoutes);
+v1Router.use('/one-word-synonyms', oneWordSynonymsRoutes);
+v1Router.use('/one-word-synonym-translations', oneWordSynonymTranslationsRoutes);
+v1Router.use('/descriptive-questions', descriptiveQuestionsRoutes);
+v1Router.use('/descriptive-question-translations', descriptiveQuestionTranslationsRoutes);
+v1Router.use('/matching-questions', matchingQuestionsRoutes);
+v1Router.use('/matching-question-translations', matchingQuestionTranslationsRoutes);
+v1Router.use('/matching-pairs', matchingPairsRoutes);
+v1Router.use('/matching-pair-translations', matchingPairTranslationsRoutes);
+v1Router.use('/ordering-questions', orderingQuestionsRoutes);
+v1Router.use('/ordering-question-translations', orderingQuestionTranslationsRoutes);
+v1Router.use('/ordering-items', orderingItemsRoutes);
+v1Router.use('/ordering-item-translations', orderingItemTranslationsRoutes);
 
 export default v1Router;

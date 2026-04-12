@@ -141,7 +141,7 @@ router.patch(
   }),
 );
 
-// ── DELETE /:id  (hard delete — SA only) ────────────────────
+// ── DELETE /:id  (soft delete — admin only) ────────────────────
 router.delete(
   '/:id',
   authorize('employee_profile.delete'),
@@ -154,6 +154,18 @@ router.delete(
     }
     await employeeProfilesService.deleteEmployeeProfile(id, req.user?.id ?? null);
     return ok(res, { id, deleted: true }, 'Employee profile deleted');
+  }),
+);
+
+// ── RESTORE /:id  (soft-delete undo — admin only) ───────────
+router.post(
+  '/:id/restore',
+  authorize('employee_profile.restore'),
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    await employeeProfilesService.restoreEmployeeProfile(id, req.user?.id ?? null);
+    return ok(res, { id, restored: true }, 'Employee profile restored');
   }),
 );
 

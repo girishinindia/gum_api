@@ -503,14 +503,13 @@ export const listCourseTranslations = async (
 export const getCourseTranslationById = async (
   id: number
 ): Promise<CourseTranslationDto | null> => {
-  // Query the view directly since udf_get_courses filters by course_id, not translation_id
-  const { rows } = await db.callTableFunction<CourseTranslationRow>(
-    'uv_course_translations',
-    {},
-    `course_trans_id = ${id}`,
-    1
+  // Query the view directly since udf_get_courses filters by course_id, not translation_id.
+  // We use db.query (not callTableFunction) because uv_course_translations is a VIEW.
+  const result = await db.query<CourseTranslationRow>(
+    'SELECT *, COUNT(*) OVER()::INT AS total_count FROM uv_course_translations WHERE course_trans_id = $1 LIMIT 1',
+    [id]
   );
-  const row = rows[0];
+  const row = result.rows[0];
   return row ? mapCourseTranslation(row) : null;
 };
 

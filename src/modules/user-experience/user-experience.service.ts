@@ -133,10 +133,19 @@ const toIso = (v: Date | string | null): string | null => {
 
 const toIsoDate = (v: Date | string | null): string | null => {
   if (v == null) return null;
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   const s = String(v);
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  return new Date(s).toISOString().slice(0, 10);
+  const dt = new Date(s);
+  const y = dt.getFullYear();
+  const mo = String(dt.getMonth() + 1).padStart(2, '0');
+  const dy = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${dy}`;
 };
 
 const toNumOrNull = (v: number | string | null | undefined): number | null =>

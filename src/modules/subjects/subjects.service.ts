@@ -266,11 +266,13 @@ export const listSubjects = async (
 };
 
 export const getSubjectById = async (id: number): Promise<SubjectDto | null> => {
-  const { rows } = await db.callTableFunction<SubjectRow>(
-    'udf_get_subjects',
-    { p_subject_id: id }
+  // Query uv_subjects directly — udf_get_subjects INNER JOINs translations,
+  // so subjects without translations would return zero rows.
+  const result = await db.query<SubjectRow>(
+    'SELECT *, COUNT(*) OVER()::INT AS total_count FROM uv_subjects WHERE subject_id = $1 LIMIT 1',
+    [id]
   );
-  const row = rows[0];
+  const row = result.rows[0];
   return row ? mapSubject(row) : null;
 };
 

@@ -206,8 +206,12 @@ const toIso = (v: Date | string | null | undefined): string | null =>
 
 const toIsoDate = (v: Date | string | null | undefined): string | null => {
   if (v == null) return null;
-  const s = typeof v === 'string' ? v : v.toISOString();
-  return s.slice(0, 10); // YYYY-MM-DD
+  if (typeof v === 'string') return v.length >= 10 ? v.slice(0, 10) : v;
+  // Use local date components to avoid UTC offset shifting dates by -1 day
+  const y = v.getFullYear();
+  const m = String(v.getMonth() + 1).padStart(2, '0');
+  const d = String(v.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -508,6 +512,16 @@ export const deleteEmployeeProfile = async (
   callerId: number | null,
 ): Promise<void> => {
   await db.callFunction('udf_delete_employee_profiles', {
+    p_id: id,
+    p_actor_id: callerId,
+  });
+};
+
+export const restoreEmployeeProfile = async (
+  id: number,
+  callerId: number | null,
+): Promise<void> => {
+  await db.callFunction('udf_restore_employee_profiles', {
     p_id: id,
     p_actor_id: callerId,
   });

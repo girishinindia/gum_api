@@ -525,3 +525,13 @@ export const deleteInstructorProfile = async (
     p_actor_id: callerId,
   });
 };
+
+export const restoreInstructorProfile = async (
+  id: number,
+  callerId: number | null,
+): Promise<void> => {
+  await db.callFunction('udf_restore_instructor_profiles', {
+    p_id: id,
+    p_actor_id: callerId,
+  });
+};

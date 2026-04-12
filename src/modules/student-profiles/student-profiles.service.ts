@@ -504,3 +504,13 @@ export const deleteStudentProfile = async (
     p_actor_id: callerId,
   });
 };
+
+export const restoreStudentProfile = async (
+  id: number,
+  callerId: number | null,
+): Promise<void> => {
+  await db.callFunction('udf_restore_student_profiles', {
+    p_id: id,
+    p_actor_id: callerId,
+  });
+};

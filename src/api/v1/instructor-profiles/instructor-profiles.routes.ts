@@ -141,7 +141,7 @@ router.patch(
   }),
 );
 
-// ── DELETE /:id  (hard delete — SA only) ────────────────────
+// ── DELETE /:id  (soft delete — admin only) ────────────────────
 router.delete(
   '/:id',
   authorize('instructor_profile.delete'),
@@ -154,6 +154,18 @@ router.delete(
     }
     await instructorProfilesService.deleteInstructorProfile(id, req.user?.id ?? null);
     return ok(res, { id, deleted: true }, 'Instructor profile deleted');
+  }),
+);
+
+// ── RESTORE /:id  (soft-delete undo — admin only) ───────────
+router.post(
+  '/:id/restore',
+  authorize('instructor_profile.restore'),
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    await instructorProfilesService.restoreInstructorProfile(id, req.user?.id ?? null);
+    return ok(res, { id, restored: true }, 'Instructor profile restored');
   }),
 );
 

@@ -358,7 +358,7 @@ export const listCourseModuleTranslations = async (
   moduleId: number,
   q: ListCourseModuleTranslationsQuery
 ): Promise<ListModuleTranslationsResult> => {
-  const { rows, totalCount } = await db.callTableFunction<ModuleRow>(
+  const { rows, totalCount } = await db.callTableFunction<ModuleTranslationRow>(
     'udf_get_course_modules',
     {
       p_id: null,
@@ -378,21 +378,20 @@ export const listCourseModuleTranslations = async (
   );
 
   return {
-    rows: rows.map(mapModule),
+    rows: rows.map(mapModuleTranslation),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
-  } as unknown as ListModuleTranslationsResult;
+  };
 };
 
 export const getCourseModuleTranslationById = async (
   id: number
 ): Promise<CourseModuleTranslationDto | null> => {
-  const { rows } = await db.callTableFunction<ModuleTranslationRow>(
-    'uv_course_module_translations',
-    {},
-    `cm_trans_id = ${id}`,
-    1
+  // Use db.query directly because uv_course_module_translations is a VIEW, not a function.
+  const result = await db.query<ModuleTranslationRow>(
+    'SELECT *, COUNT(*) OVER()::INT AS total_count FROM uv_course_module_translations WHERE cm_trans_id = $1 LIMIT 1',
+    [id]
   );
-  const row = rows[0];
+  const row = result.rows[0];
   return row ? mapModuleTranslation(row) : null;
 };
 

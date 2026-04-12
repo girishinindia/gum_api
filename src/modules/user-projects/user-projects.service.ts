@@ -177,7 +177,11 @@ const toIso = (v: Date | string | null): string | null => {
 const toDateOnly = (v: Date | string | null): string | null => {
   if (v == null) return null;
   if (typeof v === 'string') return v.length >= 10 ? v.slice(0, 10) : v;
-  return v.toISOString().slice(0, 10);
+  // Use local date components to avoid UTC offset shifting dates by -1 day
+  const y = v.getFullYear();
+  const m = String(v.getMonth() + 1).padStart(2, '0');
+  const d = String(v.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 const toNumOrNull = (v: number | string | null | undefined): number | null =>
