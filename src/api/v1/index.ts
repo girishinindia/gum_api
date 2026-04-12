@@ -38,6 +38,15 @@ import subjectsRoutes from './subjects/subjects.routes';
 import chaptersRoutes from './chapters/chapters.routes';
 import topicsRoutes from './topics/topics.routes';
 import subTopicsRoutes from './sub-topics/sub-topics.routes';
+import bundleCoursesRoutes from './bundle-courses/bundle-courses.routes';
+import bundlesRoutes from './bundles/bundles.routes';
+import courseChaptersRoutes from './course-chapters/course-chapters.routes';
+import courseInstructorsRoutes from './course-instructors/course-instructors.routes';
+import courseModulesRoutes from './course-modules/course-modules.routes';
+import courseModuleTopicsRoutes from './course-module-topics/course-module-topics.routes';
+import courseSubCategoriesRoutes from './course-sub-categories/course-sub-categories.routes';
+import courseSubjectsRoutes from './course-subjects/course-subjects.routes';
+import coursesRoutes from './courses/courses.routes';
 import usersRoutes from './users/users.routes';
 
 // ═══════════════════════════════════════════════════════════════
@@ -86,5 +95,14 @@ v1Router.use('/subjects', subjectsRoutes);
 v1Router.use('/chapters', chaptersRoutes);
 v1Router.use('/topics', topicsRoutes);
 v1Router.use('/sub-topics', subTopicsRoutes);
+v1Router.use('/bundle-courses', bundleCoursesRoutes);
+v1Router.use('/bundles', bundlesRoutes);
+v1Router.use('/course-chapters', courseChaptersRoutes);
+v1Router.use('/course-instructors', courseInstructorsRoutes);
+v1Router.use('/course-module-topics', courseModuleTopicsRoutes);
+v1Router.use('/course-modules', courseModulesRoutes);
+v1Router.use('/course-sub-categories', courseSubCategoriesRoutes);
+v1Router.use('/course-subjects', courseSubjectsRoutes);
+v1Router.use('/courses', coursesRoutes);
 
 export default v1Router;
