@@ -6,201 +6,98 @@ Bind permissions to roles. All routes require auth. Permission codes: `permissio
 
 ---
 
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§8.1](#81) | `GET` | `{{baseUrl}}/api/v1/role-permissions` | role.read · permission.read | List role↔permission bindings. |
+| [§8.2](#82) | `GET` | `{{baseUrl}}/api/v1/role-permissions/:id` | role.read · permission.read | Get a binding by id. |
+| [§8.3](#83) | `POST` | `{{baseUrl}}/api/v1/role-permissions` | role.manage_permissions | Grant a permission to a role. |
+| [§8.4](#84) | `POST` | `{{baseUrl}}/api/v1/role-permissions/revoke` | role.manage_permissions | Revoke a binding (tuple lookup, no id needed). |
+| [§8.5](#85) | `DELETE` | `{{baseUrl}}/api/v1/role-permissions/:id` | role.manage_permissions | Soft-delete a binding. |
+| [§8.6](#86) | `POST` | `{{baseUrl}}/api/v1/role-permissions/:id/restore` | role.manage_permissions | Undo a soft-delete. |
+
+---
+
 ## 8.1 `GET /api/v1/role-permissions`
 
-List role↔permission bindings.
+List role↔permission bindings. Backed by `udf_get_role_permissions`, with filters at role and permission layers and configurable sort keys.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/role-permissions` |
+| Permission | `permission.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Notes |
-|---|---|
-| `pageIndex`, `pageSize`, `searchTerm` | Standard. |
-| `roleId`, `roleCode` | Filter by role. |
-| `permissionId` | Filter by permission. |
-| `resource`, `action`, `scope` | Lowercase identifiers. |
-| `isActive`, `isDeleted` | bool. |
-| `sortColumn` | `id`, `role_id`, `role_name`, `role_level` (default), `perm_name`, `perm_code`, `resource`, `created_at`. |
-| `sortDirection` | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `200`. |
+| `searchTerm` | string | — | `ILIKE` across `role_name`, `perm_name`, `perm_code`. |
+| `roleId` | int | — | Filter by role. |
+| `roleCode` | string | — | Filter by role code (e.g., `student`). |
+| `permissionId` | int | — | Filter by permission. |
+| `resource` | string | — | Lowercase identifier (e.g., `course`). |
+| `action` | string | — | Lowercase identifier (e.g., `read`). |
+| `scope` | string | — | Lowercase identifier (e.g., `global`, `own`). |
+| `isActive` | bool | — | Filter active/inactive bindings. |
+| `isDeleted` | bool | — | Filter deleted/undeleted bindings. |
+| `sortColumn` | enum | `role_level` | One of `id`, `role_id`, `role_name`, `role_level`, `perm_name`, `perm_code`, `resource`, `created_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
 
-```json
-{
-  "id": 312,
-  "roleId": 4,
-  "roleName": "Student",
-  "roleLevel": 90,
-  "permissionId": 17,
-  "permName": "Read courses",
-  "permCode": "course.read",
-  "resource": "course",
-  "action": "read",
-  "scope": "global",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-01T00:00:00.000Z"
-}
-```
+### Responses
 
-### Defaults — what you get if you omit everything
-
-`GET /api/v1/role-permissions` with no query string is interpreted as:
-
-```
-pageIndex=1  pageSize=20  sortColumn=role_level  sortDirection=ASC
-roleId=∅     roleCode=∅    permissionId=∅
-resource=∅   action=∅      scope=∅
-isActive=∅   isDeleted=∅
-```
-
-The default `role_level` sort means super-admin assignments come first, then admin, instructor, student — handy for the role-matrix UI.
-
-### Sample queries & responses
-
-All examples assume `http://localhost:3000` and an `Authorization: Bearer $ACCESS_TOKEN` header (omitted for brevity).
-
-**1. Pagination — page 1, 5 rows**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?pageIndex=1&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+#### 200 OK — happy path
 
 ```json
 {
   "success": true,
   "message": "OK",
   "data": [
-    { "id": 1, "roleId": 1, "roleName": "Super Admin", "roleLevel": 0,  "permCode": "user.read",     "resource": "user",     "action": "read",   "...": "..." },
-    { "id": 2, "roleId": 1, "roleName": "Super Admin", "roleLevel": 0,  "permCode": "user.create",   "resource": "user",     "action": "create", "...": "..." },
-    { "id": 3, "roleId": 1, "roleName": "Super Admin", "roleLevel": 0,  "permCode": "user.update",   "resource": "user",     "action": "update", "...": "..." },
-    { "id": 4, "roleId": 1, "roleName": "Super Admin", "roleLevel": 0,  "permCode": "user.delete",   "resource": "user",     "action": "delete", "...": "..." },
-    { "id": 5, "roleId": 1, "roleName": "Super Admin", "roleLevel": 0,  "permCode": "country.read",  "resource": "country",  "action": "read",   "...": "..." }
+    {
+      "id": 312,
+      "roleId": 4,
+      "roleName": "Student",
+      "roleLevel": 90,
+      "permissionId": 17,
+      "permName": "Read courses",
+      "permCode": "course.read",
+      "resource": "course",
+      "action": "read",
+      "scope": "global",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deletedAt": null
+    }
   ],
-  "meta": { "page": 1, "limit": 5, "totalCount": 168, "totalPages": 34 }
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 168,
+    "totalPages": 9
+  }
 }
 ```
 
-**2. Pagination — page 2, 5 rows**
+#### 400 VALIDATION_ERROR
 
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?pageIndex=2&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`meta.page` becomes `2` and you get rows 6–10. The shape is identical.
-
-**3. Filter — by role**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?roleId=4"            -H "Authorization: Bearer $ACCESS_TOKEN"
-curl "http://localhost:3000/api/v1/role-permissions?roleCode=student"    -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`roleId` and `roleCode` are interchangeable lookups for the same row; use whichever the caller already has on hand.
-
-**4. Filter — by permission**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?permissionId=17" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Returns every role that has been granted permission `17`. Useful for "who can read courses?" audits.
-
-**5. Filter — by `resource`**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?resource=course" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`resource` is a lowercase identifier matched against the joined permission row.
-
-**6. Filter — by `action`**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?action=delete" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Lets you answer "which roles can `delete` anything?" in one query.
-
-**7. Filter — by `scope`**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?scope=own" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Common scopes: `global`, `own`.
-
-**8. Filter — status flags**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?isActive=true"  -H "Authorization: Bearer $ACCESS_TOKEN"
-curl "http://localhost:3000/api/v1/role-permissions?isDeleted=true" -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`isDeleted=true` is the only way to surface bindings that were soft-revoked.
-
-**9. Free-text search**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?searchTerm=course" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`searchTerm` runs an `ILIKE` against `role_name`, `perm_name`, and `perm_code` inside `udf_get_role_permissions`.
-
-**10. Sorting — by `perm_code` ascending**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?sortColumn=perm_code&sortDirection=ASC" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`sortColumn` is whitelisted to: `id`, `role_id`, `role_name`, `role_level` (default), `perm_name`, `perm_code`, `resource`, `created_at`. Anything else returns `400 VALIDATION_ERROR`.
-
-**11. Combined filters — every active `student`-role grant on `course.*`, sorted by perm code**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?roleCode=student&resource=course&isActive=true&sortColumn=perm_code&sortDirection=ASC&pageSize=20" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-All filters compose with `AND`.
-
-**12. Empty result**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 1, "limit": 20, "totalCount": 0, "totalPages": 0 }
-}
-```
-
-**13. Page out of range**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 999, "limit": 20, "totalCount": 168, "totalPages": 9 }
-}
-```
-
-### Possible error responses
-
-**400 — invalid `roleId` (must be a positive integer)**
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?roleId=-3" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+Triggered by `pageSize > 200`, unknown `sortColumn`, non-positive `roleId`, unknown `resource`/`action`/`scope`, or query coercion failure.
 
 ```json
 {
@@ -208,41 +105,88 @@ curl "http://localhost:3000/api/v1/role-permissions?roleId=-3" \
   "message": "Validation failed",
   "code": "VALIDATION_ERROR",
   "details": [
-    { "path": "roleId", "message": "must be positive", "code": "too_small" }
+    { "path": "pageSize", "message": "must be at most 200", "code": "too_big" }
   ]
 }
 ```
 
-The same envelope shape (with a different `path` / `message`) is returned for any other bad input — `pageSize=500`, `resource=COURSE` (must be lowercase), `roleCode=Has Spaces`, an unknown `sortColumn`, etc. The full set of rules lives in `listRolePermissionsQuerySchema` (`api/src/modules/junctions/role-permissions.schemas.ts`).
-
-**401 — missing or expired bearer token**
+#### 401 UNAUTHORIZED
 
 ```json
-{ "success": false, "message": "Missing access token", "code": "UNAUTHORIZED" }
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
 ```
 
-**403 — caller is authenticated but lacks `permission.read`**
+#### 403 FORBIDDEN
 
 ```json
-{ "success": false, "message": "Permission denied", "code": "FORBIDDEN" }
+{ "success": false, "message": "Permission denied: permission.read", "code": "FORBIDDEN" }
 ```
 
-**500** — see the global catalog in [00 — overview](00%20-%20overview.md#3-error-catalog).
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search — text match on role/perm | `?searchTerm=course` |
+| Filter by role id | `?roleId=4` |
+| Filter by role code | `?roleCode=student` |
+| Filter by permission id | `?permissionId=12` |
+| Filter by resource | `?resource=course` |
+| Filter by action | `?action=read` |
+| Filter by scope | `?scope=global` |
+| Active bindings only | `?isActive=true` |
+| Inactive bindings only | `?isActive=false` |
+| Deleted bindings only | `?isDeleted=true` |
+| Non-deleted bindings only | `?isDeleted=false` |
+| Sort by `id` DESC | `?sortColumn=id&sortDirection=DESC` |
+| Sort by `role_id` ASC | `?sortColumn=role_id&sortDirection=ASC` |
+| Sort by `role_name` ASC | `?sortColumn=role_name&sortDirection=ASC` |
+| Sort by `role_level` ASC | `?sortColumn=role_level&sortDirection=ASC` |
+| Sort by `perm_name` ASC | `?sortColumn=perm_name&sortDirection=ASC` |
+| Sort by `perm_code` ASC | `?sortColumn=perm_code&sortDirection=ASC` |
+| Sort by `resource` ASC | `?sortColumn=resource&sortDirection=ASC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Combo — all perms for student role, by resource | `?pageIndex=1&pageSize=200&roleCode=student&isActive=true&sortColumn=resource&sortDirection=ASC` |
+| Combo — global read perms across all roles | `?pageIndex=1&pageSize=200&resource=course&action=read&scope=global&sortColumn=role_name&sortDirection=ASC` |
 
 ---
 
 ## 8.2 `GET /api/v1/role-permissions/:id`
 
-Read one binding by junction id. Permission: `permission.read`.
+Read one binding by junction id.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl "http://localhost:3000/api/v1/role-permissions/312" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/role-permissions/:id` |
+| Permission | `permission.read` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric junction id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
@@ -268,13 +212,30 @@ curl "http://localhost:3000/api/v1/role-permissions/312" \
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400** — non-numeric id (`VALIDATION_ERROR` envelope, `path: "id"`).
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.read`.
+Non-numeric `:id`.
 
-**404 — no role-permission row with that id**
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{ "path": "id", "message": "Expected number, received nan", "code": "invalid_type" }]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 8.1.
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.read", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Role-permission 9999 not found", "code": "NOT_FOUND" }
@@ -284,20 +245,37 @@ curl "http://localhost:3000/api/v1/role-permissions/312" \
 
 ## 8.3 `POST /api/v1/role-permissions`
 
-Assign a permission to a role. Permission: `permission.assign`.
+Assign a permission to a role. Permission: `permission.assign`. Returns the full junction row on success.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/role-permissions" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "roleId": 4, "permissionId": 17 }'
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/role-permissions` |
+| Permission | `permission.assign` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "roleId": 4,
+  "permissionId": 17
+}
 ```
 
-Both `roleId` and `permissionId` are required positive integers.
+**Required fields**: `roleId`, `permissionId` — both positive integers.
 
-**Response 201** — full junction row.
+### Responses
+
+#### 201 CREATED — happy path
 
 ```json
 {
@@ -323,9 +301,7 @@ Both `roleId` and `permissionId` are required positive integers.
 }
 ```
 
-**Possible error responses**
-
-**400 — missing field**
+#### 400 VALIDATION_ERROR — missing required field
 
 ```json
 {
@@ -338,16 +314,23 @@ Both `roleId` and `permissionId` are required positive integers.
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.assign`.
+#### 401 UNAUTHORIZED
 
-**404 — referenced role or permission does not exist**
+Same as 8.1.
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.assign", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND — referenced role or permission does not exist
 
 ```json
 { "success": false, "message": "Role 9999 not found", "code": "NOT_FOUND" }
 ```
 
-**409 — duplicate binding**
+#### 409 DUPLICATE_ENTRY — composite uniqueness on (roleId, permissionId)
 
 ```json
 {
@@ -357,40 +340,80 @@ Both `roleId` and `permissionId` are required positive integers.
 }
 ```
 
-The full set of body rules lives in `assignRolePermissionBodySchema` (`api/src/modules/junctions/role-permissions.schemas.ts`).
-
 ---
 
 ## 8.4 `POST /api/v1/role-permissions/revoke`
 
 Revoke by `(roleId, permissionId)` pair instead of junction id — handy when the caller doesn't know the row id. Permission: `permission.assign`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/role-permissions/revoke" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "roleId": 4, "permissionId": 17 }'
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/role-permissions/revoke` |
+| Permission | `permission.assign` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "roleId": 4,
+  "permissionId": 17
+}
 ```
 
-**Response 200**
+**Required fields**: `roleId`, `permissionId` — both positive integers.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
   "success": true,
   "message": "Role-permission assignment revoked",
-  "data": { "roleId": 4, "permissionId": 17, "revoked": true }
+  "data": {
+    "roleId": 4,
+    "permissionId": 17,
+    "revoked": true
+  }
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400** — missing/invalid `roleId` or `permissionId` (`VALIDATION_ERROR` envelope).
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.assign`.
+Missing or invalid `roleId`/`permissionId` (non-numeric, non-positive).
 
-**404 — that role does not have that permission**
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [
+    { "path": "roleId", "message": "must be positive", "code": "too_small" }
+  ]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 8.1.
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.assign", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Role 4 does not have permission 17", "code": "NOT_FOUND" }
@@ -402,30 +425,67 @@ curl -X POST "http://localhost:3000/api/v1/role-permissions/revoke" \
 
 Soft delete the binding by junction id. Sets `is_deleted = TRUE` on the row. Permission: `permission.assign`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/role-permissions/312" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/role-permissions/:id` |
+| Permission | `permission.assign` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric junction id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
   "success": true,
   "message": "Role-permission deleted",
-  "data": { "id": 312, "deleted": true }
+  "data": {
+    "id": 312,
+    "deleted": true
+  }
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400** — non-numeric id (`VALIDATION_ERROR` envelope, `path: "id"`).
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.assign`.
+Non-numeric `:id`.
 
-**404 — no role-permission row with that id**
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{ "path": "id", "message": "Expected number, received nan", "code": "invalid_type" }]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 8.1.
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.assign", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Role-permission 9999 not found", "code": "NOT_FOUND" }
@@ -435,16 +495,33 @@ curl -X DELETE "http://localhost:3000/api/v1/role-permissions/312" \
 
 ## 8.6 `POST /api/v1/role-permissions/:id/restore`
 
-Reverse a soft delete by junction id. Permission: `permission.assign`.
+Reverse a soft delete by junction id. Sets `is_deleted = FALSE` and returns the full restored row. Permission: `permission.assign`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/role-permissions/312/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/role-permissions/:id/restore` |
+| Permission | `permission.assign` |
 
-**Response 200** — full restored junction row.
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric junction id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -470,9 +547,7 @@ curl -X POST "http://localhost:3000/api/v1/role-permissions/312/restore" \
 }
 ```
 
-**Possible error responses**
-
-**400 — row was never deleted**
+#### 400 BAD_REQUEST — row was never deleted
 
 ```json
 {
@@ -482,6 +557,33 @@ curl -X POST "http://localhost:3000/api/v1/role-permissions/312/restore" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.assign`.
-**404** — no role-permission row with that id.
+#### 401 UNAUTHORIZED
+
+Same as 8.1.
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.assign", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Role-permission 9999 not found", "code": "NOT_FOUND" }
+```
+
+---
+
+## Common errors across all role-permissions routes
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Zod rejected query, params, or body (invalid enum, non-numeric id, bad pageSize, etc). |
+| 400 | `BAD_REQUEST` | Business-rule violation (row was never deleted, cannot restore). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
+| 403 | `FORBIDDEN` | Missing the required permission (`permission.read` or `permission.assign`). |
+| 404 | `NOT_FOUND` | No role-permission with that id, or a referenced role/permission not found. |
+| 409 | `DUPLICATE_ENTRY` | Duplicate binding on (roleId, permissionId) pair. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |

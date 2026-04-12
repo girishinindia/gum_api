@@ -1,151 +1,377 @@
 # Phase 2 — Education Levels
 
-Ordered taxonomy of education stages — pre-school → school → diploma → undergrad → postgrad → doctoral → professional → informal → other. Used by user profiles, course catalogues, and job postings that need to reason about "what stage is this for?".
-
-The DB stores a **`level_order`** integer that gives a total order across every category so consumers can sort comfortably without special-casing the category enum. The URL is kebab-case (`/education-levels`) but the permission code is **snake_case** (`education_level`) to match the DB table name.
+Hierarchical levels of education with optional display ordering.
 
 All routes require auth. Permission codes: `education_level.read`, `education_level.create`, `education_level.update`, `education_level.delete`, `education_level.restore`.
 
-← [04 languages](04%20-%20languages.md) · **Next →** [06 walkthrough and index](06%20-%20walkthrough%20and%20index.md)
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
+
+← [languages](04%20-%20languages.md) · **Next →** [walkthrough and index](06%20-%20walkthrough%20and%20index.md)
+
+---
+
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§5.1](#51) | `GET` | `{{baseUrl}}/api/v1/education-levels` | education_level.read | List education levels with filters and sort. |
+| [§5.2](#52) | `GET` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.read | Get a single education level by id. |
+| [§5.3](#53) | `POST` | `{{baseUrl}}/api/v1/education-levels` | education_level.create | Create a new education level. |
+| [§5.4](#54) | `PATCH` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.update | Partial update. |
+| [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.delete | Soft-delete. |
+| [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/education-levels/:id/restore` | education_level.restore | Undo a soft-delete. |
 
 ---
 
 ## 5.1 `GET /api/v1/education-levels`
 
-List education levels. Backed by `udf_get_education_levels`.
+List education levels.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/education-levels` |
+| Permission | `education_level.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Type | Notes |
-|---|---|---|
-| `pageIndex`, `pageSize` | int | Standard pagination. |
-| `searchTerm` | string | `ILIKE` against `name`, `abbreviation`, `description`. |
-| `isActive`, `isDeleted` | bool | |
-| `category` | enum | One of `pre_school`, `school`, `diploma`, `undergraduate`, `postgraduate`, `doctoral`, `professional`, `informal`, `other`. |
-| `sortColumn` | enum | `id`, `name`, `level_order`, `level_category`, `is_active`, `is_deleted`, `created_at`, `updated_at`. **Default `level_order`** — because "natural order" is what UIs almost always want. |
-| `sortDirection` | enum | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `100`. |
+| `searchTerm` | string | — | `ILIKE` across primary text columns. |
+| `isActive` | bool | — | Filter by active status. |
+| `isDeleted` | bool | — | Filter by soft-delete status. |
+| `sortColumn` | enum | `id` | Whitelisted: `id`, `name`, `is_active`, `is_deleted`, `created_at`, `updated_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
-  "id": 6,
-  "name": "Bachelor's Degree",
-  "levelOrder": 60,
-  "levelCategory": "undergraduate",
-  "abbreviation": "BA/BSc",
-  "description": "Three- to four-year undergraduate programme.",
-  "typicalDuration": "3–4 years",
-  "typicalAgeRange": "18–22",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-14T00:00:00.000Z",
-  "updatedAt": "2026-01-14T00:00:00.000Z",
-  "deletedAt": null
+  "success": true,
+  "message": "OK",
+  "data": [
+    {
+      "id": 1,
+      "name": "Example",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-04-11T00:00:00.000Z",
+      "updatedAt": "2026-04-11T00:00:00.000Z",
+      "deletedAt": null
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 1,
+    "totalPages": 1
+  }
 }
 ```
 
-### Defaults
+#### 400 VALIDATION_ERROR
 
-```
-pageIndex=1  pageSize=20  sortColumn=level_order  sortDirection=ASC
-```
-
-This returns the entire ladder from pre-school up to doctoral in the order a UI would render it.
-
-### Sample queries
-
-**1. The whole ladder, in order**
-
-```bash
-curl "http://localhost:3000/api/v1/education-levels?pageSize=100" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"code": "invalid_enum_value", "path": ["sortColumn"], "message": "Invalid enum value"}]
+}
 ```
 
-**2. Only undergraduate and postgraduate levels**
+#### 401 UNAUTHORIZED
 
-```bash
-curl "http://localhost:3000/api/v1/education-levels?category=undergraduate" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-
-curl "http://localhost:3000/api/v1/education-levels?category=postgraduate" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Missing or invalid access token",
+  "code": "UNAUTHORIZED"
+}
 ```
 
-(There is no OR across categories in a single call — run one request per category and merge client-side.)
+#### 403 FORBIDDEN
 
-**3. Search by abbreviation**
-
-```bash
-curl "http://localhost:3000/api/v1/education-levels?searchTerm=bsc" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Permission denied: education_level.read",
+  "code": "FORBIDDEN"
+}
 ```
 
-**4. Sort alphabetically by name**
 
-```bash
-curl "http://localhost:3000/api/v1/education-levels?sortColumn=name&sortDirection=ASC" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+### Saved examples to add in Postman
 
-**5. Archived (soft-deleted) levels**
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
 
-```bash
-curl "http://localhost:3000/api/v1/education-levels?isDeleted=true" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name — `bachelor` | `?searchTerm=bachelor` |
+| Search + pagination | `?pageIndex=1&pageSize=50&searchTerm=bachelor` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Deleted only | `?isDeleted=true` |
+| Non-deleted only | `?isDeleted=false` |
+| Sort by `id` ASC | `?sortColumn=id&sortDirection=ASC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `is_active` DESC | `?sortColumn=is_active&sortDirection=DESC` |
+| Sort by `is_deleted` DESC | `?sortColumn=is_deleted&sortDirection=DESC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Sort by `updated_at` DESC | `?sortColumn=updated_at&sortDirection=DESC` |
+| Combo — active, sorted by name, page 1 | `?pageIndex=1&pageSize=50&isActive=true&sortColumn=name&sortDirection=ASC` |
 
 ---
 
 ## 5.2 `GET /api/v1/education-levels/:id`
 
-Read a single education level by id. **404** with `"Education level 9999 not found"` if unknown.
+Read a single education level by id.
 
-```bash
-curl "http://localhost:3000/api/v1/education-levels/6" -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/education-levels/:id` |
+| Permission | `education_level.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric education level id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "id", "message": "Expected number, received nan", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 5.1.
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: education_level.read", "code": "FORBIDDEN"}
+```
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Education Level 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
 ## 5.3 `POST /api/v1/education-levels`
 
-Create an education level. Permission: `education_level.create`.
+Create a education level. Permission: `education_level.create`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/education-levels" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Bachelor'\''s Degree",
-    "levelOrder": 60,
-    "levelCategory": "undergraduate",
-    "abbreviation": "BA/BSc",
-    "description": "Three- to four-year undergraduate programme.",
-    "typicalDuration": "3–4 years",
-    "typicalAgeRange": "18–22",
-    "isActive": true
-  }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/education-levels` |
+| Permission | `education_level.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Example",
+  "isActive": true
+}
 ```
 
-`name` and `levelOrder` are required (the DB column is `NOT NULL`). `levelCategory` defaults to `other` if omitted. **Response 201** — the full new row.
+**Required fields**: `name`.
 
-**Possible errors**
+**Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
-- **400** — missing `name`, missing `levelOrder`, `levelOrder` not an integer, `levelCategory` not in the enum.
-- **403** — caller lacks `education_level.create`.
-- **409** — a level with the same `name` or the same `levelOrder` already exists.
+### Responses
+
+#### 201 CREATED
+
+```json
+{
+  "success": true,
+  "message": "Education Level created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "name", "message": "Required", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{"success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED"}
+```
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: education_level.create", "code": "FORBIDDEN"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{
+  "success": false,
+  "message": "Education Level with that name already exists",
+  "code": "DUPLICATE_ENTRY"
+}
+```
 
 ---
 
 ## 5.4 `PATCH /api/v1/education-levels/:id`
 
-Partial update. Any subset of `name`, `levelOrder`, `levelCategory`, `abbreviation`, `description`, `typicalDuration`, `typicalAgeRange`, `isActive`. **400** on empty body.
+Partial update.
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/education-levels/6" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "typicalDuration": "3 years" }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/education-levels/:id` |
+| Permission | `education_level.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric education level id. |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Updated Name",
+  "isActive": true
+}
+```
+
+### Responses
+
+#### 200 OK
+
+Same row shape as 5.2, wrapped in success envelope.
+
+#### 400 VALIDATION_ERROR — empty body
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 5.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Education Level 9999 not found", "code": "NOT_FOUND"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{"success": false, "message": "Education Level with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
 ---
@@ -154,31 +380,139 @@ curl -X PATCH "http://localhost:3000/api/v1/education-levels/6" \
 
 Soft delete. Permission: `education_level.delete`.
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/education-levels/6" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/education-levels/:id` |
+| Permission | `education_level.delete` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric education level id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Education Level deleted",
+  "data": {"id": 1, "deleted": true}
+}
 ```
 
-Response: `{ "success": true, "message": "Education level deleted", "data": { "id": 6, "deleted": true } }`.
+#### 400 BAD_REQUEST — already deleted
+
+```json
+{
+  "success": false,
+  "message": "Education Level with ID 1 does not exist or is already deleted.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 5.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Education Level 9999 not found", "code": "NOT_FOUND"}
+```
 
 ---
 
 ## 5.6 `POST /api/v1/education-levels/:id/restore`
 
-Reverse a soft delete. Permission: `education_level.restore`. **400 BAD_REQUEST** if the row isn't deleted.
+Reverse a soft delete. Permission: `education_level.restore`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/education-levels/6/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/education-levels/:id/restore` |
+| Permission | `education_level.restore` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric education level id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Education Level restored",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 BAD_REQUEST — not deleted
+
+```json
+{
+  "success": false,
+  "message": "Education Level with ID 1 is not deleted or does not exist.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 5.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Education Level 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
-**Common errors across all education-level routes**
+## Common errors across all education levels routes
 
-| HTTP | code | Cause |
+| HTTP | `code` | When |
 |---|---|---|
-| 401 | `UNAUTHORIZED` | Missing / expired bearer token. |
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
+| 400 | `BAD_REQUEST` | Business-rule violation (e.g., already-deleted row on restore). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
 | 403 | `FORBIDDEN` | Missing the required permission. |
 | 404 | `NOT_FOUND` | No education level with that id. |
-| 409 | `DUPLICATE_ENTRY` | Another level already uses that `name` or `levelOrder`. |
+| 409 | `DUPLICATE_ENTRY` | Name or code clashes with another non-deleted education level. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |

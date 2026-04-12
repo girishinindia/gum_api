@@ -246,18 +246,26 @@ export type CreateCategoryBody = z.infer<typeof createCategoryBodySchema>;
 
 // ─── Update category body ────────────────────────────────────────
 
-export const updateCategoryBodySchema = z
-  .object({
-    code: codeSchema.optional(),
-    slug: slugSchema.optional(),
-    displayOrder: displayOrderSchema,
-    isNew: isNewSchema,
-    newUntil: newUntilSchema,
-    isActive: isActiveSchema
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+// `iconAction` / `imageAction` = 'delete' instructs the unified PATCH
+// handler to clear that image from Bunny + the row. Uploading a new
+// file takes precedence over an action of 'delete' for the same slot
+// (the handler enforces that mutual-exclusion rule with a 400).
+//
+// The emptiness check that used to live here (`.refine(Object.keys > 0)`)
+// has moved into the route handler because multipart requests can
+// carry "content" in the form of uploaded files, which zod can't see.
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateCategoryBodySchema = z.object({
+  code: codeSchema.optional(),
+  slug: slugSchema.optional(),
+  displayOrder: displayOrderSchema,
+  isNew: isNewSchema,
+  newUntil: newUntilSchema,
+  isActive: isActiveSchema,
+  iconAction: imageActionSchema,
+  imageAction: imageActionSchema
+});
 export type UpdateCategoryBody = z.infer<typeof updateCategoryBodySchema>;
 
 // ─── List category translations query ────────────────────────────

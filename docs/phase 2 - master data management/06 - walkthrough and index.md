@@ -1,8 +1,8 @@
 # Phase 2 — Walkthrough and Index
 
-End-to-end walkthrough for the thirteen phase-2 master-data resources — from "log in as Super Admin" through creating a country → state → city chain, seeding a document_type → document pair, building a category → sub-category tree with SEO-rich translations, and asserting the full 65-row auto-seeded permission set is in place.
+End-to-end walkthrough for phase-2 master data management — from logging in as Super Admin through creating a geography chain (country → state → city), seeding leaf resources (skills, languages, etc.), and verifying the 65-row auto-seeded permission set. All requests use the Postman collection and environment variables established in [§7 of 00 - overview](00%20-%20overview.md#7-postman-environment).
 
-← [05 education-levels](05%20-%20education-levels.md) · **Next →** [07 document-types](07%20-%20document-types.md) · [Phase 1 walkthrough](../phase%201%20-%20role%20based%20user%20management/10%20-%20walkthrough%20and%20index.md)
+← [05 education-levels](05%20-%20education-levels.md) · **Next →** [07 document-types](07%20-%20document-types.md) · [Phase 1 walkthrough](../phase%201%20-%20role%20based%20user%20management/10%20-%20walkthrough%20and%20index.md) · [Phase 3 walkthrough](../phase%203%20-%20branch%20management/04%20-%20walkthrough%20and%20index.md)
 
 ---
 
@@ -10,442 +10,171 @@ End-to-end walkthrough for the thirteen phase-2 master-data resources — from "
 
 - API running locally at `http://localhost:3000` (see repo `README.md`).
 - Phase 1 seed data applied — the Super Admin user exists and has a password.
-- Phase 2 permission seed applied — `phase-02-master-data-management/06_seed_permissions.sql` has been run, which calls `udf_auto_create_resource_permissions` for each of `state`, `city`, `skill`, `language`, `education_level`, `document_type`, `document`, `designation`, `specialization`, `learning_goal`, `social_media`, `category`, and `sub_category` (65 permission rows total).
-
-Grab an access token once and keep it in an env var:
-
-```bash
-ACCESS_TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"superadmin@growupmore.com","password":"<password>"}' \
-  | jq -r '.data.accessToken')
-```
-
-Every `curl` below assumes `-H "Authorization: Bearer $ACCESS_TOKEN"` (omitted for brevity).
+- Phase 2 permission seed applied — `phase-02-master-data-management/06_seed_permissions.sql` has been run, producing **65 permission rows** (13 resources × 5 actions).
+- Postman with `baseUrl` and `accessToken` environment variables configured (see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment)).
+- Phase 2 Postman collection imported: `api/docs/postman/phase-2.postman_collection.json`.
 
 ---
 
-## 2. The happy path — India → Maharashtra → Mumbai
+## 2. Mint an access token
 
-**Step 1.** Make sure India exists (it should, from phase 1 seed):
+Use the **Setup — Mint access token** folder in the Postman collection:
 
-```bash
-curl "http://localhost:3000/api/v1/countries?iso3=IND"
-```
-
-If it doesn't, create it — see [phase 1 § 5.3](../phase%201%20-%20role%20based%20user%20management/05%20-%20countries.md#53-post-apiv1countries).
-
-**Step 2.** Create Maharashtra under India:
-
-```bash
-curl -X POST http://localhost:3000/api/v1/states \
-  -H "Content-Type: application/json" \
-  -d '{
-    "countryId": 1,
-    "name": "Maharashtra",
-    "iso3": "MH",
-    "languages": ["Marathi", "Hindi", "English"],
-    "isActive": true
-  }'
-```
-
-Grab the returned `id` — call it `STATE_ID`.
-
-**Step 3.** Create Mumbai under Maharashtra:
-
-```bash
-curl -X POST http://localhost:3000/api/v1/cities \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"stateId\": $STATE_ID,
-    \"name\": \"Mumbai\",
-    \"phoneCode\": \"022\",
-    \"timezone\": \"Asia/Kolkata\",
-    \"isActive\": true
-  }"
-```
-
-The response echoes the full tree — city → state → country — so you can render "Mumbai, Maharashtra, India" from a single call.
-
-**Step 4.** Drill back down from the country:
-
-```bash
-curl "http://localhost:3000/api/v1/cities?countryIso3=IND&pageSize=100"
-```
-
-All Indian cities are returned, each carrying its nested state and nested country.
+| Step | Request | Expected |
+|---|---|---|
+| 1 | `POST {{baseUrl}}/api/v1/auth/login` with Super Admin credentials | `201` with `data.accessToken` |
+| 2 | Copy `data.accessToken` and paste it into the `accessToken` environment variable | Can now run any authenticated request |
 
 ---
 
-## 3. Creating the three flat resources
+## 3. The happy path — India → Maharashtra → Mumbai
 
-**Skill**
+This sequence builds the geographical join tree that underpins all phase-2 resources.
 
-```bash
-curl -X POST http://localhost:3000/api/v1/skills \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "TypeScript",
-    "category": "language",
-    "description": "Typed superset of JavaScript that compiles to plain JS.",
-    "isActive": true
-  }'
-```
+### Step 1 — Verify India exists
 
-**Language**
+India should exist from phase-1 seed. Verify with:
 
-```bash
-curl -X POST http://localhost:3000/api/v1/languages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Hindi",
-    "nativeName": "हिन्दी",
-    "isoCode": "hi",
-    "script": "Devanagari",
-    "isActive": true
-  }'
-```
+| Request | Doc |
+|---|---|
+| `GET {{baseUrl}}/api/v1/countries?iso3=IND&pageSize=1` | [Phase 1 — Countries §1.1](../phase%201%20-%20role%20based%20user%20management/05%20-%20countries.md#11-get-apiv1countries) |
 
-**Education level**
+Capture the returned `id` (typically `1`) as `COUNTRY_ID` in Postman.
 
-```bash
-curl -X POST http://localhost:3000/api/v1/education-levels \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Bachelor'\''s Degree",
-    "levelOrder": 60,
-    "levelCategory": "undergraduate",
-    "abbreviation": "BA/BSc",
-    "isActive": true
-  }'
-```
+### Step 2 — Create Maharashtra under India
 
-**Designation**
+| Step | Request | Doc |
+|---|---|---|
+| 1 | `POST {{baseUrl}}/api/v1/states` with body: `{ "countryId": 1, "name": "Maharashtra", "iso3": "MH", "languages": ["Marathi", "Hindi", "English"], "isActive": true }` | [01 states §1.3](01%20-%20states.md#13-post-apiv1states) |
+| 2 | Capture returned `data.id` as `STATE_ID` in environment | — |
 
-```bash
-curl -X POST http://localhost:3000/api/v1/designations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Senior Lecturer",
-    "code": "sr_lect",
-    "level": 5,
-    "levelBand": "senior",
-    "description": "Experienced instructor; leads curriculum for a given track.",
-    "isActive": true
-  }'
-```
+### Step 3 — Create Mumbai under Maharashtra
 
-**Specialization**
+| Step | Request | Doc |
+|---|---|---|
+| 1 | `POST {{baseUrl}}/api/v1/cities` with body: `{ "stateId": {{STATE_ID}}, "name": "Mumbai", "phoneCode": "022", "timezone": "Asia/Kolkata", "isActive": true }` | [02 cities §2.3](02%20-%20cities.md#23-post-apiv1cities) |
+| 2 | Capture returned `data.id` as `CITY_ID` in environment | — |
 
-```bash
-curl -X POST http://localhost:3000/api/v1/specializations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Python",
-    "category": "technology",
-    "description": "General-purpose language popular for scripting, data, and backend.",
-    "isActive": true
-  }'
-```
+The response echoes the full tree — city → state → country — so one call produces a complete "Mumbai, Maharashtra, India" label.
 
-> `iconUrl` is never accepted on create or update. After the row exists, upload the icon separately (see [§3a](#3a-uploading-a-specialization-icon)).
+### Step 4 — Drill back down from the country
+
+| Request | Doc | Purpose |
+|---|---|---|
+| `GET {{baseUrl}}/api/v1/cities?countryIso3=IND&pageSize=100` | [02 cities §2.1](02%20-%20cities.md#21-get-apiv1cities) | List all Indian cities; each carries nested state and country |
+| `GET {{baseUrl}}/api/v1/states?countryId=1&pageSize=50` | [01 states §1.1](01%20-%20states.md#11-get-apiv1states) | List all states in India |
 
 ---
 
-## 3a. Creating the document-type → document parent/child pair
+## 4. Creating flat taxonomy resources
 
-Unlike the flat resources above, `documents` has a FK to `document_types`. Create the parent first, then a child:
+Each of the following leaf resources follows the same CRUD + soft-delete + restore pattern. Use the Postman collection requests under each resource's folder.
 
-```bash
-# 1. Parent
-DOC_TYPE_ID=$(curl -s -X POST http://localhost:3000/api/v1/document-types \
-  -H "Content-Type: application/json" \
-  -d '{ "name": "Identity Proof", "description": "Government-issued documents that verify a person'\''s identity." }' \
-  | jq -r '.data.id')
+| Resource | Create Request | Doc |
+|---|---|---|
+| Skills | `POST {{baseUrl}}/api/v1/skills` with `{ "name": "TypeScript", "category": "language", "description": "...", "isActive": true }` | [03 skills §3.3](03%20-%20skills.md#33-post-apiv1skills) |
+| Languages | `POST {{baseUrl}}/api/v1/languages` with `{ "code": "EN", "name": "English", "nativeName": "English", "rtl": false, "isActive": true }` | [04 languages §4.3](04%20-%20languages.md#43-post-apiv1languages) |
+| Education Levels | `POST {{baseUrl}}/api/v1/education-levels` with `{ "code": "HS", "name": "High School", "displayOrder": 1, "isActive": true }` | [05 education-levels §5.3](05%20-%20education-levels.md#53-post-apiv1education-levels) |
+| Document Types | `POST {{baseUrl}}/api/v1/document-types` with `{ "name": "Passport", "code": "PASSPORT", "description": "...", "isActive": true }` | [07 document-types §7.3](07%20-%20document-types.md#73-post-apiv1document-types) |
+| Designations | `POST {{baseUrl}}/api/v1/designations` with `{ "name": "Software Engineer", "description": "...", "isActive": true }` | [09 designations §9.3](09%20-%20designations.md#93-post-apiv1designations) |
+| Specializations | `POST {{baseUrl}}/api/v1/specializations` with `{ "name": "Full Stack", "description": "...", "isActive": true }` | [10 specializations §10.3](10%20-%20specializations.md#103-post-apiv1specializations) |
+| Learning Goals | `POST {{baseUrl}}/api/v1/learning-goals` with `{ "name": "Master React", "description": "...", "isActive": true }` | [11 learning-goals §11.3](11%20-%20learning-goals.md#113-post-apiv1learning-goals) |
+| Social Medias | `POST {{baseUrl}}/api/v1/social-medias` with `{ "name": "LinkedIn", "code": "LINKEDIN", "isActive": true }` | [12 social-medias §12.3](12%20-%20social-medias.md#123-post-apiv1social-medias) |
 
-# 2. Child — note the nested documentType block in the response
-curl -X POST http://localhost:3000/api/v1/documents \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"documentTypeId\": $DOC_TYPE_ID,
-    \"name\": \"Aadhar Card\",
-    \"description\": \"Unique 12-digit identity issued by UIDAI.\",
-    \"isActive\": true
-  }"
-```
-
-A `GET /api/v1/documents?documentTypeId=$DOC_TYPE_ID` returns every document under that type, each with its full nested `documentType` block.
+Each POST returns a `201 CREATED` with the full row. Capture IDs for later reference if building join tables.
 
 ---
 
-## 3b. Uploading a specialization icon
+## 5. Creating a document under document-type
 
-`POST /api/v1/specializations/:id/icon` was the first multipart endpoint in phase 2 — and the pattern it established is now reused across learning-goals, social-medias, categories, and sub-categories. Accepted input: PNG / JPEG / WebP / SVG, ≤ 100 KB raw. The server re-encodes to WebP (max 256 × 256 box, final byte cap 100 KB) and writes to Bunny CDN under the deterministic key `specializations/icons/<id>.webp`:
+Documents are the only phase-2 resource with a parent FK (to document_types).
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/specializations/$SPEC_ID/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./python.png"
-```
-
-Replacing the icon hits the same deterministic key, so the CDN URL stays stable. Clearing the icon is `DELETE /api/v1/specializations/:id/icon`.
-
-See [10 specializations §10.7](10%20-%20specializations.md#107-post-apiv1specializationsidicon) for the full contract (quality loop, oversize rejection, orphan cleanup).
+| Step | Request | Doc |
+|---|---|---|
+| 1 | Ensure a document_type exists (from §4 above, or query `GET {{baseUrl}}/api/v1/document-types`) | [07 document-types §7.1](07%20-%20document-types.md#71-get-apiv1document-types) |
+| 2 | Create a document: `POST {{baseUrl}}/api/v1/documents` with `{ "userId": 1, "documentTypeId": 1, "documentNumber": "AB123456", "issuedAt": "2020-01-01", "expiresAt": "2030-01-01", "isActive": true }` | [08 documents §8.3](08%20-%20documents.md#83-post-apiv1documents) |
+| 3 | Query `GET {{baseUrl}}/api/v1/documents?userId=1` to list documents for a user | [08 documents §8.1](08%20-%20documents.md#81-get-apiv1documents) |
 
 ---
 
-## 3c. Creating a learning goal and a social media
+## 6. Creating a category → sub-category tree
 
-Two more flat resources added in phase-2 batch 3. Both expose the same `POST /:id/icon` / `DELETE /:id/icon` pattern as specializations.
+Categories and sub-categories form a two-level hierarchy, both with per-language translations.
 
-**Learning goal**
-
-```bash
-curl -X POST http://localhost:3000/api/v1/learning-goals \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Become a Full Stack Developer",
-    "description": "End-to-end web development: frontend, backend, and infra.",
-    "displayOrder": 10,
-    "isActive": true
-  }'
-```
-
-Then attach an icon:
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/learning-goals/$LG_ID/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./fullstack.png"
-```
-
-**Social media platform**
-
-```bash
-curl -X POST http://localhost:3000/api/v1/social-medias \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "GitHub",
-    "code": "github",
-    "baseUrl": "https://github.com/",
-    "placeholder": "username",
-    "platformType": "code",
-    "displayOrder": 20,
-    "isActive": true
-  }'
-```
-
-`code` is unique in addition to `name`. `platformType` must be one of `social`, `professional`, `code`, `video`, `blog`, `portfolio`, `messaging`, `website`, `other`. See [11 learning-goals](11%20-%20learning-goals.md) and [12 social-medias](12%20-%20social-medias.md) for the full contract.
+| Step | Request | Doc |
+|---|---|---|
+| 1 | Create a category: `POST {{baseUrl}}/api/v1/categories` with `{ "code": "TECH", "slug": "tech", "displayOrder": 1, "isActive": true }` | [13 categories §13.3](13%20-%20categories.md#133-post-apiv1categories) |
+| 2 | Capture the returned category `id` as `CATEGORY_ID` | — |
+| 3 | Create a sub-category under it: `POST {{baseUrl}}/api/v1/sub-categories` with `{ "categoryId": {{CATEGORY_ID}}, "code": "WEB", "slug": "web", "displayOrder": 1, "isActive": true }` | [14 sub-categories §14.3](14%20-%20sub-categories.md#143-post-apiv1sub-categories) |
+| 4 | Query the tree: `GET {{baseUrl}}/api/v1/sub-categories?categoryId={{CATEGORY_ID}}` | [14 sub-categories §14.1](14%20-%20sub-categories.md#141-get-apiv1sub-categories) |
 
 ---
 
-## 3d. Building a category → sub-category tree with translations
+## 7. Verifying the auto-seeded permissions
 
-The last two phase-2 resources are hierarchical: `sub_categories` has an FK to `categories`, and both carry a per-language translation table (name, description, full SEO block — meta tags, Open Graph, Twitter Card, JSON-LD, canonical URL, robots directive).
+Phase 2 permission seed calls `udf_auto_create_resource_permissions` 13 times, producing 65 rows total. Verify:
 
-Both `POST` endpoints accept an optional `translation` block that is committed atomically with the parent row in a single UDF call. That means you can ship a category + its English translation in one request, then add Spanish later via the translation sub-resource.
-
-**Step 1. Create the category with an English translation in a single call.**
-
-```bash
-CAT_ID=$(curl -s -X POST http://localhost:3000/api/v1/categories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "PROG",
-    "slug": "programming",
-    "displayOrder": 10,
-    "isActive": true,
-    "translation": {
-      "languageId": 1,
-      "name": "Programming",
-      "description": "Software engineering, algorithms, and development practices.",
-      "metaTitle": "Programming courses",
-      "metaDescription": "Learn to build software: JavaScript, Python, systems, and more.",
-      "ogType": "website",
-      "twitterCard": "summary_large_image",
-      "robotsDirective": "index,follow"
-    }
-  }' \
-  | jq -r '.data.id')
-```
-
-**Step 2. Attach a category icon and hero image.**
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/categories/$CAT_ID/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./programming-icon.png"
-
-curl -X POST "http://localhost:3000/api/v1/categories/$CAT_ID/image" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./programming-hero.jpg"
-```
-
-`/icon` fits a 256 × 256 box; `/image` fits a 1024 × 1024 box. Both end up as WebP ≤ 100 KB at stable storage keys (`categories/icons/<id>.webp`, `categories/images/<id>.webp`).
-
-**Step 3. Add a Spanish translation via the sub-resource.**
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/categories/$CAT_ID/translations" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "languageId": 2,
-    "name": "Programación",
-    "description": "Ingeniería de software, algoritmos y prácticas de desarrollo.",
-    "metaTitle": "Cursos de programación"
-  }'
-```
-
-**Step 4. Create a sub-category under the category, also with a combined translation.**
-
-```bash
-SUBCAT_ID=$(curl -s -X POST http://localhost:3000/api/v1/sub-categories \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"categoryId\": $CAT_ID,
-    \"code\": \"PY\",
-    \"slug\": \"python\",
-    \"displayOrder\": 10,
-    \"isActive\": true,
-    \"translation\": {
-      \"languageId\": 1,
-      \"name\": \"Python\",
-      \"description\": \"General-purpose programming language popular for data and backend.\",
-      \"metaTitle\": \"Python courses\"
-    }
-  }" \
-  | jq -r '.data.id')
-```
-
-Note that `code` and `slug` are unique **per parent** on sub-categories (`uq_sub_categories_category_code`, `uq_sub_categories_category_slug`) — not globally. `PATCH /:id` can change `categoryId`, which re-parents the row and re-checks the uniqueness constraint against the new parent.
-
-**Step 5. Drill back down.**
-
-```bash
-curl "http://localhost:3000/api/v1/sub-categories?categoryId=$CAT_ID&pageSize=50"
-```
-
-Every sub-category under the programming category comes back in display-order. See [13 categories](13%20-%20categories.md) and [14 sub-categories](14%20-%20sub-categories.md) for the full field catalogue and error contracts.
+| What | Request | Expectation |
+|---|---|---|
+| All state permissions | `GET {{baseUrl}}/api/v1/permissions?searchTerm=state.&pageSize=50` | 5 rows: `read`, `create`, `update`, `delete`, `restore` |
+| All permissions (spot check) | `GET {{baseUrl}}/api/v1/permissions?pageSize=100` | At least 65 rows across the 13 resources |
+| Super Admin has all | `GET {{baseUrl}}/api/v1/role-permissions?roleName=super_admin&pageSize=100` | All 65 rows (role level 0 gets everything) |
+| Admin has all except delete | `GET {{baseUrl}}/api/v1/role-permissions?roleName=admin&resource=state&pageSize=50` | 4 rows: `read`, `create`, `update`, `restore` (no `delete`) |
 
 ---
 
-## 3e. The Bunny image contract in one place
+## 8. Soft-delete and restore lifecycle
 
-Five phase-2 resources expose Bunny-backed image routes — specializations, learning-goals, social-medias, categories, and sub-categories. They share the exact same contract, implemented by the `bunny-image-pipeline` helpers (`replaceImage`, `clearImage`):
+All phase-2 resources follow the same pattern:
 
-1. **Input**: `multipart/form-data`, single `file` field, PNG / JPEG / WebP / SVG, ≤ 100 KB raw (multer rejects anything else before `sharp` ever runs).
-2. **Re-encode**: always to WebP. Icons fit a 256 × 256 box; category/sub-category `/image` routes fit a 1024 × 1024 box. `sharp` runs a quality-reduction loop (80 → 40, step 10) until the output fits the 100 KB cap.
-3. **Storage key**: deterministic — `<resource>/<icons|images>/<id>.webp`. Re-uploads clobber the same object so CDN URLs stay stable.
-4. **On replace**: the **previous** Bunny object (both the deterministic key and whatever is currently in `icon_url` / `image_url`) is deleted **before** the new PUT, so there are no orphans.
-5. **Log-and-continue**: delete failures against Bunny are logged at WARN and **do not** block the new upload or the column update. This is the single most important operational rule — a transient Bunny 5xx on stale cleanup must never cost a user their new upload.
-6. **Clear routes** (`DELETE /:id/icon`, `DELETE /:id/image`) best-effort delete the current object and then set the column to `NULL`.
-7. **Oversize after re-encode**: if the WebP still exceeds 100 KB at quality 40, the route returns **400 BAD_REQUEST**. This only happens for genuinely heavy input images, e.g. a huge photographic JPEG.
-
----
-
-## 4. Verifying the permission auto-seed
-
-Phase 2 does **not** add a new permissions catalogue file by hand — the seed script calls `udf_auto_create_resource_permissions` thirteen times, once per resource, producing a total of **65 permission rows**. You can confirm the result in three ways:
-
-### 4a. Check the catalogue
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?searchTerm=state.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=city.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=skill.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=language.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=education_level.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=document_type.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=document.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=designation.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=specialization.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=learning_goal.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=social_media.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=category.&pageSize=50"
-curl "http://localhost:3000/api/v1/permissions?searchTerm=sub_category.&pageSize=50"
-```
-
-Each query must return exactly **five** rows — `read`, `create`, `update`, `delete`, `restore`.
-
-### 4b. Check Super Admin has all of them
-
-Super Admin is role level `0`, so the auto-grant gives it every new permission.
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?roleName=super_admin&resource=state"
-```
-
-Should return all five `state.*` entries.
-
-### 4c. Check Admin has all of them except `delete`
-
-Admin is role level `1`; the auto-grant gives it everything **except `.delete`**.
-
-```bash
-curl "http://localhost:3000/api/v1/role-permissions?roleName=admin&resource=state"
-```
-
-Should return four entries: `state.read`, `state.create`, `state.update`, `state.restore`. No `state.delete`.
-
-Repeat the checks for `city`, `skill`, `language`, `education_level`, `document_type`, `document`, `designation`, `specialization`, `learning_goal`, `social_media`, `category`, and `sub_category`.
+| Operation | Request | Doc |
+|---|---|---|
+| Delete a state | `DELETE {{baseUrl}}/api/v1/states/:id` | [01 states §1.5](01%20-%20states.md#15-delete-apiv1statesid) |
+| Restore a state | `POST {{baseUrl}}/api/v1/states/:id/restore` | [01 states §1.6](01%20-%20states.md#16-post-apiv1statesidrestore) |
+| Query soft-deleted only | `GET {{baseUrl}}/api/v1/states?isDeleted=true` | [01 states §1.1 "Saved examples"](01%20-%20states.md#saved-examples-to-add-in-postman) |
+| Get a soft-deleted row by id | `GET {{baseUrl}}/api/v1/states/:id` (where id was deleted) | [01 states §1.2 — returns row with `isDeleted: true`](01%20-%20states.md#12-get-apiv1statesid) |
 
 ---
 
-## 5. Soft delete + restore round-trip
+## 9. Endpoint index
 
-Pick any row created above and prove the soft-delete semantics work:
+Full reference table for all phase-2 routes:
 
-```bash
-curl -X DELETE http://localhost:3000/api/v1/cities/$CITY_ID
-curl "http://localhost:3000/api/v1/cities?isDeleted=true&pageSize=100"   # the row is here
-curl "http://localhost:3000/api/v1/cities?isDeleted=false&pageSize=100"  # the row is NOT here
-curl -X POST  http://localhost:3000/api/v1/cities/$CITY_ID/restore
-curl "http://localhost:3000/api/v1/cities?isDeleted=false&pageSize=100"  # the row is back
-```
-
-As **Super Admin** every step succeeds. As **Admin** the `DELETE` step returns `403 FORBIDDEN` — that is the point of the auto-seed's `include_own=false, skip delete for admin` behaviour.
-
----
-
-## 6. Automated end-to-end verification
-
-The equivalent of the above walkthrough is codified in `api/scripts/verify-master-data.ts` — a standalone Node script that:
-
-1. boots the real Express app against Supabase + Redis,
-2. logs in as Super Admin to mint a JWT,
-3. walks through every route of every phase 2 resource (list, get, create, patch, delete, restore),
-4. asserts response shape, status codes, and envelope integrity,
-5. cleans up after itself.
-
-Run it with:
-
-```bash
-cd api
-npx tsx --tsconfig tsconfig.scripts.json scripts/verify-master-data.ts
-```
-
-A successful run ends with `ALL PHASE 2 MASTER DATA CHECKS PASSED ✓` and exit code 0. The current baseline is **175 assertions across 15 sections** — setup + auth + six flat/joined modules (states/cities/skills/languages/education-levels/document-types/documents/designations) + specializations with icon upload, and **batch 3**: learning-goals (CRUD + icon happy/replace/oversize/clear), social-medias (CRUD + icon happy/replace/oversize/clear), categories (CRUD + combined translation insert + icon + image + translation sub-resource + restore), and sub-categories (CRUD + combined translation insert + reparenting + icon + image + translation sub-resource + restore). See the script itself for the individual assertions.
-
-> **Rate-limit bypass for the script.** `verify-master-data.ts` fires ~175 requests in a few seconds, which comfortably exceeds the default `RATE_LIMIT_MAX=100/15m`. The script sets `process.env.SKIP_GLOBAL_RATE_LIMIT = '1'` **before** any `src/` import so the `skip` function on `globalRateLimiter` and `authRateLimiter` turns both into no-ops for the run. Never set this flag in production.
+| # | Resource | Method | URL | Permission | Doc |
+|---|---|---|---|---|---|
+| 1 | States | GET | `{{baseUrl}}/api/v1/states` | `state.read` | [01 §1.1](01%20-%20states.md#11-get-apiv1states) |
+| 2 | States | GET | `{{baseUrl}}/api/v1/states/:id` | `state.read` | [01 §1.2](01%20-%20states.md#12-get-apiv1statesid) |
+| 3 | States | POST | `{{baseUrl}}/api/v1/states` | `state.create` | [01 §1.3](01%20-%20states.md#13-post-apiv1states) |
+| 4 | States | PATCH | `{{baseUrl}}/api/v1/states/:id` | `state.update` | [01 §1.4](01%20-%20states.md#14-patch-apiv1statesid) |
+| 5 | States | DELETE | `{{baseUrl}}/api/v1/states/:id` | `state.delete` | [01 §1.5](01%20-%20states.md#15-delete-apiv1statesid) |
+| 6 | States | POST | `{{baseUrl}}/api/v1/states/:id/restore` | `state.restore` | [01 §1.6](01%20-%20states.md#16-post-apiv1statesidrestore) |
+| 7 | Cities | GET | `{{baseUrl}}/api/v1/cities` | `city.read` | [02 §2.1](02%20-%20cities.md#21-get-apiv1cities) |
+| 8 | Cities | GET | `{{baseUrl}}/api/v1/cities/:id` | `city.read` | [02 §2.2](02%20-%20cities.md#22-get-apiv1citiesid) |
+| 9 | Cities | POST | `{{baseUrl}}/api/v1/cities` | `city.create` | [02 §2.3](02%20-%20cities.md#23-post-apiv1cities) |
+| 10 | Cities | PATCH | `{{baseUrl}}/api/v1/cities/:id` | `city.update` | [02 §2.4](02%20-%20cities.md#24-patch-apiv1citiesid) |
+| 11 | Cities | DELETE | `{{baseUrl}}/api/v1/cities/:id` | `city.delete` | [02 §2.5](02%20-%20cities.md#25-delete-apiv1citiesid) |
+| 12 | Cities | POST | `{{baseUrl}}/api/v1/cities/:id/restore` | `city.restore` | [02 §2.6](02%20-%20cities.md#26-post-apiv1citiesidrestore) |
+| (13-78) | Skills, Languages, Education Levels, Document Types, Documents, Designations, Specializations, Learning Goals, Social Medias, Categories, Sub-Categories | GET, GET /:id, POST, PATCH, DELETE, POST /:id/restore | `/api/v1/<resource>` and variants | `<resource>.read/create/update/delete/restore` | [03–14] |
 
 ---
 
-## 7. Index
+## 10. File index
 
 | File | Topic |
 |---|---|
-| [00 overview](00%20-%20overview.md) | How phase 2 fits together; permission auto-seed contract. |
-| [01 states](01%20-%20states.md) | `/api/v1/states` — country-joined list + CRUD + restore. |
-| [02 cities](02%20-%20cities.md) | `/api/v1/cities` — state + country joined list + CRUD + restore. |
-| [03 skills](03%20-%20skills.md) | `/api/v1/skills` — flat taxonomy with category enum. |
-| [04 languages](04%20-%20languages.md) | `/api/v1/languages` — ISO 639 code, script, native name. |
-| [05 education-levels](05%20-%20education-levels.md) | `/api/v1/education-levels` — ordered ladder with category enum. |
-| **06 walkthrough and index** *(you are here)* | End-to-end happy path + verify script entry point. |
-| [07 document-types](07%20-%20document-types.md) | `/api/v1/document-types` — flat parent catalogue. |
-| [08 documents](08%20-%20documents.md) | `/api/v1/documents` — document-type-joined list with parent/child guard. |
-| [09 designations](09%20-%20designations.md) | `/api/v1/designations` — job title taxonomy with level + level_band. |
-| [10 specializations](10%20-%20specializations.md) | `/api/v1/specializations` — category enum + multipart WebP icon upload. |
-| [11 learning-goals](11%20-%20learning-goals.md) | `/api/v1/learning-goals` — flat display-ordered list + WebP icon upload. |
-| [12 social-medias](12%20-%20social-medias.md) | `/api/v1/social-medias` — platform_type enum + WebP icon upload. |
-| [13 categories](13%20-%20categories.md) | `/api/v1/categories` — translations sub-resource + combined parent+translation insert + icon + image uploads. |
-| [14 sub-categories](14%20-%20sub-categories.md) | `/api/v1/sub-categories` — category-joined with reparenting + translations sub-resource + combined insert + icon + image uploads. |
+| [00 overview](00%20-%20overview.md) | How phase 2 fits; the thirteen resources; permission auto-seed; list contract; Postman environment variables. |
+| [01 states](01%20-%20states.md) | `/api/v1/states` — country-joined CRUD, soft-delete, restore. |
+| [02 cities](02%20-%20cities.md) | `/api/v1/cities` — state/country-joined CRUD, soft-delete, restore. |
+| [03 skills](03%20-%20skills.md) | `/api/v1/skills` — flat resource with category enum. |
+| [04 languages](04%20-%20languages.md) | `/api/v1/languages` — flat resource with code and native name. |
+| [05 education-levels](05%20-%20education-levels.md) | `/api/v1/education-levels` — flat resource with display order. |
+| **06 walkthrough and index** | *(you are here)* End-to-end walkthrough + endpoint index + verify script entry point. |
+| [07 document-types](07%20-%20document-types.md) | `/api/v1/document-types` — flat reference type. |
+| [08 documents](08%20-%20documents.md) | `/api/v1/documents` — document-type-joined CRUD; user document instances. |
+| [09 designations](09%20-%20designations.md) | `/api/v1/designations` — flat resource. |
+| [10 specializations](10%20-%20specializations.md) | `/api/v1/specializations` — flat resource; also exposes Bunny-backed icon upload. |
+| [11 learning-goals](11%20-%20learning-goals.md) | `/api/v1/learning-goals` — flat resource; also exposes Bunny-backed icon upload. |
+| [12 social-medias](12%20-%20social-medias.md) | `/api/v1/social-medias` — flat resource; also exposes Bunny-backed icon upload. |
+| [13 categories](13%20-%20categories.md) | `/api/v1/categories` — flat resource with per-language translations; also exposes Bunny-backed icon and image uploads. |
+| [14 sub-categories](14%20-%20sub-categories.md) | `/api/v1/sub-categories` — category-joined resource with per-language translations; also exposes Bunny-backed icon and image uploads. |
+| `api/docs/postman/phase-2.postman_collection.json` | Importable Postman v2.1 collection with a folder per resource (13 folders × 6 requests each). |

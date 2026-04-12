@@ -6,13 +6,15 @@
 //     GET    /              sub_category.read
 //     GET    /:id           sub_category.read
 //     POST   /              sub_category.create
-//     PATCH  /:id           sub_category.update
+//     PATCH  /:id           sub_category.update   (JSON or multipart/form-data)
 //     DELETE /:id           sub_category.delete
 //     POST   /:id/restore   sub_category.restore
-//     POST   /:id/icon      sub_category.update   (multipart, field `file`)
-//     DELETE /:id/icon      sub_category.update
-//     POST   /:id/image     sub_category.update   (multipart, field `file`)
-//     DELETE /:id/image     sub_category.update
+//
+//   Unified PATCH accepts BOTH text field updates and optional icon/
+//   image uploads in a single request — see categories.routes.ts for
+//   the detailed contract. Slot field names:
+//     `icon`  (alias: `iconImage`)
+//     `image` (alias: `subCategoryImage`)
 //
 //   Translation sub-resource (nested under /:id/translations):
 //     GET    /:id/translations              sub_category.read
@@ -31,9 +33,10 @@ import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import {
-  uploadSubCategoryIcon,
-  uploadSubCategoryImage
+  patchSubCategoryFiles,
+  getSlotFile
 } from '../../../core/middlewares/upload';
+import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-coerce';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -95,14 +98,75 @@ router.post(
   })
 );
 
+// PATCH /:id — unified text + icon + image update.
+// See categories.routes.ts for the full contract — the pattern is
+// identical (icon slot + image slot + iconAction/imageAction fields).
 router.patch(
   '/:id',
   authorize('sub_category.update'),
+  patchSubCategoryFiles,
+  coerceMultipartBody,
   validate({ params: idParamSchema, body: updateSubCategoryBodySchema }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const body = req.body as UpdateSubCategoryBody;
-    await subCategoriesService.updateSubCategory(id, body, req.user?.id ?? null);
+
+    const { iconAction, imageAction, ...textFields } = body;
+    const iconFile = getSlotFile(req, 'icon');
+    const imageFile = getSlotFile(req, 'image');
+
+    if (iconFile && iconAction === 'delete') {
+      throw AppError.badRequest(
+        "Cannot upload a new sub-category icon AND iconAction=delete in the same request — pick one."
+      );
+    }
+    if (imageFile && imageAction === 'delete') {
+      throw AppError.badRequest(
+        "Cannot upload a new sub-category image AND imageAction=delete in the same request — pick one."
+      );
+    }
+
+    const hasTextChange = Object.keys(textFields).length > 0;
+    const hasFileChange = Boolean(iconFile) || Boolean(imageFile);
+    const hasDelete = iconAction === 'delete' || imageAction === 'delete';
+    if (!hasTextChange && !hasFileChange && !hasDelete) {
+      throw AppError.badRequest('Provide at least one field to update');
+    }
+
+    if (hasTextChange) {
+      await subCategoriesService.updateSubCategory(
+        id,
+        textFields as UpdateSubCategoryBody,
+        req.user?.id ?? null
+      );
+    }
+
+    if (iconFile) {
+      await subCategoriesService.processSubCategoryIconUpload(
+        id,
+        iconFile,
+        req.user?.id ?? null
+      );
+    } else if (iconAction === 'delete') {
+      await subCategoriesService.deleteSubCategoryIcon(
+        id,
+        req.user?.id ?? null
+      );
+    }
+
+    if (imageFile) {
+      await subCategoriesService.processSubCategoryImageUpload(
+        id,
+        imageFile,
+        req.user?.id ?? null
+      );
+    } else if (imageAction === 'delete') {
+      await subCategoriesService.deleteSubCategoryImage(
+        id,
+        req.user?.id ?? null
+      );
+    }
+
     const sc = await subCategoriesService.getSubCategoryById(id);
     return ok(res, sc, 'Sub-category updated');
   })
@@ -131,69 +195,9 @@ router.post(
   })
 );
 
-// ─── Icon upload ────────────────────────────────────────────────
-
-router.post(
-  '/:id/icon',
-  authorize('sub_category.update'),
-  validate({ params: idParamSchema }),
-  uploadSubCategoryIcon,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const sc = await subCategoriesService.processSubCategoryIconUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, sc, 'Sub-category icon uploaded');
-  })
-);
-
-router.delete(
-  '/:id/icon',
-  authorize('sub_category.update'),
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    const sc = await subCategoriesService.deleteSubCategoryIcon(id, req.user?.id ?? null);
-    return ok(res, sc, 'Sub-category icon deleted');
-  })
-);
-
-// ─── Image upload ───────────────────────────────────────────────
-
-router.post(
-  '/:id/image',
-  authorize('sub_category.update'),
-  validate({ params: idParamSchema }),
-  uploadSubCategoryImage,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const sc = await subCategoriesService.processSubCategoryImageUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, sc, 'Sub-category image uploaded');
-  })
-);
-
-router.delete(
-  '/:id/image',
-  authorize('sub_category.update'),
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    const sc = await subCategoriesService.deleteSubCategoryImage(id, req.user?.id ?? null);
-    return ok(res, sc, 'Sub-category image deleted');
-  })
-);
+// Dedicated icon/image POST+DELETE endpoints were removed in phase-02
+// Stage 4 — use PATCH /:id with multipart/form-data instead (field
+// `icon` / `image`, or action `iconAction=delete` / `imageAction=delete`).
 
 // ─── Translation sub-resource ───────────────────────────────────
 

@@ -5,24 +5,26 @@
 //   GET    /              specialization.read
 //   GET    /:id           specialization.read
 //   POST   /              specialization.create
-//   PATCH  /:id           specialization.update
+//   PATCH  /:id           specialization.update   (JSON or multipart/form-data)
 //   DELETE /:id           specialization.delete
 //   POST   /:id/restore   specialization.restore
-//   POST   /:id/icon      specialization.update   (multipart, field `file`)
-//   DELETE /:id/icon      specialization.update
 //
 // All routes require an authenticated user.
 //
-// Icons:
-//   • Input MIME:   PNG / JPEG / WebP / SVG (enforced by multer)
-//   • Max raw size: 100 KB (enforced by multer)
+// Unified PATCH accepts BOTH text field updates and optional icon
+// uploads in a single request:
+//   • JSON body: plain text-field patch
+//   • multipart/form-data: text fields + optional `icon` slot (100 KB
+//     WebP pipeline). Aliases: `iconImage`, `file`.
+//   • To clear the icon, set `iconAction=delete` in the same body.
+//     Uploading + deleting the same slot in one request is rejected.
+//
+// Icons (pipeline spec, enforced downstream):
+//   • Input MIME:   PNG / JPEG / WebP / SVG
+//   • Max raw size: 100 KB
 //   • Output:       always WebP, resized to fit 256×256 box
-//   • Byte cap:     ≤ 100 KB on the final WebP (sharp quality loop)
 //   • Storage key:  specializations/icons/<id>.webp  (deterministic)
-//   • On replace:   prior Bunny object(s) are deleted BEFORE new PUT,
-//                   so there are no orphans left behind.
-//   • DELETE /icon: clears icon_url and best-effort removes the
-//                   prior Bunny object.
+//   • On replace:   prior Bunny object(s) deleted BEFORE new PUT
 // ═══════════════════════════════════════════════════════════════
 
 import { Router } from 'express';
@@ -30,7 +32,11 @@ import { Router } from 'express';
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
-import { uploadSpecializationIcon } from '../../../core/middlewares/upload';
+import {
+  patchSpecializationFiles,
+  getSlotFile
+} from '../../../core/middlewares/upload';
+import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-coerce';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -84,14 +90,54 @@ router.post(
   })
 );
 
+// PATCH /:id — unified text + icon update.
 router.patch(
   '/:id',
   authorize('specialization.update'),
+  patchSpecializationFiles,
+  coerceMultipartBody,
   validate({ params: idParamSchema, body: updateSpecializationBodySchema }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const body = req.body as UpdateSpecializationBody;
-    await specializationsService.updateSpecialization(id, body, req.user?.id ?? null);
+
+    const { iconAction, ...textFields } = body;
+    const iconFile = getSlotFile(req, 'icon');
+
+    if (iconFile && iconAction === 'delete') {
+      throw AppError.badRequest(
+        "Cannot upload a new specialization icon AND iconAction=delete in the same request — pick one."
+      );
+    }
+
+    const hasTextChange = Object.keys(textFields).length > 0;
+    const hasFileChange = Boolean(iconFile);
+    const hasDelete = iconAction === 'delete';
+    if (!hasTextChange && !hasFileChange && !hasDelete) {
+      throw AppError.badRequest('Provide at least one field to update');
+    }
+
+    if (hasTextChange) {
+      await specializationsService.updateSpecialization(
+        id,
+        textFields as UpdateSpecializationBody,
+        req.user?.id ?? null
+      );
+    }
+
+    if (iconFile) {
+      await specializationsService.processSpecializationIconUpload(
+        id,
+        iconFile,
+        req.user?.id ?? null
+      );
+    } else if (iconAction === 'delete') {
+      await specializationsService.deleteSpecializationIcon(
+        id,
+        req.user?.id ?? null
+      );
+    }
+
     const s = await specializationsService.getSpecializationById(id);
     return ok(res, s, 'Specialization updated');
   })
@@ -120,36 +166,8 @@ router.post(
   })
 );
 
-// ─── Icon upload ────────────────────────────────────────────────
-
-router.post(
-  '/:id/icon',
-  authorize('specialization.update'),
-  validate({ params: idParamSchema }),
-  uploadSpecializationIcon,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const s = await specializationsService.processSpecializationIconUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, s, 'Specialization icon uploaded');
-  })
-);
-
-router.delete(
-  '/:id/icon',
-  authorize('specialization.update'),
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    const s = await specializationsService.deleteSpecializationIcon(id, req.user?.id ?? null);
-    return ok(res, s, 'Specialization icon deleted');
-  })
-);
+// Dedicated POST+DELETE /:id/icon endpoints were removed in phase-02
+// Stage 4 — use PATCH /:id with multipart/form-data (field `icon`)
+// or `iconAction=delete` instead.
 
 export default router;

@@ -6,6 +6,20 @@ The bread-and-butter spine: register, log in, refresh, log out, and "who am I". 
 
 ---
 
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§2.1](#21) | `POST` | `{{baseUrl}}/api/v1/auth/register` | public | Self-register a new user (email or mobile). |
+| [§2.2](#22) | `POST` | `{{baseUrl}}/api/v1/auth/login` | public | Email/mobile + password → `{accessToken, refreshToken, user}`. |
+| [§2.3](#23) | `POST` | `{{baseUrl}}/api/v1/auth/logout` | Bearer | Invalidate the current refresh token. |
+| [§2.4](#24) | `POST` | `{{baseUrl}}/api/v1/auth/refresh` | refreshToken | Exchange refresh token for a new access token. |
+| [§2.5](#25) | `GET` | `{{baseUrl}}/api/v1/auth/me` | Bearer | Current authenticated user profile. |
+
+---
+
 ## 2.1 `POST /api/v1/auth/register`
 
 Public. Creates a new account with role `student` or `instructor` and emits OTPs (one to email, one to mobile) so the user can verify both contact channels.

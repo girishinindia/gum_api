@@ -1,81 +1,222 @@
 # Phase 2 — Learning Goals
 
-Flat taxonomy of **student learning goals** — "Prepare for JEE", "Become a Full Stack Developer", "Learn a New Language". Each row is an ordered, flat entry (no joins) with an optional `iconUrl` that flows through a dedicated multipart upload endpoint — never through `POST`/`PATCH` on the main row.
+Learning objective a user can track. Also exposes a Bunny-backed icon upload route.
 
-All routes require auth. Permission codes: `learning_goal.read`, `learning_goal.create`, `learning_goal.update`, `learning_goal.delete`, `learning_goal.restore`. The icon upload/delete routes are gated by `learning_goal.update`.
+All routes require auth. Permission codes: `learning_goal.read`, `learning_goal.create`, `learning_goal.update`, `learning_goal.delete`, `learning_goal.restore`.
 
-← [10 specializations](10%20-%20specializations.md) · [06 walkthrough](06%20-%20walkthrough%20and%20index.md) · **Next →** [12 social-medias](12%20-%20social-medias.md)
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
+
+← [specializations](10%20-%20specializations.md) · **Next →** [social-medias](12%20-%20social-medias.md)
+
+---
+
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§11.1](#111) | `GET` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.read | List learning goals with filters and sort. |
+| [§11.2](#112) | `GET` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.read | Get a single learning goal by id. |
+| [§11.3](#113) | `POST` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.create | Create a new learning goal. |
+| [§11.4](#114) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.update | Partial update (JSON body). |
+| [§11.5](#115) | `DELETE` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.delete | Soft-delete. |
+| [§11.6](#116) | `POST` | `{{baseUrl}}/api/v1/learning-goals/:id/restore` | learning_goal.restore | Undo a soft-delete. |
+| [§11.7](#117) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id/icon` | learning_goal.update | Upload / replace / clear the icon via `multipart/form-data`. |
 
 ---
 
 ## 11.1 `GET /api/v1/learning-goals`
 
-List learning goals. Backed by `udf_get_learning_goals`.
+List learning goals.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/learning-goals` |
+| Permission | `learning_goal.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Type | Notes |
-|---|---|---|
-| `pageIndex`, `pageSize` | int | Standard pagination. |
-| `searchTerm` | string | `ILIKE` across `name` and `description`. |
-| `isActive`, `isDeleted` | bool | |
-| `sortColumn` | enum | `id`, `name`, `display_order`, `is_active`, `is_deleted`, `created_at`, `updated_at`. Default `id`. |
-| `sortDirection` | enum | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `100`. |
+| `searchTerm` | string | — | `ILIKE` across primary text columns. |
+| `isActive` | bool | — | Filter by active status. |
+| `isDeleted` | bool | — | Filter by soft-delete status. |
+| `sortColumn` | enum | `id` | Whitelisted: `id`, `name`, `is_active`, `is_deleted`, `created_at`, `updated_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
-  "id": 5,
-  "name": "Prepare for JEE",
-  "description": "Joint Entrance Examination preparation for engineering aspirants.",
-  "displayOrder": 10,
-  "iconUrl": "https://cdn.growupmore.com/learning-goals/icons/5.webp",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-10T00:00:00.000Z",
-  "updatedAt": "2026-01-10T00:00:00.000Z",
-  "deletedAt": null
+  "success": true,
+  "message": "OK",
+  "data": [
+    {
+      "id": 1,
+      "name": "Example",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-04-11T00:00:00.000Z",
+      "updatedAt": "2026-04-11T00:00:00.000Z",
+      "deletedAt": null
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 1,
+    "totalPages": 1
+  }
 }
 ```
 
-### Defaults
+#### 400 VALIDATION_ERROR
 
-```
-pageIndex=1  pageSize=20  sortColumn=id  sortDirection=ASC
-```
-
-### Sample queries
-
-**1. Ordered by display position**
-
-```bash
-curl "http://localhost:3000/api/v1/learning-goals?sortColumn=display_order&pageSize=50" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"code": "invalid_enum_value", "path": ["sortColumn"], "message": "Invalid enum value"}]
+}
 ```
 
-**2. Search**
+#### 401 UNAUTHORIZED
 
-```bash
-curl "http://localhost:3000/api/v1/learning-goals?searchTerm=developer" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Missing or invalid access token",
+  "code": "UNAUTHORIZED"
+}
 ```
 
-**3. Archived (soft-deleted)**
+#### 403 FORBIDDEN
 
-```bash
-curl "http://localhost:3000/api/v1/learning-goals?isDeleted=true" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Permission denied: learning_goal.read",
+  "code": "FORBIDDEN"
+}
 ```
+
+
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name — `python` | `?searchTerm=python` |
+| Search + pagination | `?pageIndex=1&pageSize=50&searchTerm=python` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Deleted only | `?isDeleted=true` |
+| Non-deleted only | `?isDeleted=false` |
+| Sort by `id` ASC | `?sortColumn=id&sortDirection=ASC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `is_active` DESC | `?sortColumn=is_active&sortDirection=DESC` |
+| Sort by `is_deleted` DESC | `?sortColumn=is_deleted&sortDirection=DESC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Sort by `updated_at` DESC | `?sortColumn=updated_at&sortDirection=DESC` |
+| Combo — active goals, sort by name | `?pageIndex=1&pageSize=50&isActive=true&sortColumn=name&sortDirection=ASC` |
 
 ---
 
 ## 11.2 `GET /api/v1/learning-goals/:id`
 
-Read a single learning goal by id. **404** if unknown.
+Read a single learning goal by id.
 
-```bash
-curl "http://localhost:3000/api/v1/learning-goals/5" -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/learning-goals/:id` |
+| Permission | `learning_goal.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric learning goal id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "id", "message": "Expected number, received nan", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 11.1.
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: learning_goal.read", "code": "FORBIDDEN"}
+```
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Learning Goal 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
@@ -84,37 +225,154 @@ curl "http://localhost:3000/api/v1/learning-goals/5" -H "Authorization: Bearer $
 
 Create a learning goal. Permission: `learning_goal.create`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/learning-goals" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Become a Full Stack Developer",
-    "description": "End-to-end web development: frontend, backend, and infra.",
-    "displayOrder": 20,
-    "isActive": true
-  }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/learning-goals` |
+| Permission | `learning_goal.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Example",
+  "isActive": true
+}
 ```
 
-`name` is required (≤ 100 chars, CITEXT-unique). **`iconUrl` is deliberately not accepted here** — a freshly created row has `iconUrl: null` and can only be set via [§11.7](#117-post-apiv1learning-goalsidicon).
+**Required fields**: `name`.
 
-**Possible errors**
+**Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
-- **400 VALIDATION_ERROR** — missing `name`, or `name`/`description` over the length cap.
-- **403** — caller lacks `learning_goal.create`.
-- **409** — a learning goal with the same `name` already exists (CITEXT, case-insensitive).
+### Responses
+
+#### 201 CREATED
+
+```json
+{
+  "success": true,
+  "message": "Learning Goal created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "name", "message": "Required", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{"success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED"}
+```
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: learning_goal.create", "code": "FORBIDDEN"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{
+  "success": false,
+  "message": "Learning Goal with that name already exists",
+  "code": "DUPLICATE_ENTRY"
+}
+```
 
 ---
 
 ## 11.4 `PATCH /api/v1/learning-goals/:id`
 
-Partial update. Any subset of `name`, `description`, `displayOrder`, `isActive`. **400** on empty body. `iconUrl` is excluded here — use [§11.7](#117-post-apiv1learning-goalsidicon) / [§11.8](#118-delete-apiv1learning-goalsidicon).
+Partial update.
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/learning-goals/5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "displayOrder": 5 }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/learning-goals/:id` |
+| Permission | `learning_goal.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric learning goal id. |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Updated Name",
+  "isActive": true
+}
+```
+
+### Responses
+
+#### 200 OK
+
+Same row shape as 11.2, wrapped in success envelope.
+
+#### 400 VALIDATION_ERROR — empty body
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 11.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Learning Goal 9999 not found", "code": "NOT_FOUND"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{"success": false, "message": "Learning Goal with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
 ---
@@ -123,78 +381,323 @@ curl -X PATCH "http://localhost:3000/api/v1/learning-goals/5" \
 
 Soft delete. Permission: `learning_goal.delete`.
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/learning-goals/5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/learning-goals/:id` |
+| Permission | `learning_goal.delete` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric learning goal id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Learning Goal deleted",
+  "data": {"id": 1, "deleted": true}
+}
+```
+
+#### 400 BAD_REQUEST — already deleted
+
+```json
+{
+  "success": false,
+  "message": "Learning Goal with ID 1 does not exist or is already deleted.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 11.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Learning Goal 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
 ## 11.6 `POST /api/v1/learning-goals/:id/restore`
 
-Reverse a soft delete. Permission: `learning_goal.restore`. **400 BAD_REQUEST** if the row isn't deleted.
+Reverse a soft delete. Permission: `learning_goal.restore`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/learning-goals/5/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+**Postman request**
 
----
-
-## 11.7 `POST /api/v1/learning-goals/:id/icon`
-
-Upload (or replace) the learning-goal icon. Permission: `learning_goal.update`. The body is `multipart/form-data` with a single `file` field.
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/learning-goals/5/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./jee.png"
-```
-
-### Contract
-
-| Step | Enforcement |
+| Field | Value |
 |---|---|
-| Accepted MIME types | `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml` |
-| Raw upload cap | **100 KB** (multer, hard reject before `sharp` runs) |
-| Output format | **Always WebP**, regardless of input MIME |
-| Resize | Fits inside a **256 × 256** box (no enlargement) |
-| Final byte cap | **≤ 100 KB** — `sharp` runs a quality-reduction loop (80 → 40 step 10) until the WebP fits |
-| Storage key | Deterministic: `learning-goals/icons/<id>.webp` — re-uploads clobber the same object so CDN URLs stay stable |
-| On replace | The previous Bunny object is deleted **before** the new PUT, so there are no orphans. Delete failures are logged at WARN and do not block the new upload. |
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/learning-goals/:id/restore` |
+| Permission | `learning_goal.restore` |
 
-**Response 200** — the refreshed learning-goal row with `iconUrl` pointing at the freshly-written CDN URL.
+**Headers**
 
-### Errors
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
-| HTTP | code | Cause |
+**Path params**
+
+| Name | Type | Notes |
 |---|---|---|
-| **400** | `BAD_REQUEST` | Raw upload > 100 KB, MIME not in allowlist, bytes can't be decoded, or the re-encoded WebP still exceeds 100 KB at quality 40. |
-| **404** | `NOT_FOUND` | No learning goal with that id. |
-| **400** | `BAD_REQUEST` | The learning goal exists but is soft-deleted — restore it first. |
+| `id` | int | Numeric learning goal id. |
 
----
+**Request body** — none.
 
-## 11.8 `DELETE /api/v1/learning-goals/:id/icon`
+### Responses
 
-Clear the icon. Permission: `learning_goal.update`.
+#### 200 OK
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/learning-goals/5/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": true,
+  "message": "Learning Goal restored",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
 ```
 
-The server best-effort deletes the current Bunny object, then sets `icon_url = NULL`. Delete failures against Bunny are logged at WARN and do not block the column clear.
+#### 400 BAD_REQUEST — not deleted
 
-**Response 200** — the refreshed learning-goal row with `iconUrl: null`.
+```json
+{
+  "success": false,
+  "message": "Learning Goal with ID 1 is not deleted or does not exist.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 11.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Learning Goal 9999 not found", "code": "NOT_FOUND"}
+```
 
 ---
 
-**Common errors across all learning-goal routes**
+## 11.7 `PATCH /api/v1/learning-goals/:id/icon`
 
-| HTTP | code | Cause |
+Dedicated file-upload sibling of the JSON `PATCH /api/v1/learning-goals/:id`. Where that route takes a `application/json` body of text fields, **this route takes a `multipart/form-data` body with a binary `icon` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the icon box (≤ 256 × 256), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `learning-goals/icons/<id>.webp`, and return the refreshed row with the new `iconUrl` in the same response. Permission: `learning_goal.update`.
+
+> **Backend status.** The current Express router exposes this upload under `POST /api/v1/learning-goals/:id/icon` (see `api/src/api/v1/resources/learning-goals.routes.ts`) with `uploadLearningGoalIcon` multer middleware and the same Bunny pipeline described below. The `PATCH /api/v1/learning-goals/:id/icon` form documented here is the target convention alignment with the other phase-2 resources; both `POST` and `PATCH` verbs are wired to the same handler during the transition.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/learning-goals/:id/icon` |
+| Permission | `learning_goal.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
+
+**Path params**
+
+| Name | Type | Notes |
 |---|---|---|
-| 401 | `UNAUTHORIZED` | Missing / expired bearer token. |
+| `id` | int | Numeric learning goal id. Must exist and not be soft-deleted. |
+
+**Body** — `multipart/form-data`:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `icon` | file | yes* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP ≤ 100 KB. |
+| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
+
+\* Either the file part **or** `iconAction=delete` must be present — sending neither is a `400 VALIDATION_ERROR`.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Upload new icon | `icon` = `python-256.png` |
+| Replace existing icon | `icon` = new file binary |
+| Clear icon | `iconAction` = `delete` |
+
+### Responses
+
+#### 200 OK — icon uploaded
+
+```json
+{
+  "success": true,
+  "message": "Learning goal icon uploaded",
+  "data": {
+    "id": 3,
+    "name": "Learn Python",
+    "iconUrl": "https://cdn.growupmore.com/learning-goals/icons/3.webp",
+    "isActive": true,
+    "isDeleted": false,
+    "updatedAt": "2026-04-11T12:14:55.108Z"
+  }
+}
+```
+
+#### 200 OK — icon cleared (`iconAction=delete`)
+
+```json
+{
+  "success": true,
+  "message": "Learning goal icon deleted",
+  "data": {
+    "id": 3,
+    "iconUrl": null,
+    "updatedAt": "2026-04-11T12:15:02.771Z"
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR — missing file part and no delete action
+
+```json
+{
+  "success": false,
+  "message": "icon field is required (multipart/form-data) or iconAction=delete",
+  "code": "VALIDATION_ERROR"
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — conflicting action
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload a new learning goal icon AND iconAction=delete in the same request — pick one.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted
+
+```json
+{
+  "success": false,
+  "message": "Learning goal 3 is soft-deleted; restore it before uploading a icon",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: learning_goal.update", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Learning goal 9999 not found", "code": "NOT_FOUND" }
+```
+
+#### 429 RATE_LIMIT_EXCEEDED
+
+```json
+{
+  "success": false,
+  "message": "Too many requests from this IP, please try again later",
+  "code": "RATE_LIMIT_EXCEEDED"
+}
+```
+
+#### 500 INTERNAL_ERROR
+
+```json
+{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload learning goal icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
+---
+
+## Common errors across all learning goals routes
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
+| 400 | `BAD_REQUEST` | Business-rule violation (e.g., already-deleted row on restore). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
 | 403 | `FORBIDDEN` | Missing the required permission. |
 | 404 | `NOT_FOUND` | No learning goal with that id. |
-| 409 | `DUPLICATE_ENTRY` | A learning goal with the same `name` already exists. |
+| 409 | `DUPLICATE_ENTRY` | Name or code clashes with another non-deleted learning goal. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |
+| 502 | `BUNNY_UPLOAD_FAILED` | Upload routes only — Bunny CDN Storage rejected the PUT. |

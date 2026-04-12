@@ -98,7 +98,31 @@ All phase 2 routes use the same envelope as phase 1 — see [00 — overview §3
 | 404 | `NOT_FOUND` | No row with that id. |
 | 409 | `DUPLICATE_ENTRY` | Unique-constraint clash (e.g. same `iso_code` on a language). |
 
-## 5. Where to look next
+## 6. Active-flag defaults
+
+All phase-2 resources default `isActive` to **`false`** at the API layer on `POST` when the body omits the flag. This is a safety net — no resource is live until explicitly activated by a caller. Pass `isActive: true` explicitly on create if you want the row immediately active.
+
+## 7. Postman environment
+
+Every endpoint in this phase is documented as a Postman request using two **environment variables** — set them once on your Postman environment and every request in the collection will resolve them automatically:
+
+| Variable | Example value | Where it is used |
+|---|---|---|
+| `baseUrl` | `http://localhost:3000` (local) · `https://api.growupmore.com` (prod) | Every request URL is written as `{{baseUrl}}/api/v1/...`. |
+| `accessToken` | a Super Admin JWT, minted once per session via `POST {{baseUrl}}/api/v1/auth/login` | Every request sends `Authorization: Bearer {{accessToken}}`. |
+
+**Minting an access token** — run this request once and copy `data.accessToken` from the response into the `accessToken` environment variable (or wire it up as a Postman "Tests" script that stores `pm.response.json().data.accessToken`):
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/auth/login` |
+| Headers | `Content-Type: application/json` |
+| Body | `{ "email": "superadmin@growupmore.com", "password": "<password>" }` |
+
+A machine-readable Postman v2.1 collection is also available at `api/docs/postman/phase-2.postman_collection.json` — import it and the folder tree will mirror the resources in this phase (states / cities / skills / languages / education-levels / document-types / documents / designations / specializations / learning-goals / social-medias / categories / sub-categories), each request pre-populated with headers, body, and example responses.
+
+## 8. Where to look next
 
 | Topic | File |
 |---|---|
@@ -116,3 +140,4 @@ All phase 2 routes use the same envelope as phase 1 — see [00 — overview §3
 | Social medias (+ icon upload) | [12 social-medias](12%20-%20social-medias.md) |
 | Categories (+ icon + image + translations) | [13 categories](13%20-%20categories.md) |
 | Sub-categories (+ icon + image + translations, category-joined) | [14 sub-categories](14%20-%20sub-categories.md) |
+| Postman collection (v2.1) | `api/docs/postman/phase-2.postman_collection.json` |

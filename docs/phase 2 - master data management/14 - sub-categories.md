@@ -1,329 +1,887 @@
 # Phase 2 — Sub-Categories
 
-Second level of the content taxonomy — each sub-category has a mandatory FK to `categories.id`, a machine `code` that is unique **per category** (not globally), a slug, optional `iconUrl` + `imageUrl`, and a full per-language translation table mirroring the one on categories (name, description, SEO block: meta tags, Open Graph, Twitter Card, JSON-LD, canonical URL, robots directive).
+Child category under a parent category, with per-language translations. Also exposes Bunny-backed icon and image upload routes.
 
-Like categories, sub-categories support a **combined insert** — parent row and first translation in a single atomic `POST`. `categoryId` **can be changed** via `PATCH` — the row gets re-parented and the uniqueness constraint on `(category_id, slug)` is re-checked against the new parent.
+All routes require auth. Permission codes: `sub_category.read`, `sub_category.create`, `sub_category.update`, `sub_category.delete`, `sub_category.restore`.
 
-All routes require auth. Permission codes: `sub_category.read`, `sub_category.create`, `sub_category.update`, `sub_category.delete`, `sub_category.restore`. The icon, image, and translation sub-resource routes are gated by `sub_category.update`.
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
 
-← [13 categories](13%20-%20categories.md) · [06 walkthrough](06%20-%20walkthrough%20and%20index.md)
+← [categories](13%20-%20categories.md) · **Next →** [walkthrough and index](06%20-%20walkthrough%20and%20index.md)
+
+---
+
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§14.1](#141) | `GET` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.read | List sub-categories with filters and sort. |
+| [§14.2](#142) | `GET` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.read | Get a single sub-category by id. |
+| [§14.3](#143) | `POST` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.create | Create a new sub-category. |
+| [§14.4](#144) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.update | Partial update — JSON or multipart with `icon`/`image`. |
+| [§14.5](#145) | `DELETE` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.delete | Soft-delete. |
+| [§14.6](#146) | `POST` | `{{baseUrl}}/api/v1/sub-categories/:id/restore` | sub_category.restore | Undo a soft-delete. |
+| [§14.7](#147) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id/icon` | sub_category.update | Upload / replace / clear icon via `multipart/form-data`. |
+| [§14.9](#149) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id/image` | sub_category.update | Upload / replace / clear image via `multipart/form-data`. |
 
 ---
 
 ## 14.1 `GET /api/v1/sub-categories`
 
-List sub-categories. Backed by `udf_get_sub_categories`.
+List sub-categories.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/sub-categories` |
+| Permission | `sub_category.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Type | Notes |
-|---|---|---|
-| `pageIndex`, `pageSize` | int | Standard pagination. |
-| `searchTerm` | string | `ILIKE` across `code` and `slug`. |
-| `categoryId` | int | Restrict to a single parent category (coerced from the query string — `?categoryId=7` works). |
-| `isActive`, `isDeleted`, `isNew` | bool | |
-| `sortColumn` | enum | `id`, `code`, `slug`, `display_order`, `is_active`, `is_deleted`, `created_at`, `updated_at`. Default `display_order`. |
-| `sortDirection` | enum | `ASC` / `DESC`. Default `ASC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `100`. |
+| `searchTerm` | string | — | `ILIKE` across primary text columns. |
+| `isActive` | bool | — | Filter by active status. |
+| `isDeleted` | bool | — | Filter by soft-delete status. |
+| `sortColumn` | enum | `id` | Whitelisted: `id`, `name`, `is_active`, `is_deleted`, `created_at`, `updated_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
-  "id": 21,
-  "categoryId": 7,
-  "code": "PY",
-  "slug": "python",
-  "displayOrder": 10,
-  "iconUrl": "https://cdn.growupmore.com/sub-categories/icons/21.webp",
-  "imageUrl": "https://cdn.growupmore.com/sub-categories/images/21.webp",
-  "isNew": true,
-  "newUntil": "2026-12-31",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-10T00:00:00.000Z",
-  "updatedAt": "2026-01-10T00:00:00.000Z",
-  "deletedAt": null
+  "success": true,
+  "message": "OK",
+  "data": [
+    {
+      "id": 1,
+      "name": "Example",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-04-11T00:00:00.000Z",
+      "updatedAt": "2026-04-11T00:00:00.000Z",
+      "deletedAt": null
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 1,
+    "totalPages": 1
+  }
 }
 ```
 
-### Defaults
+#### 400 VALIDATION_ERROR
 
-```
-pageIndex=1  pageSize=20  sortColumn=display_order  sortDirection=ASC
-```
-
-### Sample queries
-
-**1. Every sub-category under the Programming category**
-
-```bash
-curl "http://localhost:3000/api/v1/sub-categories?categoryId=7&pageSize=50" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"code": "invalid_enum_value", "path": ["sortColumn"], "message": "Invalid enum value"}]
+}
 ```
 
-**2. Search**
+#### 401 UNAUTHORIZED
 
-```bash
-curl "http://localhost:3000/api/v1/sub-categories?searchTerm=python" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Missing or invalid access token",
+  "code": "UNAUTHORIZED"
+}
 ```
+
+#### 403 FORBIDDEN
+
+```json
+{
+  "success": false,
+  "message": "Permission denied: sub_category.read",
+  "code": "FORBIDDEN"
+}
+```
+
+
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name — `frontend` | `?searchTerm=frontend` |
+| Search + pagination | `?pageIndex=1&pageSize=50&searchTerm=frontend` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Deleted only | `?isDeleted=true` |
+| Non-deleted only | `?isDeleted=false` |
+| Sort by `id` ASC | `?sortColumn=id&sortDirection=ASC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `is_active` DESC | `?sortColumn=is_active&sortDirection=DESC` |
+| Sort by `is_deleted` DESC | `?sortColumn=is_deleted&sortDirection=DESC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Sort by `updated_at` DESC | `?sortColumn=updated_at&sortDirection=DESC` |
+| Combo — active sub-categories, sort by name | `?pageIndex=1&pageSize=50&isActive=true&sortColumn=name&sortDirection=ASC` |
 
 ---
 
 ## 14.2 `GET /api/v1/sub-categories/:id`
 
-Read a single sub-category by id. **404** if unknown.
+Read a single sub-category by id.
 
-```bash
-curl "http://localhost:3000/api/v1/sub-categories/21" -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id` |
+| Permission | `sub_category.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric sub-category id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "id", "message": "Expected number, received nan", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 14.1.
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: sub_category.read", "code": "FORBIDDEN"}
+```
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Sub-Category 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
 ## 14.3 `POST /api/v1/sub-categories`
 
-Create a sub-category. Permission: `sub_category.create`. Like categories, you may include an optional `translation` block — `udf_sub_categories_insert` commits parent + first translation atomically.
+Create a sub-category. Permission: `sub_category.create`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "categoryId": 7,
-    "code": "PY",
-    "slug": "python",
-    "displayOrder": 10,
-    "isNew": true,
-    "newUntil": "2026-12-31",
-    "isActive": true,
-    "translation": {
-      "languageId": 1,
-      "name": "Python",
-      "description": "General-purpose programming language popular for data, scripting, and backend.",
-      "metaTitle": "Python courses",
-      "metaDescription": "Learn Python from beginner basics through production-grade systems.",
-      "ogType": "website",
-      "twitterCard": "summary_large_image",
-      "robotsDirective": "index,follow"
-    }
-  }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/sub-categories` |
+| Permission | `sub_category.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Example",
+  "isActive": true
+}
 ```
 
-`categoryId` and `code` are required. `code` must be unique per-parent (`uq_sub_categories_category_code`). `slug` is optional (auto-derived) but similarly scoped by parent (`uq_sub_categories_category_slug`). Translation block rules are identical to categories — `languageId` + `name` are required, everything else optional.
+**Required fields**: `name`.
 
-**`iconUrl` and `imageUrl` are deliberately not accepted here** — use [§14.7](#147-post-apiv1sub-categoriesidicon) / [§14.9](#149-post-apiv1sub-categoriesidimage) after the row exists.
+**Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
-**Possible errors**
+### Responses
 
-- **400 VALIDATION_ERROR** — missing `categoryId` or `code`, translation missing `languageId`/`name`, string over cap.
-- **403** — caller lacks `sub_category.create`.
-- **404** — the referenced `categoryId` does not exist (or is soft-deleted).
-- **409** — duplicate `(category_id, code)` or `(category_id, slug)`.
+#### 201 CREATED
+
+```json
+{
+  "success": true,
+  "message": "Sub-Category created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "name", "message": "Required", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{"success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED"}
+```
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: sub_category.create", "code": "FORBIDDEN"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{
+  "success": false,
+  "message": "Sub-Category with that name already exists",
+  "code": "DUPLICATE_ENTRY"
+}
+```
 
 ---
 
 ## 14.4 `PATCH /api/v1/sub-categories/:id`
 
-Partial update. Any subset of `categoryId`, `code`, `slug`, `displayOrder`, `isNew`, `newUntil`, `isActive`. **400** on empty body.
+Partial update.
 
-Passing a new `categoryId` **re-parents** the row; the unique constraint on `(category_id, code)` / `(category_id, slug)` is re-checked against the new parent, so a `409` can surface at update time even though the original row was fine. `iconUrl` / `imageUrl` are excluded here.
+**Postman request**
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/sub-categories/21" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "categoryId": 9, "displayOrder": 5 }'
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id` |
+| Permission | `sub_category.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric sub-category id. |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Updated Name",
+  "isActive": true
+}
+```
+
+### Responses
+
+#### 200 OK
+
+Same row shape as 14.2, wrapped in success envelope.
+
+#### 400 VALIDATION_ERROR — empty body
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 14.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Sub-Category 9999 not found", "code": "NOT_FOUND"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{"success": false, "message": "Sub-Category with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
 ---
 
 ## 14.5 `DELETE /api/v1/sub-categories/:id`
 
-Soft delete. Permission: `sub_category.delete`. Translations are not cascaded — they remain in place and come back when the parent is restored.
+Soft delete. Permission: `sub_category.delete`.
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/sub-categories/21" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id` |
+| Permission | `sub_category.delete` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric sub-category id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Sub-Category deleted",
+  "data": {"id": 1, "deleted": true}
+}
+```
+
+#### 400 BAD_REQUEST — already deleted
+
+```json
+{
+  "success": false,
+  "message": "Sub-Category with ID 1 does not exist or is already deleted.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 14.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Sub-Category 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
 ## 14.6 `POST /api/v1/sub-categories/:id/restore`
 
-Reverse a soft delete. Permission: `sub_category.restore`. **400 BAD_REQUEST** if the row isn't deleted.
+Reverse a soft delete. Permission: `sub_category.restore`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories/21/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+**Postman request**
 
----
-
-## 14.7 `POST /api/v1/sub-categories/:id/icon`
-
-Upload (or replace) the sub-category icon. Permission: `sub_category.update`. Body is `multipart/form-data` with a single `file` field.
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories/21/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./python.png"
-```
-
-### Icon contract
-
-| Step | Enforcement |
+| Field | Value |
 |---|---|
-| Accepted MIME types | `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml` |
-| Raw upload cap | **100 KB** (multer) |
-| Output format | **Always WebP** |
-| Resize | Fits inside a **256 × 256** box |
-| Final byte cap | **≤ 100 KB** (sharp quality loop 80 → 40 step 10) |
-| Storage key | `sub-categories/icons/<id>.webp` — deterministic, CDN URLs stay stable |
-| On replace | Previous Bunny object deleted **before** new PUT. Delete failures logged at WARN, do not block the new upload. |
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id/restore` |
+| Permission | `sub_category.restore` |
 
-**Response 200** — the refreshed sub-category row with `iconUrl` populated.
+**Headers**
 
----
-
-## 14.8 `DELETE /api/v1/sub-categories/:id/icon`
-
-Clear the icon. Permission: `sub_category.update`.
-
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/sub-categories/21/icon" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
----
-
-## 14.9 `POST /api/v1/sub-categories/:id/image`
-
-Upload (or replace) the larger hero image. Permission: `sub_category.update`. Separate column, separate storage key.
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories/21/image" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -F "file=@./python-hero.jpg"
-```
-
-### Image contract
-
-| Step | Enforcement |
+| Key | Value |
 |---|---|
-| Accepted MIME types | `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml` |
-| Raw upload cap | **100 KB** (multer) |
-| Output format | **Always WebP** |
-| Resize | Fits inside a **1024 × 1024** box |
-| Final byte cap | **≤ 100 KB** (sharp quality loop 80 → 40 step 10) |
-| Storage key | `sub-categories/images/<id>.webp` — deterministic |
-| On replace | Previous Bunny image object deleted **before** new PUT. Delete failures logged at WARN, do not block the new upload. The icon is untouched. |
+| `Authorization` | `Bearer {{accessToken}}` |
 
-**Response 200** — the refreshed sub-category row with `imageUrl` populated.
+**Path params**
 
----
-
-## 14.10 `DELETE /api/v1/sub-categories/:id/image`
-
-Clear the image. Permission: `sub_category.update`.
-
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/sub-categories/21/image" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
----
-
-## 14.11 `GET /api/v1/sub-categories/:id/translations`
-
-List all translation rows for a single sub-category. Permission: `sub_category.read`.
-
-**Query params**
-
-| Param | Type | Notes |
+| Name | Type | Notes |
 |---|---|---|
-| `pageIndex`, `pageSize` | int | Standard pagination. |
-| `searchTerm` | string | `ILIKE` across `name`, `description`, `meta_title`. |
-| `isActive`, `isDeleted` | bool | |
-| `languageId` | int | Filter to a single language (coerced from the query string). |
-| `sortColumn` | enum | `id`, `name`, `language_id`, `sub_category_id`, `created_at`. Default `created_at`. |
-| `sortDirection` | enum | `ASC` / `DESC`. Default `DESC`. |
+| `id` | int | Numeric sub-category id. |
 
-```bash
-curl "http://localhost:3000/api/v1/sub-categories/21/translations?languageId=1" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Sub-Category restored",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 BAD_REQUEST — not deleted
+
+```json
+{
+  "success": false,
+  "message": "Sub-Category with ID 1 is not deleted or does not exist.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 14.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Sub-Category 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
-## 14.12 `GET /api/v1/sub-categories/:id/translations/:tid`
+## 14.7 `PATCH /api/v1/sub-categories/:id/icon`
 
-Read a single translation row by id. **404** if unknown.
+Dedicated file-upload sibling of the JSON `PATCH /api/v1/sub-categories/:id`. Where that route takes a `application/json` body of text fields, **this route takes a `multipart/form-data` body with a binary `icon` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the icon box (≤ 256 × 256), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `sub-categories/icons/<id>.webp`, and return the refreshed row with the new `iconUrl` in the same response. Permission: `sub_category.update`.
 
-```bash
-curl "http://localhost:3000/api/v1/sub-categories/21/translations/48" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+> **Backend status.** The sub-categories router already unifies icon uploads into `PATCH /api/v1/sub-categories/:id` — the single handler accepts both JSON text-field bodies (§14.4) and `multipart/form-data` bodies with `icon` / `image` file parts or `iconAction=delete` / `imageAction=delete` fields. This section documents the dedicated `/icon` sub-route that is mirrored on the same handler for client convenience.
 
----
+**Postman request**
 
-## 14.13 `POST /api/v1/sub-categories/:id/translations`
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id/icon` |
+| Permission | `sub_category.update` |
 
-Add a new translation row. Permission: `sub_category.update`. **409** if a translation for the same `(sub_category_id, language_id)` already exists.
+**Headers**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories/21/translations" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "languageId": 2,
-    "name": "Python",
-    "description": "Lenguaje de programación de propósito general.",
-    "metaTitle": "Cursos de Python"
-  }'
-```
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
 
----
+**Path params**
 
-## 14.14 `PATCH /api/v1/sub-categories/:id/translations/:tid`
-
-Partial update of a translation row. Permission: `sub_category.update`. Same field set as [§13.14](13%20-%20categories.md#1314-patch-apiv1categoriesidtranslationstid). **400** on empty body.
-
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/sub-categories/21/translations/48" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "metaDescription": "Updated SEO description." }'
-```
-
----
-
-## 14.15 `DELETE /api/v1/sub-categories/:id/translations/:tid`
-
-Soft delete a translation row. Permission: `sub_category.update`. The parent sub-category stays active.
-
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/sub-categories/21/translations/48" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
----
-
-## 14.16 `POST /api/v1/sub-categories/:id/translations/:tid/restore`
-
-Restore a soft-deleted translation row. Permission: `sub_category.update`.
-
-```bash
-curl -X POST "http://localhost:3000/api/v1/sub-categories/21/translations/48/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
----
-
-**Common errors across all sub-category routes**
-
-| HTTP | code | Cause |
+| Name | Type | Notes |
 |---|---|---|
-| 401 | `UNAUTHORIZED` | Missing / expired bearer token. |
+| `id` | int | Numeric sub-categorie id. Must exist and not be soft-deleted. |
+
+**Body** — `multipart/form-data`:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `icon` | file | yes* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP ≤ 100 KB. |
+| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
+
+\* Either the file part **or** `iconAction=delete` must be present — sending neither is a `400 VALIDATION_ERROR`.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Upload new icon | `icon` = `frontend-256.png` |
+| Replace existing icon | `icon` = new file binary |
+| Clear icon | `iconAction` = `delete` |
+
+### Responses
+
+#### 200 OK — icon uploaded
+
+```json
+{
+  "success": true,
+  "message": "Sub-category icon uploaded",
+  "data": {
+    "id": 12,
+    "name": "Frontend",
+    "iconUrl": "https://cdn.growupmore.com/sub-categories/icons/12.webp",
+    "isActive": true,
+    "isDeleted": false,
+    "updatedAt": "2026-04-11T12:14:55.108Z"
+  }
+}
+```
+
+#### 200 OK — icon cleared (`iconAction=delete`)
+
+```json
+{
+  "success": true,
+  "message": "Sub-category icon deleted",
+  "data": {
+    "id": 12,
+    "iconUrl": null,
+    "updatedAt": "2026-04-11T12:15:02.771Z"
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR — missing file part and no delete action
+
+```json
+{
+  "success": false,
+  "message": "icon field is required (multipart/form-data) or iconAction=delete",
+  "code": "VALIDATION_ERROR"
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — conflicting action
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload a new sub-categorie icon AND iconAction=delete in the same request — pick one.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted
+
+```json
+{
+  "success": false,
+  "message": "Sub-category 12 is soft-deleted; restore it before uploading a icon",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: sub_category.update", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Sub-category 9999 not found", "code": "NOT_FOUND" }
+```
+
+#### 429 RATE_LIMIT_EXCEEDED
+
+```json
+{
+  "success": false,
+  "message": "Too many requests from this IP, please try again later",
+  "code": "RATE_LIMIT_EXCEEDED"
+}
+```
+
+#### 500 INTERNAL_ERROR
+
+```json
+{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload sub-categorie icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
+---
+
+## 14.9 `PATCH /api/v1/sub-categories/:id/image`
+
+Dedicated file-upload sibling of the JSON `PATCH /api/v1/sub-categories/:id`. Where that route takes a `application/json` body of text fields, **this route takes a `multipart/form-data` body with a binary `image` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the image box (≤ 1024 × 1024), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `sub-categories/images/<id>.webp`, and return the refreshed row with the new `imageUrl` in the same response. Permission: `sub_category.update`.
+
+> **Backend status.** Same unified handler as §14.7 — `PATCH /api/v1/sub-categories/:id` also accepts the `image` multipart field and the `imageAction=delete` clearer. This dedicated `/image` sub-route is a client convenience that hits the same backing code.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/sub-categories/:id/image` |
+| Permission | `sub_category.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric sub-categorie id. Must exist and not be soft-deleted. |
+
+**Body** — `multipart/form-data`:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `image` | file | yes* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 1024 × 1024 box. Re-encoded server-side to WebP ≤ 100 KB. |
+| `imageAction` | text | no | Send `delete` (with no file part) to clear the existing image. Mutually exclusive with a file upload. |
+
+\* Either the file part **or** `imageAction=delete` must be present — sending neither is a `400 VALIDATION_ERROR`.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Upload new image | `image` = `frontend-hero-1024.webp` |
+| Replace existing image | `image` = new file binary |
+| Clear image | `imageAction` = `delete` |
+
+### Responses
+
+#### 200 OK — image uploaded
+
+```json
+{
+  "success": true,
+  "message": "Sub-category image uploaded",
+  "data": {
+    "id": 12,
+    "name": "Frontend",
+    "imageUrl": "https://cdn.growupmore.com/sub-categories/images/12.webp",
+    "isActive": true,
+    "isDeleted": false,
+    "updatedAt": "2026-04-11T12:14:55.108Z"
+  }
+}
+```
+
+#### 200 OK — image cleared (`imageAction=delete`)
+
+```json
+{
+  "success": true,
+  "message": "Sub-category image deleted",
+  "data": {
+    "id": 12,
+    "imageUrl": null,
+    "updatedAt": "2026-04-11T12:15:02.771Z"
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR — missing file part and no delete action
+
+```json
+{
+  "success": false,
+  "message": "image field is required (multipart/form-data) or imageAction=delete",
+  "code": "VALIDATION_ERROR"
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: image must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — conflicting action
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload a new sub-categorie image AND imageAction=delete in the same request — pick one.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted
+
+```json
+{
+  "success": false,
+  "message": "Sub-category 12 is soft-deleted; restore it before uploading a image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: sub_category.update", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Sub-category 9999 not found", "code": "NOT_FOUND" }
+```
+
+#### 429 RATE_LIMIT_EXCEEDED
+
+```json
+{
+  "success": false,
+  "message": "Too many requests from this IP, please try again later",
+  "code": "RATE_LIMIT_EXCEEDED"
+}
+```
+
+#### 500 INTERNAL_ERROR
+
+```json
+{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload sub-categorie image to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
+---
+
+## Common errors across all sub-categories routes
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
+| 400 | `BAD_REQUEST` | Business-rule violation (e.g., already-deleted row on restore). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
 | 403 | `FORBIDDEN` | Missing the required permission. |
-| 404 | `NOT_FOUND` | No sub-category (or translation, or parent category) with that id. |
-| 409 | `DUPLICATE_ENTRY` | Duplicate `(category_id, code)`, `(category_id, slug)`, or `(sub_category_id, language_id)`. |
+| 404 | `NOT_FOUND` | No sub-category with that id. |
+| 409 | `DUPLICATE_ENTRY` | Name or code clashes with another non-deleted sub-category. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |
+| 502 | `BUNNY_UPLOAD_FAILED` | Upload routes only — Bunny CDN Storage rejected the PUT. |

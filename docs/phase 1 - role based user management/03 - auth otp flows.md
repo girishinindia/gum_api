@@ -31,6 +31,29 @@ Failures from the gateway are logged at `warn`/`error` but never surfaced to the
 
 ---
 
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§3.1a](#31a) | `POST` | `{{baseUrl}}/api/v1/auth/forgot-password` | public | Start forgot-password flow — sends OTP to email/mobile. |
+| [§3.1b](#31b) | `POST` | `{{baseUrl}}/api/v1/auth/forgot-password/verify` | public | Verify forgot-password OTP → returns reset `requestId`. |
+| [§3.2a](#32a) | `POST` | `{{baseUrl}}/api/v1/auth/reset-password` | public | Submit new password using reset `requestId`. |
+| [§3.2b](#32b) | `POST` | `{{baseUrl}}/api/v1/auth/reset-password/verify` | public | Validate reset requestId + OTP prior to final reset. |
+| [§3.3a](#33a) | `POST` | `{{baseUrl}}/api/v1/auth/verify-email` | Bearer | Initiate email verification — sends OTP to primary email. |
+| [§3.3b](#33b) | `POST` | `{{baseUrl}}/api/v1/auth/verify-email/confirm` | Bearer | Confirm email verification with `{otpId, otpCode}`. |
+| [§3.3c](#33c) | `POST` | `{{baseUrl}}/api/v1/auth/verify-email/resend` | Bearer | Regenerate a fresh email verification OTP. |
+| [§3.4a](#34a) | `POST` | `{{baseUrl}}/api/v1/auth/verify-mobile` | Bearer | Initiate mobile verification — sends OTP via SMS. |
+| [§3.4b](#34b) | `POST` | `{{baseUrl}}/api/v1/auth/verify-mobile/confirm` | Bearer | Confirm mobile verification with `{otpId, otpCode}`. |
+| [§3.4c](#34c) | `POST` | `{{baseUrl}}/api/v1/auth/verify-mobile/resend` | Bearer | Regenerate a fresh mobile verification OTP. |
+| [§3.5a](#35a) | `POST` | `{{baseUrl}}/api/v1/auth/change-email` | Bearer | Request change of primary email — sends OTP to new address. |
+| [§3.5b](#35b) | `POST` | `{{baseUrl}}/api/v1/auth/change-email/confirm` | Bearer | Confirm change-email with `{requestId, otpId, otpCode}`. |
+| [§3.6a](#36a) | `POST` | `{{baseUrl}}/api/v1/auth/change-mobile` | Bearer | Request change of primary mobile — sends OTP to new number. |
+| [§3.6b](#36b) | `POST` | `{{baseUrl}}/api/v1/auth/change-mobile/confirm` | Bearer | Confirm change-mobile with `{requestId, otpId, otpCode}`. |
+
+---
+
 ## 3.1 Forgot password — public, dual-channel
 
 ### `POST /api/v1/auth/forgot-password`

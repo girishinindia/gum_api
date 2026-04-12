@@ -6,13 +6,18 @@
 //     GET    /              category.read
 //     GET    /:id           category.read
 //     POST   /              category.create
-//     PATCH  /:id           category.update
+//     PATCH  /:id           category.update   (JSON or multipart/form-data)
 //     DELETE /:id           category.delete
 //     POST   /:id/restore   category.restore
-//     POST   /:id/icon      category.update   (multipart, field `file`)
-//     DELETE /:id/icon      category.update
-//     POST   /:id/image     category.update   (multipart, field `file`)
-//     DELETE /:id/image     category.update
+//
+//   Unified PATCH accepts BOTH text field updates and optional icon/
+//   image uploads in a single request:
+//     • JSON body: plain text-field patch as before
+//     • multipart/form-data: text fields + optional file slots
+//         `icon`  (alias: `iconImage`)   — 100 KB WebP pipeline
+//         `image` (alias: `categoryImage`) — 100 KB WebP pipeline
+//     • To clear an image, set `iconAction=delete` / `imageAction=delete`
+//       in the same body. Upload + delete for the SAME slot is rejected.
 //
 //   Translation sub-resource (nested under /:id/translations):
 //     GET    /:id/translations              category.read
@@ -31,9 +36,10 @@ import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import {
-  uploadCategoryIcon,
-  uploadCategoryImage
+  patchCategoryFiles,
+  getSlotFile
 } from '../../../core/middlewares/upload';
+import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-coerce';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -95,14 +101,88 @@ router.post(
   })
 );
 
+// PATCH /:id — unified text + icon + image update.
+//
+// Middleware order is load-bearing:
+//   1. patchCategoryFiles    parses multipart files into req.slotFiles
+//                            (no-op on application/json).
+//   2. coerceMultipartBody   converts stringy multipart values ("true",
+//                            "5") into real bool/int so zod's schema
+//                            still matches (no-op on application/json).
+//   3. validate({params,body}) runs the zod schema with the coerced body.
+//   4. asyncHandler           does the work.
 router.patch(
   '/:id',
   authorize('category.update'),
+  patchCategoryFiles,
+  coerceMultipartBody,
   validate({ params: idParamSchema, body: updateCategoryBodySchema }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const body = req.body as UpdateCategoryBody;
-    await categoriesService.updateCategory(id, body, req.user?.id ?? null);
+
+    // Split body into text-field patch vs image-action flags.
+    const { iconAction, imageAction, ...textFields } = body;
+    const iconFile = getSlotFile(req, 'icon');
+    const imageFile = getSlotFile(req, 'image');
+
+    // Mutual-exclusion: uploading + 'delete' for the same slot is a
+    // contradiction — bail out before touching Bunny or the DB.
+    if (iconFile && iconAction === 'delete') {
+      throw AppError.badRequest(
+        "Cannot upload a new category icon AND iconAction=delete in the same request — pick one."
+      );
+    }
+    if (imageFile && imageAction === 'delete') {
+      throw AppError.badRequest(
+        "Cannot upload a new category image AND imageAction=delete in the same request — pick one."
+      );
+    }
+
+    // At-least-one-change check (moved out of zod so multipart-only
+    // icon/image uploads still pass). We consider the request "empty"
+    // only if it has no text fields, no file uploads and no delete
+    // actions.
+    const hasTextChange = Object.keys(textFields).length > 0;
+    const hasFileChange = Boolean(iconFile) || Boolean(imageFile);
+    const hasDelete = iconAction === 'delete' || imageAction === 'delete';
+    if (!hasTextChange && !hasFileChange && !hasDelete) {
+      throw AppError.badRequest('Provide at least one field to update');
+    }
+
+    // 1. text-field patch first — fails loudly if the row is
+    //    soft-deleted, which also stops the image pipeline below.
+    if (hasTextChange) {
+      await categoriesService.updateCategory(
+        id,
+        textFields as UpdateCategoryBody,
+        req.user?.id ?? null
+      );
+    }
+
+    // 2. icon slot — upload takes precedence over delete (already
+    //    guarded above as mutually exclusive).
+    if (iconFile) {
+      await categoriesService.processCategoryIconUpload(
+        id,
+        iconFile,
+        req.user?.id ?? null
+      );
+    } else if (iconAction === 'delete') {
+      await categoriesService.deleteCategoryIcon(id, req.user?.id ?? null);
+    }
+
+    // 3. image slot.
+    if (imageFile) {
+      await categoriesService.processCategoryImageUpload(
+        id,
+        imageFile,
+        req.user?.id ?? null
+      );
+    } else if (imageAction === 'delete') {
+      await categoriesService.deleteCategoryImage(id, req.user?.id ?? null);
+    }
+
     const c = await categoriesService.getCategoryById(id);
     return ok(res, c, 'Category updated');
   })
@@ -131,69 +211,11 @@ router.post(
   })
 );
 
-// ─── Icon upload ────────────────────────────────────────────────
-
-router.post(
-  '/:id/icon',
-  authorize('category.update'),
-  validate({ params: idParamSchema }),
-  uploadCategoryIcon,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const c = await categoriesService.processCategoryIconUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, c, 'Category icon uploaded');
-  })
-);
-
-router.delete(
-  '/:id/icon',
-  authorize('category.update'),
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    const c = await categoriesService.deleteCategoryIcon(id, req.user?.id ?? null);
-    return ok(res, c, 'Category icon deleted');
-  })
-);
-
-// ─── Image upload ───────────────────────────────────────────────
-
-router.post(
-  '/:id/image',
-  authorize('category.update'),
-  validate({ params: idParamSchema }),
-  uploadCategoryImage,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const c = await categoriesService.processCategoryImageUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, c, 'Category image uploaded');
-  })
-);
-
-router.delete(
-  '/:id/image',
-  authorize('category.update'),
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    const c = await categoriesService.deleteCategoryImage(id, req.user?.id ?? null);
-    return ok(res, c, 'Category image deleted');
-  })
-);
+// Icon / image routes used to live here as POST+DELETE /:id/icon and
+// POST+DELETE /:id/image. As of phase-02 Stage 4 they were unified
+// into the PATCH /:id handler above — there is now exactly ONE
+// endpoint for mutating a category. Clients that still call the old
+// URLs will get 404 (and the response will let them discover PATCH).
 
 // ─── Translation sub-resource ───────────────────────────────────
 

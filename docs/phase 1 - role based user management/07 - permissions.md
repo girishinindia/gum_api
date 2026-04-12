@@ -2,193 +2,115 @@
 
 RBAC permission catalog. All routes require auth. Permission codes: `permission.read`, `permission.create`, `permission.update`, `permission.delete`, `permission.restore`.
 
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
+
 ← [06 roles](06%20-%20roles.md) · **Next →** [08 role-permissions](08%20-%20role-permissions.md)
+
+---
+
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§7.1](#71) | `GET` | `{{baseUrl}}/api/v1/permissions` | permission.read | List permissions with filters and sort. |
+| [§7.2](#72) | `GET` | `{{baseUrl}}/api/v1/permissions/:id` | permission.read | Get a single permission by id. |
+| [§7.3](#73) | `POST` | `{{baseUrl}}/api/v1/permissions` | permission.create | Create a new permission. |
+| [§7.4](#74) | `PATCH` | `{{baseUrl}}/api/v1/permissions/:id` | permission.update | Partial update of a permission. |
+| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/permissions/:id` | permission.delete | Soft-delete a permission. |
+| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/permissions/:id/restore` | permission.restore | Undo a soft-delete. |
 
 ---
 
 ## 7.1 `GET /api/v1/permissions`
 
-List permissions.
+List permissions. Backed by `udf_get_permissions`, which exposes filters and sort keys across the permission catalog.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/permissions` |
+| Permission | `permission.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Notes |
-|---|---|
-| `pageIndex`, `pageSize`, `searchTerm` | Standard. |
-| `isActive`, `isDeleted` | bool. |
-| `resource` | Lowercase identifier (e.g. `course`). |
-| `action` | Lowercase identifier (e.g. `read`, `create`, `update`, `delete`). |
-| `scope` | Lowercase identifier (e.g. `global`, `own`). |
-| `code` | Slug-style code. |
-| `sortColumn` | `id`, `display_order` (default), `name`, `code`, `resource`, `action`, `scope`, `is_active`, `created_at`, `updated_at`. |
-| `sortDirection` | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `200`. |
+| `searchTerm` | string | — | `ILIKE` across name, code, and description. |
+| `isActive` | bool | — | Filter by active status. |
+| `isDeleted` | bool | — | Filter by deleted status. |
+| `resource` | string | — | Lowercase identifier (e.g. `course`). |
+| `action` | string | — | Lowercase identifier (e.g. `read`, `create`). |
+| `scope` | string | — | Lowercase identifier (e.g. `global`, `own`). |
+| `code` | string | — | Exact code match (slug-style). |
+| `sortColumn` | enum | `display_order` | One of `id`, `display_order`, `name`, `code`, `resource`, `action`, `scope`, `is_active`, `created_at`, `updated_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
 
-```json
-{
-  "id": 17,
-  "name": "Read courses",
-  "code": "course.read",
-  "resource": "course",
-  "action": "read",
-  "scope": "global",
-  "description": "View any course in the catalog",
-  "displayOrder": 10,
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-01T00:00:00.000Z"
-}
-```
+### Responses
 
-### Defaults — what you get if you omit everything
-
-`GET /api/v1/permissions` with no query string is interpreted as:
-
-```
-pageIndex=1  pageSize=20  sortColumn=display_order  sortDirection=ASC
-isActive=∅   isDeleted=∅   resource=∅   action=∅   scope=∅   code=∅
-```
-
-The default `display_order` sort matches the order admins curated for the permission picker UI.
-
-### Sample queries & responses
-
-All examples assume `http://localhost:3000` and an `Authorization: Bearer $ACCESS_TOKEN` header (omitted for brevity).
-
-**1. Pagination — page 1, 5 rows**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?pageIndex=1&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+#### 200 OK — happy path
 
 ```json
 {
   "success": true,
   "message": "OK",
   "data": [
-    { "id": 1, "name": "Read users",       "code": "user.read",        "resource": "user",        "action": "read",   "scope": "global", "...": "..." },
-    { "id": 2, "name": "Create users",     "code": "user.create",      "resource": "user",        "action": "create", "scope": "global", "...": "..." },
-    { "id": 3, "name": "Update users",     "code": "user.update",      "resource": "user",        "action": "update", "scope": "global", "...": "..." },
-    { "id": 4, "name": "Delete users",     "code": "user.delete",      "resource": "user",        "action": "delete", "scope": "global", "...": "..." },
-    { "id": 5, "name": "Read countries",   "code": "country.read",     "resource": "country",     "action": "read",   "scope": "global", "...": "..." }
+    {
+      "id": 1,
+      "name": "Read users",
+      "code": "user.read",
+      "resource": "user",
+      "action": "read",
+      "scope": "global",
+      "description": "View any user in the system",
+      "displayOrder": 10,
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deletedAt": null
+    },
+    {
+      "id": 17,
+      "name": "Read courses",
+      "code": "course.read",
+      "resource": "course",
+      "action": "read",
+      "scope": "global",
+      "description": "View any course in the catalog",
+      "displayOrder": 100,
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deletedAt": null
+    }
   ],
-  "meta": { "page": 1, "limit": 5, "totalCount": 42, "totalPages": 9 }
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 42,
+    "totalPages": 3
+  }
 }
 ```
 
-**2. Pagination — page 2, 5 rows**
+#### 400 VALIDATION_ERROR — invalid query param
 
-```bash
-curl "http://localhost:3000/api/v1/permissions?pageIndex=2&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`meta.page` becomes `2` and you get rows 6–10. The shape is identical.
-
-**3. Filter — status flags**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?isActive=true"  -H "Authorization: Bearer $ACCESS_TOKEN"
-curl "http://localhost:3000/api/v1/permissions?isDeleted=true" -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Boolean params accept `true|false|1|0|yes|no`. `isDeleted=true` is the only way to surface soft-deleted rows.
-
-**4. Filter — by `resource`**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?resource=course" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`resource` is a lowercase identifier (matched against the lowercased column server-side). Returns every permission whose subject is `course`.
-
-**5. Filter — by `action`**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?action=read" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Common values: `read`, `create`, `update`, `delete`, `restore`, `assign`, `publish`. Anything that satisfies the lowercase-identifier regex is accepted.
-
-**6. Filter — by `scope`**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?scope=global" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Common values: `global`, `own`. The default scope on create is `global`.
-
-**7. Filter — by exact `code`**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?code=course.read" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Equality match against the slug-style code. (Not a search — use `searchTerm` for partial matches.)
-
-**8. Free-text search**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?searchTerm=course" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`searchTerm` runs an `ILIKE` against `name`, `code`, and `description` inside `udf_get_permissions`. Matches `course.read`, `course.create`, and `Publish courses`.
-
-**9. Sorting — by `code` ascending**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?sortColumn=code&sortDirection=ASC" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`sortColumn` is whitelisted (see the table above). `sortColumn=foo` returns `400 VALIDATION_ERROR`.
-
-**10. Combined filters — every active `course.*` permission in scope `global`, sorted by display order**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?isActive=true&resource=course&scope=global&sortColumn=display_order&sortDirection=ASC&pageSize=20" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-All filters compose with `AND`.
-
-**11. Empty result**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 1, "limit": 20, "totalCount": 0, "totalPages": 0 }
-}
-```
-
-**12. Page out of range**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 999, "limit": 20, "totalCount": 42, "totalPages": 3 }
-}
-```
-
-### Possible error responses
-
-**400 — invalid `resource` (uppercase rejected)**
-
-```bash
-curl "http://localhost:3000/api/v1/permissions?resource=COURSE" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+Triggered by invalid `resource` (uppercase rejected), unknown `sortColumn`, `pageSize` > 200, or any query coercion failure.
 
 ```json
 {
@@ -201,36 +123,83 @@ curl "http://localhost:3000/api/v1/permissions?resource=COURSE" \
 }
 ```
 
-The same envelope shape (with a different `path` / `message`) is returned for any other bad input — `pageSize=500`, `code=Has Spaces`, `isActive=maybe`, an unknown `sortColumn`, etc. The full set of rules lives in `listPermissionsQuerySchema` (`api/src/modules/resources/permissions.schemas.ts`).
-
-**401 — missing or expired bearer token**
+#### 401 UNAUTHORIZED
 
 ```json
-{ "success": false, "message": "Missing access token", "code": "UNAUTHORIZED" }
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
 ```
 
-**403 — caller is authenticated but lacks `permission.read`**
+#### 403 FORBIDDEN
 
 ```json
-{ "success": false, "message": "Permission denied", "code": "FORBIDDEN" }
+{ "success": false, "message": "Permission denied: permission.read", "code": "FORBIDDEN" }
 ```
 
-**500** — see the global catalog in [00 — overview](00%20-%20overview.md#3-error-catalog).
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name / code / description | `?searchTerm=create` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Deleted only | `?isDeleted=true` |
+| Non-deleted only | `?isDeleted=false` |
+| Filter by resource | `?resource=course` |
+| Filter by action | `?action=read` |
+| Filter by scope (`global`/`own`) | `?scope=global` |
+| Filter by code (exact, slug-style) | `?code=course.read` |
+| Sort by `id` DESC | `?sortColumn=id&sortDirection=DESC` |
+| Sort by `display_order` ASC | `?sortColumn=display_order&sortDirection=ASC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `code` ASC | `?sortColumn=code&sortDirection=ASC` |
+| Sort by `resource` ASC | `?sortColumn=resource&sortDirection=ASC` |
+| Sort by `action` ASC | `?sortColumn=action&sortDirection=ASC` |
+| Sort by `scope` ASC | `?sortColumn=scope&sortDirection=ASC` |
+| Sort by `is_active` DESC | `?sortColumn=is_active&sortDirection=DESC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Sort by `updated_at` DESC | `?sortColumn=updated_at&sortDirection=DESC` |
+| Combo — all global course permissions, by action | `?pageIndex=1&pageSize=50&resource=course&scope=global&sortColumn=action&sortDirection=ASC` |
+| Combo — active permissions sorted by code | `?pageIndex=1&pageSize=200&isActive=true&sortColumn=code&sortDirection=ASC` |
 
 ---
 
 ## 7.2 `GET /api/v1/permissions/:id`
 
-Read a single permission by id. Permission: `permission.read`.
+Read a single permission by id.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl "http://localhost:3000/api/v1/permissions/17" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/permissions/:id` |
+| Permission | `permission.read` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric permission id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
@@ -254,9 +223,9 @@ curl "http://localhost:3000/api/v1/permissions/17" \
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400 — id not a positive integer**
+Non-numeric `:id`.
 
 ```json
 {
@@ -269,10 +238,19 @@ curl "http://localhost:3000/api/v1/permissions/17" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.read`.
+#### 401 UNAUTHORIZED
 
-**404 — no permission with that id**
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.read", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Permission 9999 not found", "code": "NOT_FOUND" }
@@ -284,27 +262,48 @@ curl "http://localhost:3000/api/v1/permissions/17" \
 
 Create a permission. Permission: `permission.create`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/permissions" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Publish courses",
-    "code": "course.publish",
-    "resource": "course",
-    "action": "publish",
-    "scope": "global",
-    "description": "Move a course from draft to published",
-    "displayOrder": 30,
-    "isActive": true
-  }'
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/permissions` |
+| Permission | `permission.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body**
+
+```json
+{
+  "name": "Publish courses",
+  "code": "course.publish",
+  "resource": "course",
+  "action": "publish",
+  "scope": "global",
+  "description": "Move a course from draft to published",
+  "displayOrder": 30,
+  "isActive": true
+}
 ```
 
-`name`, `code`, `resource`, and `action` are required. `scope` defaults to `global`. `resource`, `action`, and `scope` must all be lowercase identifiers (`[a-z0-9_]+`).
+**Required fields**: `name`, `code`, `resource`, `action`.
 
-**Response 201** — full new row.
+**Optional fields**: `scope` (defaults to `global`), `description`, `displayOrder`, `isActive` (defaults to `true`).
+
+**Field constraints**:
+- `resource`, `action`, `scope` must be lowercase identifiers (`[a-z0-9_]+`)
+- `code` must be lowercase alphanumerics, dot, or underscore
+- `name` and `description` have length constraints
+
+### Responses
+
+#### 201 CREATED — happy path
 
 ```json
 {
@@ -328,9 +327,7 @@ curl -X POST "http://localhost:3000/api/v1/permissions" \
 }
 ```
 
-**Possible error responses**
-
-**400 — uppercase resource (must be lowercase)**
+#### 400 VALIDATION_ERROR — uppercase resource
 
 ```json
 {
@@ -343,7 +340,7 @@ curl -X POST "http://localhost:3000/api/v1/permissions" \
 }
 ```
 
-**400 — bad code slug**
+#### 400 VALIDATION_ERROR — bad code slug
 
 ```json
 {
@@ -356,10 +353,19 @@ curl -X POST "http://localhost:3000/api/v1/permissions" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.create`.
+#### 401 UNAUTHORIZED
 
-**409 — duplicate code**
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.create", "code": "FORBIDDEN" }
+```
+
+#### 409 DUPLICATE_ENTRY
 
 ```json
 {
@@ -369,27 +375,55 @@ curl -X POST "http://localhost:3000/api/v1/permissions" \
 }
 ```
 
-The full set of body rules lives in `createPermissionBodySchema` (`api/src/modules/resources/permissions.schemas.ts`).
-
 ---
 
 ## 7.4 `PATCH /api/v1/permissions/:id`
 
-Partial update — supply any subset of fields, but at least one. Permission: `permission.update`. Same field allowlist and lowercase rules as the create body.
+Partial update — supply any subset of fields, but at least one. Permission: `permission.update`. Same field constraints as create.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/permissions/43" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "Move a course from draft to published, including curriculum review",
-    "displayOrder": 35
-  }'
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/permissions/:id` |
+| Permission | `permission.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric permission id. |
+
+**Request body** — sample variants:
+
+*Update description and display order*
+
+```json
+{
+  "description": "Move a course from draft to published, including curriculum review",
+  "displayOrder": 35
+}
 ```
 
-**Response 200** — full updated row.
+*Deactivate permission*
+
+```json
+{
+  "isActive": false
+}
+```
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -413,9 +447,7 @@ curl -X PATCH "http://localhost:3000/api/v1/permissions/43" \
 }
 ```
 
-**Possible error responses**
-
-**400 — empty body**
+#### 400 VALIDATION_ERROR — empty body
 
 ```json
 {
@@ -428,25 +460,61 @@ curl -X PATCH "http://localhost:3000/api/v1/permissions/43" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.update`.
-**404** — no permission with that id.
-**409** — another permission already uses the new `code`.
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.update", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Permission 9999 not found", "code": "NOT_FOUND" }
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{ "success": false, "message": "Permission with code=course.publish already exists", "code": "DUPLICATE_ENTRY" }
+```
 
 ---
 
 ## 7.5 `DELETE /api/v1/permissions/:id`
 
-Soft delete. Sets `is_deleted = TRUE` on the row. Permission: `permission.delete`.
+Soft delete — sets `is_deleted = TRUE`. Permission: `permission.delete`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/permissions/43" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/permissions/:id` |
+| Permission | `permission.delete` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric permission id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -456,13 +524,34 @@ curl -X DELETE "http://localhost:3000/api/v1/permissions/43" \
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400** — non-numeric id (`VALIDATION_ERROR` envelope, `path: "id"`).
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.delete`.
+Non-numeric id.
 
-**404 — no permission with that id**
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [
+    { "path": "id", "message": "must be positive", "code": "too_small" }
+  ]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.delete", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Permission 9999 not found", "code": "NOT_FOUND" }
@@ -474,14 +563,31 @@ curl -X DELETE "http://localhost:3000/api/v1/permissions/43" \
 
 Reverse a soft delete. Permission: `permission.restore`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/permissions/43/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/permissions/:id/restore` |
+| Permission | `permission.restore` |
 
-**Response 200** — full restored row.
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric permission id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -505,9 +611,7 @@ curl -X POST "http://localhost:3000/api/v1/permissions/43/restore" \
 }
 ```
 
-**Possible error responses**
-
-**400 — row was never deleted**
+#### 400 BAD_REQUEST — not deleted
 
 ```json
 {
@@ -517,16 +621,35 @@ curl -X POST "http://localhost:3000/api/v1/permissions/43/restore" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `permission.restore`.
-**404** — no permission with that id.
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: permission.restore", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Permission 9999 not found", "code": "NOT_FOUND" }
+```
 
 ---
 
-**Errors common to all permission routes**
+## Common errors across all permission routes
 
-| HTTP | code | Cause |
+| HTTP | `code` | When |
 |---|---|---|
-| 403 | `FORBIDDEN` | Missing permission. |
-| 404 | `NOT_FOUND` | Unknown id. |
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
+| 400 | `BAD_REQUEST` | Business-rule violation (e.g., restoring a non-deleted permission). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
+| 403 | `FORBIDDEN` | Missing the required permission. |
+| 404 | `NOT_FOUND` | No permission with that id. |
 | 409 | `DUPLICATE_ENTRY` | Another permission already uses the same `code`. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |

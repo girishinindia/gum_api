@@ -116,4 +116,26 @@ Every endpoint can return any of these. The endpoint sections in the per-resourc
 
 ---
 
+## 7. Postman environment
+
+Every endpoint in this phase is documented as a Postman request using two **environment variables** — set them once on your Postman environment and every request in the collection will resolve them automatically:
+
+| Variable | Example value | Where it is used |
+|---|---|---|
+| `baseUrl` | `http://localhost:3000` (local) · `https://api.growupmore.com` (prod) | Every request URL is written as `{{baseUrl}}/api/v1/...`. |
+| `accessToken` | a Super Admin JWT, minted once per session via `POST {{baseUrl}}/api/v1/auth/login` | Every authenticated request sends `Authorization: Bearer {{accessToken}}`. |
+
+**Minting an access token** — run this request once and copy `data.accessToken` from the response into the `accessToken` environment variable:
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/auth/login` |
+| Headers | `Content-Type: application/json` |
+| Body | `{ "identifier": "superadmin@growupmore.com", "password": "<password>" }` |
+
+A machine-readable Postman v2.1 collection is also available at `api/docs/postman/phase-1.postman_collection.json` — import it and the folder tree will mirror the files in this folder (Health / Auth Core / Auth OTP Flows / Users / Countries / Roles / Permissions / Role-permissions / User-permissions / Email notifications), each request pre-populated with headers, body, and example responses.
+
+---
+
 **Next →** [01 — health](01%20-%20health.md)

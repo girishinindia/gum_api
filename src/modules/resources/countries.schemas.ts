@@ -107,33 +107,32 @@ export type CreateCountryBody = z.infer<typeof createCountryBodySchema>;
 // ─── Update body ─────────────────────────────────────────────────
 
 /**
- * Every field is optional on update; .refine prevents empty `{}`
- * payloads (which would otherwise round-trip as a no-op UPDATE
- * touching only `updated_at`).
+ * Every field is optional on update.
  *
- * NOTE: `flagImage` is deliberately *not* here. The only way to change
- * a country's flag is `POST /:id/flag`, which enforces WebP conversion,
- * ISO3-based deterministic naming, and delete-then-upload semantics on
- * Bunny Storage. Allowing a raw URL through PATCH would let callers
- * bypass all three invariants, so the field is rejected as an unknown
- * key by the route validator.
+ * NOTE: `flagImage` (a raw URL) is deliberately *not* here. The only
+ * way to change a country's flag is by attaching a binary file to this
+ * same PATCH request under the multipart form-data field `flag` (also
+ * accepts aliases `flagImage`/`file`) — the handler + multer pipeline
+ * then enforces WebP conversion, ISO3-based deterministic naming, and
+ * delete-then-upload semantics on Bunny Storage. Accepting a raw URL
+ * would let callers bypass all three invariants.
+ *
+ * The empty-body check used to live here as `.refine(Object.keys > 0)`
+ * but has moved into the route handler so that a multipart PATCH that
+ * contains only a flag file (no text fields) still validates.
  */
-export const updateCountryBodySchema = z
-  .object({
-    name: z.string().trim().min(2).max(128).optional(),
-    iso2: iso2Schema.optional(),
-    iso3: iso3Schema.optional(),
-    phoneCode: phoneCodeSchema.optional(),
-    currency: z.string().trim().min(2).max(8).optional(),
-    currencyName: z.string().trim().min(2).max(64).optional(),
-    currencySymbol: z.string().trim().min(1).max(8).optional(),
-    nationalLanguage: z.string().trim().min(2).max(64).optional(),
-    nationality: z.string().trim().min(2).max(64).optional(),
-    languages: languagesSchema.optional(),
-    tld: z.string().trim().min(2).max(16).optional(),
-    isActive: z.boolean().optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+export const updateCountryBodySchema = z.object({
+  name: z.string().trim().min(2).max(128).optional(),
+  iso2: iso2Schema.optional(),
+  iso3: iso3Schema.optional(),
+  phoneCode: phoneCodeSchema.optional(),
+  currency: z.string().trim().min(2).max(8).optional(),
+  currencyName: z.string().trim().min(2).max(64).optional(),
+  currencySymbol: z.string().trim().min(1).max(8).optional(),
+  nationalLanguage: z.string().trim().min(2).max(64).optional(),
+  nationality: z.string().trim().min(2).max(64).optional(),
+  languages: languagesSchema.optional(),
+  tld: z.string().trim().min(2).max(16).optional(),
+  isActive: z.boolean().optional()
+});
 export type UpdateCountryBody = z.infer<typeof updateCountryBodySchema>;

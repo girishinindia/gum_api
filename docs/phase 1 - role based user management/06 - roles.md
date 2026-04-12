@@ -2,197 +2,120 @@
 
 RBAC role catalog. All routes require auth. Permission codes: `role.read`, `role.create`, `role.update`, `role.delete`, `role.restore`.
 
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
+
 > **System roles** (`super_admin`, `admin`, `instructor`, `student`) are protected by the database — they cannot be deleted, even by a super-admin. Attempts return **400 BAD_REQUEST**.
 
 ← [05 countries](05%20-%20countries.md) · **Next →** [07 permissions](07%20-%20permissions.md)
 
 ---
 
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§6.1](#61) | `GET` | `{{baseUrl}}/api/v1/roles` | role.read | List roles with filters and sort. |
+| [§6.2](#62) | `GET` | `{{baseUrl}}/api/v1/roles/:id` | role.read | Get a single role by id. |
+| [§6.3](#63) | `POST` | `{{baseUrl}}/api/v1/roles` | role.create | Create a new role. |
+| [§6.4](#64) | `PATCH` | `{{baseUrl}}/api/v1/roles/:id` | role.update | Partial update of a role. |
+| [§6.5](#65) | `DELETE` | `{{baseUrl}}/api/v1/roles/:id` | role.delete | Soft-delete a role. |
+| [§6.6](#66) | `POST` | `{{baseUrl}}/api/v1/roles/:id/restore` | role.restore | Undo a soft-delete. |
+
+---
+
 ## 6.1 `GET /api/v1/roles`
 
-List roles.
+List roles. Backed by `udf_get_roles`, which exposes filters and sort keys across the role catalog.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/roles` |
+| Permission | `role.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Notes |
-|---|---|
-| `pageIndex`, `pageSize`, `searchTerm` | Standard. |
-| `isActive` | bool. |
-| `level` | int 0–99. |
-| `parentRoleId` | int. |
-| `isSystemRole` | bool. |
-| `code` | Slug-style code. |
-| `sortColumn` | `display_order` (default), `name`, `code`, `level`, `created_at`. |
-| `sortDirection` | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `200`. |
+| `searchTerm` | string | — | `ILIKE` across name and code. |
+| `isActive` | bool | — | Filter by active status. |
+| `level` | int | — | Exact level match (0–99). |
+| `parentRoleId` | int | — | Filter by parent role id. |
+| `isSystemRole` | bool | — | Filter by system role flag. |
+| `code` | string | — | Exact code match (slug-style). |
+| `sortColumn` | enum | `display_order` | One of `display_order`, `name`, `code`, `level`, `created_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
 
-```json
-{
-  "id": 4,
-  "name": "Student",
-  "code": "student",
-  "description": "Default end-user role",
-  "parentRoleId": null,
-  "level": 90,
-  "isSystemRole": true,
-  "displayOrder": 40,
-  "icon": "graduation-cap",
-  "color": "#3b82f6",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-01T00:00:00.000Z",
-  "updatedAt": "2026-01-01T00:00:00.000Z"
-}
-```
+### Responses
 
-### Defaults — what you get if you omit everything
-
-`GET /api/v1/roles` with no query string is interpreted as:
-
-```
-pageIndex=1  pageSize=20  sortColumn=display_order  sortDirection=ASC
-isActive=∅   level=∅   parentRoleId=∅   isSystemRole=∅   code=∅
-```
-
-The `display_order` default sort is what makes the role-picker UI show roles in the curated order rather than alphabetically.
-
-### Sample queries & responses
-
-All examples assume `http://localhost:3000` and an `Authorization: Bearer $ACCESS_TOKEN` header (omitted for brevity).
-
-**1. Pagination — page 1, 5 rows**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?pageIndex=1&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+#### 200 OK — happy path
 
 ```json
 {
   "success": true,
   "message": "OK",
   "data": [
-    { "id": 1, "name": "Super Admin", "code": "super_admin", "level": 0,  "displayOrder": 10, "...": "..." },
-    { "id": 2, "name": "Admin",       "code": "admin",       "level": 10, "displayOrder": 20, "...": "..." },
-    { "id": 3, "name": "Instructor",  "code": "instructor",  "level": 50, "displayOrder": 30, "...": "..." },
-    { "id": 4, "name": "Student",     "code": "student",     "level": 90, "displayOrder": 40, "...": "..." }
+    {
+      "id": 1,
+      "name": "Super Admin",
+      "code": "super_admin",
+      "description": "Full system access",
+      "parentRoleId": null,
+      "level": 0,
+      "isSystemRole": true,
+      "displayOrder": 10,
+      "icon": "crown",
+      "color": "#ef4444",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deletedAt": null
+    },
+    {
+      "id": 4,
+      "name": "Student",
+      "code": "student",
+      "description": "Default end-user role",
+      "parentRoleId": null,
+      "level": 90,
+      "isSystemRole": true,
+      "displayOrder": 40,
+      "icon": "graduation-cap",
+      "color": "#3b82f6",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "deletedAt": null
+    }
   ],
-  "meta": { "page": 1, "limit": 5, "totalCount": 4, "totalPages": 1 }
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 4,
+    "totalPages": 1
+  }
 }
 ```
 
-**2. Pagination — page 2** (only one page exists by default; useful to demonstrate the empty-page envelope)
+#### 400 VALIDATION_ERROR — invalid query param
 
-```bash
-curl "http://localhost:3000/api/v1/roles?pageIndex=2&pageSize=5" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Returns `data: []` with `meta.page: 2`.
-
-**3. Filter — only active roles**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?isActive=true" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Boolean params accept `true|false|1|0|yes|no`.
-
-**4. Filter — by exact level**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?level=50" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Returns every role at exactly level 50. (There is no `levelLte` / `levelGte` — the schema only exposes equality.)
-
-**5. Filter — children of a parent role**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?parentRoleId=2" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-Returns every role whose `parentRoleId` is `2`.
-
-**6. Filter — system vs custom roles**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?isSystemRole=true"  -H "Authorization: Bearer $ACCESS_TOKEN"
-curl "http://localhost:3000/api/v1/roles?isSystemRole=false" -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-System roles (`super_admin`, `admin`, `instructor`, `student`) cannot be deleted; the `false` variant lets the admin UI list only the custom roles that *can* be edited.
-
-**7. Filter — by exact code**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?code=instructor" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`code` is the slug-style identifier; this is an equality match, not a search.
-
-**8. Free-text search**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?searchTerm=admin" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`searchTerm` runs an `ILIKE` against `name` and `code` inside `udf_get_roles`. Both `Admin` and `Super Admin` match.
-
-**9. Sorting — alphabetic by name**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?sortColumn=name&sortDirection=ASC" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-`sortColumn` is whitelisted to: `display_order` (default), `name`, `code`, `level`, `created_at`. Anything else returns `400 VALIDATION_ERROR`.
-
-**10. Combined filters — active custom roles at level ≤ instructor, sorted by level**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?isActive=true&isSystemRole=false&sortColumn=level&sortDirection=ASC&pageSize=10" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-(There is no `levelLte` filter, so the "≤ instructor" framing here is enforced by sorting the small custom-role catalog rather than by filter.)
-
-**11. Empty result**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 1, "limit": 20, "totalCount": 0, "totalPages": 0 }
-}
-```
-
-**12. Page out of range**
-
-```json
-{
-  "success": true,
-  "message": "OK",
-  "data": [],
-  "meta": { "page": 999, "limit": 20, "totalCount": 4, "totalPages": 1 }
-}
-```
-
-### Possible error responses
-
-**400 — invalid `level`**
-
-```bash
-curl "http://localhost:3000/api/v1/roles?level=150" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+Triggered by invalid `level` (> 99), unknown `sortColumn`, `pageSize` > 200, or any query coercion failure.
 
 ```json
 {
@@ -200,41 +123,88 @@ curl "http://localhost:3000/api/v1/roles?level=150" \
   "message": "Validation failed",
   "code": "VALIDATION_ERROR",
   "details": [
-    { "path": "level", "message": "Number must be less than or equal to 99", "code": "too_big" }
+    {
+      "path": "level",
+      "message": "Number must be less than or equal to 99",
+      "code": "too_big"
+    }
   ]
 }
 ```
 
-The same envelope shape (with a different `path` / `message`) is returned for any other bad input — `pageSize=500`, `code=Has Spaces` (must be slug-style), `isSystemRole=maybe`, an unknown `sortColumn`, etc. The full set of rules lives in `listRolesQuerySchema` (`api/src/modules/resources/roles.schemas.ts`).
-
-**401 — missing or expired bearer token**
+#### 401 UNAUTHORIZED
 
 ```json
-{ "success": false, "message": "Missing access token", "code": "UNAUTHORIZED" }
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
 ```
 
-**403 — caller is authenticated but lacks `role.read`**
+#### 403 FORBIDDEN
 
 ```json
-{ "success": false, "message": "Permission denied", "code": "FORBIDDEN" }
+{ "success": false, "message": "Permission denied: role.read", "code": "FORBIDDEN" }
 ```
 
-**500** — see the global catalog in [00 — overview](00%20-%20overview.md#3-error-catalog).
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name / code — `admin` | `?searchTerm=admin` |
+| Search + pagination | `?pageIndex=1&pageSize=50&searchTerm=admin` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Filter by level (exact) | `?level=50` |
+| Filter by parent role id | `?parentRoleId=1` |
+| System roles only | `?isSystemRole=true` |
+| Non-system roles only | `?isSystemRole=false` |
+| Filter by code (exact) | `?code=instructor` |
+| Sort by `display_order` ASC | `?sortColumn=display_order&sortDirection=ASC` |
+| Sort by `display_order` DESC | `?sortColumn=display_order&sortDirection=DESC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `code` ASC | `?sortColumn=code&sortDirection=ASC` |
+| Sort by `level` ASC | `?sortColumn=level&sortDirection=ASC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Combo — active non-system roles, sort by level | `?pageIndex=1&pageSize=50&isActive=true&isSystemRole=false&sortColumn=level&sortDirection=ASC` |
+| Combo — children of role 1, sorted by order | `?pageIndex=1&pageSize=50&parentRoleId=1&sortColumn=display_order&sortDirection=ASC` |
 
 ---
 
 ## 6.2 `GET /api/v1/roles/:id`
 
-Read a single role by id. Permission: `role.read`.
+Read a single role by id.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl "http://localhost:3000/api/v1/roles/4" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/roles/:id` |
+| Permission | `role.read` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric role id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
@@ -260,9 +230,9 @@ curl "http://localhost:3000/api/v1/roles/4" \
 }
 ```
 
-**Possible error responses**
+#### 400 VALIDATION_ERROR
 
-**400 — id not a positive integer**
+Non-numeric `:id`.
 
 ```json
 {
@@ -275,10 +245,19 @@ curl "http://localhost:3000/api/v1/roles/4" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `role.read`.
+#### 401 UNAUTHORIZED
 
-**404 — no role with that id**
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: role.read", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
 
 ```json
 { "success": false, "message": "Role 9999 not found", "code": "NOT_FOUND" }
@@ -290,29 +269,51 @@ curl "http://localhost:3000/api/v1/roles/4" \
 
 Create a custom role. Permission: `role.create`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/roles" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Course Author",
-    "code": "course_author",
-    "description": "Can author and publish courses",
-    "parentRoleId": 3,
-    "level": 50,
-    "isSystemRole": false,
-    "displayOrder": 25,
-    "icon": "pen",
-    "color": "#10b981",
-    "isActive": true
-  }'
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/roles` |
+| Permission | `role.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body**
+
+```json
+{
+  "name": "Course Author",
+  "code": "course_author",
+  "description": "Can author and publish courses",
+  "parentRoleId": 3,
+  "level": 50,
+  "isSystemRole": false,
+  "displayOrder": 25,
+  "icon": "pen",
+  "color": "#10b981",
+  "isActive": true
+}
 ```
 
-Only `name` and `code` are strictly required; everything else has sensible defaults (`level` defaults to `99`, `displayOrder` to `0`, `isActive` to `true`).
+**Required fields**: `name`, `code`.
 
-**Response 201** — full new row.
+**Optional fields**: `description`, `parentRoleId`, `level` (defaults to `99`), `isSystemRole` (defaults to `false`), `displayOrder` (defaults to `0`), `icon`, `color`, `isActive` (defaults to `true`).
+
+**Field constraints**:
+- `code` must be lowercase alphanumerics, dot, or underscore
+- `color` must be hex format (`#fff` or `#ffffff`)
+- `level` must be 0–99
+- `name` and `description` have length constraints
+
+### Responses
+
+#### 201 CREATED — happy path
 
 ```json
 {
@@ -338,9 +339,7 @@ Only `name` and `code` are strictly required; everything else has sensible defau
 }
 ```
 
-**Possible error responses**
-
-**400 — invalid `code` (slug rules)**
+#### 400 VALIDATION_ERROR — invalid code
 
 ```json
 {
@@ -353,7 +352,7 @@ Only `name` and `code` are strictly required; everything else has sensible defau
 }
 ```
 
-**400 — bad hex color**
+#### 400 VALIDATION_ERROR — bad hex color
 
 ```json
 {
@@ -366,10 +365,19 @@ Only `name` and `code` are strictly required; everything else has sensible defau
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `role.create`, or attempted to create a role at a level the caller doesn't outrank.
+#### 401 UNAUTHORIZED
 
-**409 — duplicate code**
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: role.create", "code": "FORBIDDEN" }
+```
+
+#### 409 DUPLICATE_ENTRY
 
 ```json
 {
@@ -379,28 +387,55 @@ Only `name` and `code` are strictly required; everything else has sensible defau
 }
 ```
 
-The full set of body rules lives in `createRoleBodySchema` (`api/src/modules/resources/roles.schemas.ts`).
-
 ---
 
 ## 6.4 `PATCH /api/v1/roles/:id`
 
-Partial update — supply any subset of fields, but at least one. Permission: `role.update`. The same rules from 6.3 apply (slug code, hex colour, level 0–99, etc.).
+Partial update — supply any subset of fields, but at least one. Permission: `role.update`. Same field constraints as create.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/roles/12" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "Authors and publishes courses, manages enrolments",
-    "displayOrder": 30,
-    "color": "#16a34a"
-  }'
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/roles/:id` |
+| Permission | `role.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric role id. |
+
+**Request body** — sample variants:
+
+*Update description and display order*
+
+```json
+{
+  "description": "Authors and publishes courses, manages enrolments",
+  "displayOrder": 30
+}
 ```
 
-**Response 200** — full updated row.
+*Change color*
+
+```json
+{
+  "color": "#16a34a"
+}
+```
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -426,9 +461,7 @@ curl -X PATCH "http://localhost:3000/api/v1/roles/12" \
 }
 ```
 
-**Possible error responses**
-
-**400 — empty body**
+#### 400 VALIDATION_ERROR — empty body
 
 ```json
 {
@@ -441,25 +474,61 @@ curl -X PATCH "http://localhost:3000/api/v1/roles/12" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `role.update`, or attempted to raise a role's level above their own rank.
-**404** — no role with that id.
-**409** — another role already uses the new `code`.
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: role.update", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Role 9999 not found", "code": "NOT_FOUND" }
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{ "success": false, "message": "Role with code=course_author already exists", "code": "DUPLICATE_ENTRY" }
+```
 
 ---
 
 ## 6.5 `DELETE /api/v1/roles/:id`
 
-Soft delete. Sets `is_deleted = TRUE` on the row. **Blocked at the DB layer if the role's `isSystemRole = true`** — the four shipped roles (`super_admin`, `admin`, `instructor`, `student`) cannot be deleted by anyone, including super-admins. Permission: `role.delete`.
+Soft delete — sets `is_deleted = TRUE`. **Blocked at the DB layer if the role's `isSystemRole = true`**. Permission: `role.delete`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/roles/12" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/roles/:id` |
+| Permission | `role.delete` |
 
-**Response 200**
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric role id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -469,9 +538,7 @@ curl -X DELETE "http://localhost:3000/api/v1/roles/12" \
 }
 ```
 
-**Possible error responses**
-
-**400 — tried to delete a system role**
+#### 400 BAD_REQUEST — system role
 
 ```json
 {
@@ -481,9 +548,23 @@ curl -X DELETE "http://localhost:3000/api/v1/roles/12" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `role.delete`.
-**404** — no role with that id.
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: role.delete", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Role 9999 not found", "code": "NOT_FOUND" }
+```
 
 ---
 
@@ -491,14 +572,31 @@ curl -X DELETE "http://localhost:3000/api/v1/roles/12" \
 
 Reverse a soft delete. Permission: `role.restore`.
 
-**Sample request**
+**Postman request**
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/roles/12/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/roles/:id/restore` |
+| Permission | `role.restore` |
 
-**Response 200** — full restored row.
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric role id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK — happy path
 
 ```json
 {
@@ -524,9 +622,7 @@ curl -X POST "http://localhost:3000/api/v1/roles/12/restore" \
 }
 ```
 
-**Possible error responses**
-
-**400 — row was never deleted**
+#### 400 BAD_REQUEST — not deleted
 
 ```json
 {
@@ -536,17 +632,35 @@ curl -X POST "http://localhost:3000/api/v1/roles/12/restore" \
 }
 ```
 
-**401** — missing or expired bearer token.
-**403** — caller lacks `role.restore`.
-**404** — no role with that id.
+#### 401 UNAUTHORIZED
+
+```json
+{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
+```
+
+#### 403 FORBIDDEN
+
+```json
+{ "success": false, "message": "Permission denied: role.restore", "code": "FORBIDDEN" }
+```
+
+#### 404 NOT_FOUND
+
+```json
+{ "success": false, "message": "Role 9999 not found", "code": "NOT_FOUND" }
+```
 
 ---
 
-**Errors common to all role routes**
+## Common errors across all role routes
 
-| HTTP | code | Cause |
+| HTTP | `code` | When |
 |---|---|---|
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
 | 400 | `BAD_REQUEST` | Tried to delete a system role. |
-| 403 | `FORBIDDEN` | Missing permission. |
-| 404 | `NOT_FOUND` | Unknown id. |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
+| 403 | `FORBIDDEN` | Missing the required permission. |
+| 404 | `NOT_FOUND` | No role with that id. |
 | 409 | `DUPLICATE_ENTRY` | Another role already uses the same `code`. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |

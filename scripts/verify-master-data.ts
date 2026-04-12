@@ -173,9 +173,15 @@ const mkClient = (baseUrl: string) => {
 };
 
 /**
- * Multipart helper — builds a FormData with a single `file` field and
- * POSTs it. We don't set content-type manually; fetch + FormData pick the
- * correct multipart boundary automatically.
+ * Multipart helper — builds a FormData, appends one file under the
+ * caller-chosen field name (defaults to `file` for the remaining
+ * POST /:id/icon endpoints on learning-goals and social-medias), and
+ * sends it as POST or PATCH. We don't set content-type manually;
+ * fetch + FormData pick the correct multipart boundary automatically.
+ *
+ * `method` is configurable so the same helper can drive the unified
+ * PATCH /:id endpoints used by categories / sub-categories /
+ * specializations / countries.
  */
 const mkMultipart = (baseUrl: string) => {
   return async <T = unknown>(
@@ -185,18 +191,29 @@ const mkMultipart = (baseUrl: string) => {
       contentType: string;
       filename: string;
       token?: string;
+      /** Form-data field name for the file. Default: 'file'. */
+      fieldName?: string;
+      /** HTTP method. Default: 'POST'. */
+      method?: 'POST' | 'PATCH';
+      /** Extra text fields to include in the same multipart body. */
+      fields?: Record<string, string>;
     }
   ): Promise<HttpResult<T>> => {
     const form = new FormData();
     form.append(
-      'file',
+      options.fieldName ?? 'file',
       new Blob([options.buffer], { type: options.contentType }),
       options.filename
     );
+    if (options.fields) {
+      for (const [k, v] of Object.entries(options.fields)) {
+        form.append(k, v);
+      }
+    }
     const headers: Record<string, string> = {};
     if (options.token) headers.authorization = `Bearer ${options.token}`;
     const res = await fetch(`${baseUrl}${path}`, {
-      method: 'POST',
+      method: options.method ?? 'POST',
       headers,
       body: form
     });
@@ -1598,17 +1615,20 @@ const main = async (): Promise<void> => {
           .png()
           .toBuffer();
 
+        // Unified PATCH /:id with multipart icon slot.
         const iconUpload = await httpMultipart<{
           data: { id: number; iconUrl: string | null };
-        }>(`/api/v1/specializations/${createdSpecializationId}/icon`, {
+        }>(`/api/v1/specializations/${createdSpecializationId}`, {
           buffer: tinyPngBuffer,
           contentType: 'image/png',
           filename: 'icon.png',
+          fieldName: 'icon',
+          method: 'PATCH',
           token: accessToken
         });
         record(
           '10',
-          'POST /specializations/:id/icon (tiny PNG) → 200',
+          'PATCH /specializations/:id (multipart icon) → 200',
           iconUpload.status === 200 &&
             typeof iconUpload.body?.data?.iconUrl === 'string' &&
             iconUpload.body.data.iconUrl.endsWith('.webp'),
@@ -1633,15 +1653,17 @@ const main = async (): Promise<void> => {
 
         const iconReplace = await httpMultipart<{
           data: { iconUrl: string | null };
-        }>(`/api/v1/specializations/${createdSpecializationId}/icon`, {
+        }>(`/api/v1/specializations/${createdSpecializationId}`, {
           buffer: tinyPngBuffer2,
           contentType: 'image/png',
           filename: 'icon.png',
+          fieldName: 'icon',
+          method: 'PATCH',
           token: accessToken
         });
         record(
           '10',
-          'POST /specializations/:id/icon (replace) → 200',
+          'PATCH /specializations/:id (multipart icon replace) → 200',
           iconReplace.status === 200 &&
             typeof iconReplace.body?.data?.iconUrl === 'string',
           `status=${iconReplace.status}`
@@ -1654,30 +1676,32 @@ const main = async (): Promise<void> => {
         // which our middleware translates into a 400 AppError.
         const oversize = Buffer.alloc(150 * 1024, 0xff);
         const iconOversize = await httpMultipart<{ code: string }>(
-          `/api/v1/specializations/${createdSpecializationId}/icon`,
+          `/api/v1/specializations/${createdSpecializationId}`,
           {
             buffer: oversize,
             contentType: 'image/png',
             filename: 'huge.png',
+            fieldName: 'icon',
+            method: 'PATCH',
             token: accessToken
           }
         );
         record(
           '10',
-          'POST /specializations/:id/icon (oversize) → 400',
+          'PATCH /specializations/:id (multipart icon oversize) → 400',
           iconOversize.status === 400,
           `got ${iconOversize.status}`
         );
 
-        // ── Icon delete ────────────────────────────────
+        // ── Icon delete via iconAction=delete on JSON PATCH ────
         const iconDelete = await http<{ data: { iconUrl: string | null } }>(
-          'DELETE',
-          `/api/v1/specializations/${createdSpecializationId}/icon`,
-          { token: accessToken }
+          'PATCH',
+          `/api/v1/specializations/${createdSpecializationId}`,
+          { token: accessToken, body: { iconAction: 'delete' } }
         );
         record(
           '10',
-          'DELETE /specializations/:id/icon → 200 + iconUrl cleared',
+          'PATCH /specializations/:id {iconAction:delete} → 200 + iconUrl cleared',
           iconDelete.status === 200 && iconDelete.body?.data?.iconUrl === null,
           `status=${iconDelete.status} iconUrl=${iconDelete.body?.data?.iconUrl ?? 'null'}`
         );
@@ -2141,19 +2165,26 @@ const main = async (): Promise<void> => {
           `got ${upd.status}`
         );
 
-        // ── Icon upload flow ────────────────────────────
+        // ── Icon upload flow (unified PATCH, slot 'icon') ──
         const iconPng = await sharp({
           create: { width: 64, height: 64, channels: 4, background: { r: 120, g: 70, b: 220, alpha: 1 } }
         })
           .png()
           .toBuffer();
         const iconUp = await httpMultipart<{ data: { iconUrl: string | null } }>(
-          `/api/v1/categories/${createdCategoryId}/icon`,
-          { buffer: iconPng, contentType: 'image/png', filename: 'c.png', token: accessToken }
+          `/api/v1/categories/${createdCategoryId}`,
+          {
+            buffer: iconPng,
+            contentType: 'image/png',
+            filename: 'c.png',
+            fieldName: 'icon',
+            method: 'PATCH',
+            token: accessToken
+          }
         );
         record(
           '14',
-          'POST /categories/:id/icon → 200 + .webp',
+          'PATCH /categories/:id (multipart icon) → 200 + .webp',
           iconUp.status === 200 &&
             typeof iconUp.body?.data?.iconUrl === 'string' &&
             iconUp.body.data.iconUrl.endsWith('.webp'),
@@ -2162,47 +2193,56 @@ const main = async (): Promise<void> => {
 
         // Icon oversize → 400
         const iconOversize = await httpMultipart<{ code: string }>(
-          `/api/v1/categories/${createdCategoryId}/icon`,
+          `/api/v1/categories/${createdCategoryId}`,
           {
             buffer: Buffer.alloc(150 * 1024, 0xff),
             contentType: 'image/png',
             filename: 'huge.png',
+            fieldName: 'icon',
+            method: 'PATCH',
             token: accessToken
           }
         );
         record(
           '14',
-          'POST /categories/:id/icon (oversize) → 400',
+          'PATCH /categories/:id (multipart icon oversize) → 400',
           iconOversize.status === 400,
           `got ${iconOversize.status}`
         );
 
-        // Icon delete
+        // Icon delete via JSON PATCH {iconAction:'delete'}
         const iconDel = await http<{ data: { iconUrl: string | null } }>(
-          'DELETE',
-          `/api/v1/categories/${createdCategoryId}/icon`,
-          { token: accessToken }
+          'PATCH',
+          `/api/v1/categories/${createdCategoryId}`,
+          { token: accessToken, body: { iconAction: 'delete' } }
         );
         record(
           '14',
-          'DELETE /categories/:id/icon → 200 + cleared',
+          'PATCH /categories/:id {iconAction:delete} → 200 + cleared',
           iconDel.status === 200 && iconDel.body?.data?.iconUrl === null,
           `status=${iconDel.status}`
         );
 
-        // ── Image (larger box) upload flow ──────────────
+        // ── Image (larger box) upload flow, slot 'image' ──
         const imgPng = await sharp({
           create: { width: 96, height: 96, channels: 4, background: { r: 250, g: 220, b: 80, alpha: 1 } }
         })
           .png()
           .toBuffer();
         const imgUp = await httpMultipart<{ data: { imageUrl: string | null } }>(
-          `/api/v1/categories/${createdCategoryId}/image`,
-          { buffer: imgPng, contentType: 'image/png', filename: 'cimg.png', token: accessToken }
+          `/api/v1/categories/${createdCategoryId}`,
+          {
+            buffer: imgPng,
+            contentType: 'image/png',
+            filename: 'cimg.png',
+            fieldName: 'image',
+            method: 'PATCH',
+            token: accessToken
+          }
         );
         record(
           '14',
-          'POST /categories/:id/image → 200 + .webp',
+          'PATCH /categories/:id (multipart image) → 200 + .webp',
           imgUp.status === 200 &&
             typeof imgUp.body?.data?.imageUrl === 'string' &&
             imgUp.body.data.imageUrl.endsWith('.webp'),
@@ -2211,30 +2251,32 @@ const main = async (): Promise<void> => {
 
         // Image oversize → 400
         const imgOversize = await httpMultipart<{ code: string }>(
-          `/api/v1/categories/${createdCategoryId}/image`,
+          `/api/v1/categories/${createdCategoryId}`,
           {
             buffer: Buffer.alloc(150 * 1024, 0xff),
             contentType: 'image/png',
             filename: 'huge.png',
+            fieldName: 'image',
+            method: 'PATCH',
             token: accessToken
           }
         );
         record(
           '14',
-          'POST /categories/:id/image (oversize) → 400',
+          'PATCH /categories/:id (multipart image oversize) → 400',
           imgOversize.status === 400,
           `got ${imgOversize.status}`
         );
 
-        // Image delete
+        // Image delete via JSON PATCH {imageAction:'delete'}
         const imgDel = await http<{ data: { imageUrl: string | null } }>(
-          'DELETE',
-          `/api/v1/categories/${createdCategoryId}/image`,
-          { token: accessToken }
+          'PATCH',
+          `/api/v1/categories/${createdCategoryId}`,
+          { token: accessToken, body: { imageAction: 'delete' } }
         );
         record(
           '14',
-          'DELETE /categories/:id/image → 200 + cleared',
+          'PATCH /categories/:id {imageAction:delete} → 200 + cleared',
           imgDel.status === 200 && imgDel.body?.data?.imageUrl === null,
           `status=${imgDel.status}`
         );
@@ -2392,19 +2434,26 @@ const main = async (): Promise<void> => {
             `got ${upd.status}`
           );
 
-          // Icon upload
+          // Icon upload (unified PATCH, slot 'icon')
           const iconPng = await sharp({
             create: { width: 64, height: 64, channels: 4, background: { r: 20, g: 60, b: 90, alpha: 1 } }
           })
             .png()
             .toBuffer();
           const iconUp = await httpMultipart<{ data: { iconUrl: string | null } }>(
-            `/api/v1/sub-categories/${createdSubCategoryId}/icon`,
-            { buffer: iconPng, contentType: 'image/png', filename: 'sc.png', token: accessToken }
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
+            {
+              buffer: iconPng,
+              contentType: 'image/png',
+              filename: 'sc.png',
+              fieldName: 'icon',
+              method: 'PATCH',
+              token: accessToken
+            }
           );
           record(
             '15',
-            'POST /sub-categories/:id/icon → 200 + .webp',
+            'PATCH /sub-categories/:id (multipart icon) → 200 + .webp',
             iconUp.status === 200 &&
               typeof iconUp.body?.data?.iconUrl === 'string' &&
               iconUp.body.data.iconUrl.endsWith('.webp'),
@@ -2413,47 +2462,56 @@ const main = async (): Promise<void> => {
 
           // Icon oversize → 400
           const iconOversize = await httpMultipart<{ code: string }>(
-            `/api/v1/sub-categories/${createdSubCategoryId}/icon`,
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
             {
               buffer: Buffer.alloc(150 * 1024, 0xff),
               contentType: 'image/png',
               filename: 'huge.png',
+              fieldName: 'icon',
+              method: 'PATCH',
               token: accessToken
             }
           );
           record(
             '15',
-            'POST /sub-categories/:id/icon (oversize) → 400',
+            'PATCH /sub-categories/:id (multipart icon oversize) → 400',
             iconOversize.status === 400,
             `got ${iconOversize.status}`
           );
 
-          // Icon delete
+          // Icon delete via JSON PATCH {iconAction:'delete'}
           const iconDel = await http<{ data: { iconUrl: string | null } }>(
-            'DELETE',
-            `/api/v1/sub-categories/${createdSubCategoryId}/icon`,
-            { token: accessToken }
+            'PATCH',
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
+            { token: accessToken, body: { iconAction: 'delete' } }
           );
           record(
             '15',
-            'DELETE /sub-categories/:id/icon → 200 + cleared',
+            'PATCH /sub-categories/:id {iconAction:delete} → 200 + cleared',
             iconDel.status === 200 && iconDel.body?.data?.iconUrl === null,
             `status=${iconDel.status}`
           );
 
-          // Image upload
+          // Image upload (unified PATCH, slot 'image')
           const imgPng = await sharp({
             create: { width: 96, height: 96, channels: 4, background: { r: 250, g: 100, b: 10, alpha: 1 } }
           })
             .png()
             .toBuffer();
           const imgUp = await httpMultipart<{ data: { imageUrl: string | null } }>(
-            `/api/v1/sub-categories/${createdSubCategoryId}/image`,
-            { buffer: imgPng, contentType: 'image/png', filename: 'scimg.png', token: accessToken }
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
+            {
+              buffer: imgPng,
+              contentType: 'image/png',
+              filename: 'scimg.png',
+              fieldName: 'image',
+              method: 'PATCH',
+              token: accessToken
+            }
           );
           record(
             '15',
-            'POST /sub-categories/:id/image → 200 + .webp',
+            'PATCH /sub-categories/:id (multipart image) → 200 + .webp',
             imgUp.status === 200 &&
               typeof imgUp.body?.data?.imageUrl === 'string' &&
               imgUp.body.data.imageUrl.endsWith('.webp'),
@@ -2462,30 +2520,32 @@ const main = async (): Promise<void> => {
 
           // Image oversize → 400
           const imgOversize = await httpMultipart<{ code: string }>(
-            `/api/v1/sub-categories/${createdSubCategoryId}/image`,
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
             {
               buffer: Buffer.alloc(150 * 1024, 0xff),
               contentType: 'image/png',
               filename: 'huge.png',
+              fieldName: 'image',
+              method: 'PATCH',
               token: accessToken
             }
           );
           record(
             '15',
-            'POST /sub-categories/:id/image (oversize) → 400',
+            'PATCH /sub-categories/:id (multipart image oversize) → 400',
             imgOversize.status === 400,
             `got ${imgOversize.status}`
           );
 
-          // Image delete
+          // Image delete via JSON PATCH {imageAction:'delete'}
           const imgDel = await http<{ data: { imageUrl: string | null } }>(
-            'DELETE',
-            `/api/v1/sub-categories/${createdSubCategoryId}/image`,
-            { token: accessToken }
+            'PATCH',
+            `/api/v1/sub-categories/${createdSubCategoryId}`,
+            { token: accessToken, body: { imageAction: 'delete' } }
           );
           record(
             '15',
-            'DELETE /sub-categories/:id/image → 200 + cleared',
+            'PATCH /sub-categories/:id {imageAction:delete} → 200 + cleared',
             imgDel.status === 200 && imgDel.body?.data?.imageUrl === null,
             `status=${imgDel.status}`
           );

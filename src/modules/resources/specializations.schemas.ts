@@ -82,16 +82,19 @@ export type CreateSpecializationBody = z.infer<typeof createSpecializationBodySc
 
 // ─── Update body ─────────────────────────────────────────────────
 //
-// `iconUrl` is intentionally omitted here as well.
+// `iconUrl` is intentionally omitted — icons are set by uploading a
+// file under the `icon` field of this same PATCH request, or cleared
+// by passing `iconAction=delete`. Empty-body rejection is enforced in
+// the handler, not here, so that a multipart request with only an
+// icon upload still validates.
 
-export const updateSpecializationBodySchema = z
-  .object({
-    name: nameSchema.optional(),
-    category: categorySchema.optional(),
-    description: descriptionSchema,
-    isActive: z.boolean().optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateSpecializationBodySchema = z.object({
+  name: nameSchema.optional(),
+  category: categorySchema.optional(),
+  description: descriptionSchema,
+  isActive: z.boolean().optional(),
+  iconAction: imageActionSchema
+});
 export type UpdateSpecializationBody = z.infer<typeof updateSpecializationBodySchema>;

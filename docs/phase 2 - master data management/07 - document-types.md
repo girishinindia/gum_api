@@ -1,79 +1,221 @@
-# Phase 2 — Document types
+# Phase 2 — Document Types
 
-Top-level catalogue of the **kinds of documents** the product understands — "Identity Proof", "Residence Proof", "Academic Document", and so on. This table is the parent of [`documents`](08%20-%20documents.md), which hangs concrete named artefacts (Aadhar Card, PAN Card, 10th Marksheet…) off a specific `document_type`.
+Reference type for documents (passport, license, certificate, etc).
 
 All routes require auth. Permission codes: `document_type.read`, `document_type.create`, `document_type.update`, `document_type.delete`, `document_type.restore`.
 
-← [06 walkthrough](06%20-%20walkthrough%20and%20index.md) · **Next →** [08 documents](08%20-%20documents.md)
+All examples below use the Postman environment variables **`{{baseUrl}}`** (e.g. `http://localhost:3000`) and **`{{accessToken}}`** (a Super Admin JWT minted via `POST {{baseUrl}}/api/v1/auth/login`). Set these once on your Postman environment — see [§7 in 00 - overview](00%20-%20overview.md#7-postman-environment).
+
+← [walkthrough and index](06%20-%20walkthrough%20and%20index.md) · **Next →** [documents](08%20-%20documents.md)
+
+---
+
+## Endpoint summary
+
+Quick reference of every endpoint documented on this page. Section numbers link down to the detailed request/response contracts below.
+
+| § | Method | Path | Auth / Permission | Purpose |
+|---|---|---|---|---|
+| [§7.1](#71) | `GET` | `{{baseUrl}}/api/v1/document-types` | document_type.read | List document types with filters and sort. |
+| [§7.2](#72) | `GET` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.read | Get a single document type by id. |
+| [§7.3](#73) | `POST` | `{{baseUrl}}/api/v1/document-types` | document_type.create | Create a new document type. |
+| [§7.4](#74) | `PATCH` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.update | Partial update. |
+| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.delete | Soft-delete. |
+| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/document-types/:id/restore` | document_type.restore | Undo a soft-delete. |
 
 ---
 
 ## 7.1 `GET /api/v1/document-types`
 
-List document types. Backed by `udf_get_document_types`.
+List document types.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/document-types` |
+| Permission | `document_type.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
 
 **Query params**
 
-| Param | Type | Notes |
-|---|---|---|
-| `pageIndex`, `pageSize` | int | Standard pagination. |
-| `searchTerm` | string | `ILIKE` against `name` and `description`. |
-| `isActive`, `isDeleted` | bool | |
-| `sortColumn` | enum | `id`, `name`, `is_active`, `is_deleted`, `created_at`, `updated_at`. Default `id`. |
-| `sortDirection` | enum | `ASC` / `DESC`. |
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `pageIndex` | int | `1` | Page number (1-based). |
+| `pageSize` | int | `20` | Max `100`. |
+| `searchTerm` | string | — | `ILIKE` across primary text columns. |
+| `isActive` | bool | — | Filter by active status. |
+| `isDeleted` | bool | — | Filter by soft-delete status. |
+| `sortColumn` | enum | `id` | Whitelisted: `id`, `name`, `is_active`, `is_deleted`, `created_at`, `updated_at`. |
+| `sortDirection` | enum | `ASC` | `ASC` / `DESC`. |
 
-**Sample row**
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
 
 ```json
 {
-  "id": 1,
-  "name": "Identity Proof",
-  "description": "Government-issued documents that verify a person's identity.",
-  "isActive": true,
-  "isDeleted": false,
-  "createdAt": "2026-01-10T00:00:00.000Z",
-  "updatedAt": "2026-01-10T00:00:00.000Z",
-  "deletedAt": null
+  "success": true,
+  "message": "OK",
+  "data": [
+    {
+      "id": 1,
+      "name": "Example",
+      "isActive": true,
+      "isDeleted": false,
+      "createdAt": "2026-04-11T00:00:00.000Z",
+      "updatedAt": "2026-04-11T00:00:00.000Z",
+      "deletedAt": null
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "totalCount": 1,
+    "totalPages": 1
+  }
 }
 ```
 
-### Defaults
+#### 400 VALIDATION_ERROR
 
-```
-pageIndex=1  pageSize=20  sortColumn=id  sortDirection=ASC
-```
-
-### Sample queries
-
-**1. All active document types**
-
-```bash
-curl "http://localhost:3000/api/v1/document-types?isActive=true" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"code": "invalid_enum_value", "path": ["sortColumn"], "message": "Invalid enum value"}]
+}
 ```
 
-**2. Search for "proof"**
+#### 401 UNAUTHORIZED
 
-```bash
-curl "http://localhost:3000/api/v1/document-types?searchTerm=proof" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Missing or invalid access token",
+  "code": "UNAUTHORIZED"
+}
 ```
 
-**3. Sorted alphabetically**
+#### 403 FORBIDDEN
 
-```bash
-curl "http://localhost:3000/api/v1/document-types?sortColumn=name&sortDirection=ASC" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+```json
+{
+  "success": false,
+  "message": "Permission denied: document_type.read",
+  "code": "FORBIDDEN"
+}
 ```
+
+
+### Saved examples to add in Postman
+
+The following recipes cover every supported combination of **pagination**, **searching**, **filtering**, and **sorting** exposed by this endpoint. Copy the query string after `{{baseUrl}}/api/v1/...` — method, headers and auth stay the same as the base request above.
+
+| Example name | Query string |
+|---|---|
+| Page 1 (defaults) | `?pageIndex=1&pageSize=20` |
+| Page 2, default size | `?pageIndex=2&pageSize=20` |
+| Page 1, small page (5 rows) | `?pageIndex=1&pageSize=5` |
+| Page 1, large page (100 rows) | `?pageIndex=1&pageSize=100` |
+| Page 3, large page | `?pageIndex=3&pageSize=100` |
+| Out-of-range page (returns empty `data`) | `?pageIndex=9999&pageSize=20` |
+| Search name — `passport` | `?searchTerm=passport` |
+| Search + pagination | `?pageIndex=1&pageSize=50&searchTerm=passport` |
+| Active only | `?isActive=true` |
+| Inactive only | `?isActive=false` |
+| Deleted only | `?isDeleted=true` |
+| Non-deleted only | `?isDeleted=false` |
+| Sort by `id` ASC | `?sortColumn=id&sortDirection=ASC` |
+| Sort by `name` ASC | `?sortColumn=name&sortDirection=ASC` |
+| Sort by `is_active` DESC | `?sortColumn=is_active&sortDirection=DESC` |
+| Sort by `is_deleted` DESC | `?sortColumn=is_deleted&sortDirection=DESC` |
+| Sort by `created_at` DESC | `?sortColumn=created_at&sortDirection=DESC` |
+| Sort by `updated_at` DESC | `?sortColumn=updated_at&sortDirection=DESC` |
+| Combo — active document types, sorted by name | `?pageIndex=1&pageSize=50&isActive=true&sortColumn=name&sortDirection=ASC` |
 
 ---
 
 ## 7.2 `GET /api/v1/document-types/:id`
 
-Read a single document type by id. **404** with `"DocumentType 9999 not found"` if unknown.
+Read a single document type by id.
 
-```bash
-curl "http://localhost:3000/api/v1/document-types/1" -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `GET` |
+| URL | `{{baseUrl}}/api/v1/document-types/:id` |
+| Permission | `document_type.read` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric document type id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "id", "message": "Expected number, received nan", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+Same as 7.1.
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: document_type.read", "code": "FORBIDDEN"}
+```
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Document Type 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
@@ -82,36 +224,154 @@ curl "http://localhost:3000/api/v1/document-types/1" -H "Authorization: Bearer $
 
 Create a document type. Permission: `document_type.create`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/document-types" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Medical Document",
-    "description": "Doctor-issued reports, prescriptions, test results.",
-    "isActive": true
-  }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/document-types` |
+| Permission | `document_type.create` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Example",
+  "isActive": true
+}
 ```
 
-`name` is required. **Response 201** — the full new row.
+**Required fields**: `name`.
 
-**Possible errors**
+**Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
-- **400 VALIDATION_ERROR** — missing `name`, name too long (> 128), description too long (> 2000).
-- **403** — caller lacks `document_type.create`.
-- **409** — a document type with the same `name` already exists (CITEXT, case-insensitive).
+### Responses
+
+#### 201 CREATED
+
+```json
+{
+  "success": true,
+  "message": "Document Type created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 VALIDATION_ERROR
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "name", "message": "Required", "code": "invalid_type"}]
+}
+```
+
+#### 401 UNAUTHORIZED
+
+```json
+{"success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED"}
+```
+
+#### 403 FORBIDDEN
+
+```json
+{"success": false, "message": "Permission denied: document_type.create", "code": "FORBIDDEN"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{
+  "success": false,
+  "message": "Document Type with that name already exists",
+  "code": "DUPLICATE_ENTRY"
+}
+```
 
 ---
 
 ## 7.4 `PATCH /api/v1/document-types/:id`
 
-Partial update. Any subset of `name`, `description`, `isActive`. **400** on empty body.
+Partial update.
 
-```bash
-curl -X PATCH "http://localhost:3000/api/v1/document-types/1" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{ "description": "Updated description." }'
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/document-types/:id` |
+| Permission | `document_type.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `application/json` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric document type id. |
+
+**Request body** (`application/json`)
+
+```json
+{
+  "name": "Updated Name",
+  "isActive": true
+}
+```
+
+### Responses
+
+#### 200 OK
+
+Same row shape as 7.2, wrapped in success envelope.
+
+#### 400 VALIDATION_ERROR — empty body
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "code": "VALIDATION_ERROR",
+  "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 7.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Document Type 9999 not found", "code": "NOT_FOUND"}
+```
+
+#### 409 DUPLICATE_ENTRY
+
+```json
+{"success": false, "message": "Document Type with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
 ---
@@ -120,33 +380,139 @@ curl -X PATCH "http://localhost:3000/api/v1/document-types/1" \
 
 Soft delete. Permission: `document_type.delete`.
 
-```bash
-curl -X DELETE "http://localhost:3000/api/v1/document-types/1" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `DELETE` |
+| URL | `{{baseUrl}}/api/v1/document-types/:id` |
+| Permission | `document_type.delete` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric document type id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Document Type deleted",
+  "data": {"id": 1, "deleted": true}
+}
 ```
 
-Response: `{ "success": true, "message": "Document type deleted", "data": { "id": 1, "deleted": true } }`.
+#### 400 BAD_REQUEST — already deleted
 
-> **FK guard.** `documents` rows reference `document_types(id)`, so while the soft-delete only flips `is_deleted`, any **hard** delete will fail if children exist. The verify script exercises this guard.
+```json
+{
+  "success": false,
+  "message": "Document Type with ID 1 does not exist or is already deleted.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 7.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Document Type 9999 not found", "code": "NOT_FOUND"}
+```
 
 ---
 
 ## 7.6 `POST /api/v1/document-types/:id/restore`
 
-Reverse a soft delete. Permission: `document_type.restore`. **400 BAD_REQUEST** if the row isn't deleted.
+Reverse a soft delete. Permission: `document_type.restore`.
 
-```bash
-curl -X POST "http://localhost:3000/api/v1/document-types/1/restore" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `POST` |
+| URL | `{{baseUrl}}/api/v1/document-types/:id/restore` |
+| Permission | `document_type.restore` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric document type id. |
+
+**Request body** — none.
+
+### Responses
+
+#### 200 OK
+
+```json
+{
+  "success": true,
+  "message": "Document Type restored",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 400 BAD_REQUEST — not deleted
+
+```json
+{
+  "success": false,
+  "message": "Document Type with ID 1 is not deleted or does not exist.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 401 UNAUTHORIZED / 403 FORBIDDEN
+
+Same as 7.3.
+
+#### 404 NOT_FOUND
+
+```json
+{"success": false, "message": "Document Type 9999 not found", "code": "NOT_FOUND"}
 ```
 
 ---
 
-**Common errors across all document-type routes**
+## Common errors across all document types routes
 
-| HTTP | code | Cause |
+| HTTP | `code` | When |
 |---|---|---|
-| 401 | `UNAUTHORIZED` | Missing / expired bearer token. |
+| 400 | `VALIDATION_ERROR` | zod rejected query, params, or body. |
+| 400 | `BAD_REQUEST` | Business-rule violation (e.g., already-deleted row on restore). |
+| 401 | `UNAUTHORIZED` | Missing or expired bearer token. |
 | 403 | `FORBIDDEN` | Missing the required permission. |
 | 404 | `NOT_FOUND` | No document type with that id. |
-| 409 | `DUPLICATE_ENTRY` | A document type with the same `name` already exists. |
+| 409 | `DUPLICATE_ENTRY` | Name or code clashes with another non-deleted document type. |
+| 429 | `RATE_LIMIT_EXCEEDED` | Global rate-limit tripped (default `100 / 15m`). |
+| 500 | `INTERNAL_ERROR` | Unhandled exception; production response omits the stack. |

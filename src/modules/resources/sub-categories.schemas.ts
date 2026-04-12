@@ -252,19 +252,24 @@ export type CreateSubCategoryBody = z.infer<typeof createSubCategoryBodySchema>;
 
 // ─── Update sub-category body ───────────────────────────────────
 
-export const updateSubCategoryBodySchema = z
-  .object({
-    categoryId: categoryIdSchema.optional(),
-    code: codeSchema.optional(),
-    slug: slugSchema.optional(),
-    displayOrder: displayOrderSchema,
-    isNew: isNewSchema,
-    newUntil: newUntilSchema,
-    isActive: isActiveSchema
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+// `iconAction` / `imageAction` = 'delete' instructs the unified PATCH
+// handler to clear that image. Uploading a new file takes precedence
+// over 'delete' for the same slot (handler rejects the combination).
+// Empty-body rejection moved into the handler — multipart requests
+// carry "content" in the form of files that zod can't see.
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateSubCategoryBodySchema = z.object({
+  categoryId: categoryIdSchema.optional(),
+  code: codeSchema.optional(),
+  slug: slugSchema.optional(),
+  displayOrder: displayOrderSchema,
+  isNew: isNewSchema,
+  newUntil: newUntilSchema,
+  isActive: isActiveSchema,
+  iconAction: imageActionSchema,
+  imageAction: imageActionSchema
+});
 export type UpdateSubCategoryBody = z.infer<typeof updateSubCategoryBodySchema>;
 
 // ─── List sub-category translations query ───────────────────────

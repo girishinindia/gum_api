@@ -5,10 +5,21 @@
 //   GET    /            country.read
 //   GET    /:id         country.read
 //   POST   /            country.create
-//   PATCH  /:id         country.update
+//   PATCH  /:id         country.update   (JSON or multipart/form-data)
 //   DELETE /:id         country.delete
 //   POST   /:id/restore country.restore
-//   POST   /:id/flag    country.update    (multipart, single file `file`)
+//
+// Unified PATCH accepts BOTH text field updates and an optional flag
+// image upload in a single request:
+//   • JSON body: plain text-field patch as before.
+//   • multipart/form-data: text fields + optional `flag` file slot
+//     (aliases: `flagImage`, `file`). Behind the scenes the service
+//     still enforces the locked pipeline — WebP conversion, 90×90,
+//     ≤25 KB raw, ISO3-based key, delete-then-upload — so callers
+//     cannot bypass the invariants even though the endpoint moved.
+//
+// The old `POST /:id/flag` route was removed in phase-02 Stage 4.
+// There is no `flagAction=delete`: countries always have a flag image.
 //
 // All routes require an authenticated user (req.user.id is forwarded
 // to the UDFs as p_created_by / p_updated_by for the audit trail).
@@ -19,7 +30,11 @@ import { Router } from 'express';
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
-import { uploadCountryFlag } from '../../../core/middlewares/upload';
+import {
+  patchCountryFiles,
+  getSlotFile
+} from '../../../core/middlewares/upload';
+import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-coerce';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -81,15 +96,39 @@ router.post(
 );
 
 // ─── PATCH /:id  update ──────────────────────────────────────────
-
+//
+// Unified text + flag update. The flag file (if any) flows through
+// exactly the same `processCountryFlagUpload` pipeline that the old
+// POST /:id/flag endpoint used — WebP / 90×90 / ISO3 key / delete-then-
+// upload — so the on-disk guarantees are unchanged.
 router.patch(
   '/:id',
   authorize('country.update'),
+  patchCountryFiles,
+  coerceMultipartBody,
   validate({ params: idParamSchema, body: updateCountryBodySchema }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const body = req.body as UpdateCountryBody;
-    await countriesService.updateCountry(id, body, req.user?.id ?? null);
+    const flagFile = getSlotFile(req, 'flag');
+
+    const hasTextChange = Object.keys(body).length > 0;
+    const hasFlag = Boolean(flagFile);
+    if (!hasTextChange && !hasFlag) {
+      throw AppError.badRequest('Provide at least one field to update');
+    }
+
+    if (hasTextChange) {
+      await countriesService.updateCountry(id, body, req.user?.id ?? null);
+    }
+    if (flagFile) {
+      await countriesService.processCountryFlagUpload(
+        id,
+        flagFile,
+        req.user?.id ?? null
+      );
+    }
+
     const country = await countriesService.getCountryById(id);
     return ok(res, country, 'Country updated');
   })
@@ -108,44 +147,11 @@ router.delete(
   })
 );
 
-// ─── POST /:id/flag  upload flag image ───────────────────────────
-//
-// Multipart contract:
-//   field name : `file`
-//   max size   : 25 KB        (enforced by multer)
-//   MIME       : image/png|jpeg|webp|svg+xml  (enforced by multer)
-//   dimensions : exactly 90×90 px              (enforced by sharp in service)
-//
-// Server-side pipeline (see `countries.service.ts`):
-//   1. validate dimensions → 2. re-encode to WebP → 3. delete any prior
-//   flag object(s) on Bunny (new ISO3 key, legacy ISO2 key, and whatever
-//   path is currently stored in `flag_image`) → 4. upload the new WebP
-//   at `countries/flags/<iso3>.webp` (e.g. `countries/flags/ind.webp`)
-//   → 5. persist the CDN URL on the country row via an internal-only
-//      flag-image setter.
-//
-// This is the ONLY supported path for changing a flag. PATCH /:id does
-// not accept `flagImage` in its body — the schema rejects it — so the
-// WebP + ISO3 + delete-first invariants cannot be bypassed.
-
-router.post(
-  '/:id/flag',
-  authorize('country.update'),
-  validate({ params: idParamSchema }),
-  uploadCountryFlag,
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
-      throw AppError.badRequest('file field is required (multipart/form-data)');
-    }
-    const country = await countriesService.processCountryFlagUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, country, 'Country flag uploaded');
-  })
-);
+// The dedicated POST /:id/flag endpoint was removed in phase-02
+// Stage 4 — use PATCH /:id with multipart/form-data (field `flag`)
+// instead. The server-side pipeline is unchanged: WebP conversion,
+// 90×90 dimension check, ISO3 key, delete-then-upload — all enforced
+// by `countries.service.processCountryFlagUpload`.
 
 // ─── POST /:id/restore  restore ──────────────────────────────────
 
