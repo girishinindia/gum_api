@@ -32,7 +32,10 @@
     "verify:user-languages": "tsx scripts/verify-phase-04-user-languages.ts",
     "verify:user-documents": "tsx scripts/verify-phase-04-user-documents.ts",
     "verify:user-projects": "tsx scripts/verify-phase-04-user-projects.ts",
-    "verify:all": "npm run verify && npm run verify:db && npm run verify:redis && npm run verify:validation && npm run verify:middleware && npm run verify:auth && npm run verify:auth-flows && npm run verify:resources && npm run verify:junctions && npm run verify:users && npm run verify:master-data && npm run verify:patch-unified && npm run verify:branch-management && npm run verify:user-profiles && npm run verify:user-education && npm run verify:user-experience && npm run verify:user-social-medias && npm run verify:user-skills && npm run verify:user-languages && npm run verify:user-documents && npm run verify:user-projects",
+    "verify:employee-profiles": "tsx scripts/verify-phase-05-employee-profiles.ts",
+    "verify:student-profiles": "tsx scripts/verify-phase-06-student-profiles.ts",
+    "verify:instructor-profiles": "tsx scripts/verify-phase-07-instructor-profiles.ts",
+    "verify:all": "npm run verify && npm run verify:db && npm run verify:redis && npm run verify:validation && npm run verify:middleware && npm run verify:auth && npm run verify:auth-flows && npm run verify:resources && npm run verify:junctions && npm run verify:users && npm run verify:master-data && npm run verify:patch-unified && npm run verify:branch-management && npm run verify:user-profiles && npm run verify:user-education && npm run verify:user-experience && npm run verify:user-social-medias && npm run verify:user-skills && npm run verify:user-languages && npm run verify:user-documents && npm run verify:user-projects && npm run verify:employee-profiles && npm run verify:student-profiles && npm run verify:instructor-profiles",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
