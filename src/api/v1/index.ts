@@ -66,6 +66,14 @@ import orderingQuestionTranslationsRoutes from './ordering-question-translations
 import orderingItemsRoutes from './ordering-items/ordering-items.routes';
 import orderingItemTranslationsRoutes from './ordering-item-translations/ordering-item-translations.routes';
 import usersRoutes from './users/users.routes';
+import assessmentsRoutes from './assessments/assessments.routes';
+import assessmentAttachmentsRoutes from './assessment-attachments/assessment-attachments.routes';
+import assessmentSolutionsRoutes from './assessment-solutions/assessment-solutions.routes';
+import webinarsRoutes from './webinars/webinars.routes';
+import courseBatchesRoutes from './course-batches/course-batches.routes';
+import instructorPromotionsRoutes from './instructor-promotions/instructor-promotions.routes';
+import referralCodesRoutes from './referral-codes/referral-codes.routes';
+import couponsRoutes from './coupons/coupons.routes';
 
 // ═══════════════════════════════════════════════════════════════
 // v1 router aggregator.
@@ -140,5 +148,13 @@ v1Router.use('/ordering-questions', orderingQuestionsRoutes);
 v1Router.use('/ordering-question-translations', orderingQuestionTranslationsRoutes);
 v1Router.use('/ordering-items', orderingItemsRoutes);
 v1Router.use('/ordering-item-translations', orderingItemTranslationsRoutes);
+v1Router.use('/assessments', assessmentsRoutes);
+v1Router.use('/assessments/:assessmentId/attachments', assessmentAttachmentsRoutes);
+v1Router.use('/assessments/:assessmentId/solutions', assessmentSolutionsRoutes);
+v1Router.use('/webinars', webinarsRoutes);
+v1Router.use('/course-batches', courseBatchesRoutes);
+v1Router.use('/instructor-promotions', instructorPromotionsRoutes);
+v1Router.use('/referral-codes', referralCodesRoutes);
+v1Router.use('/coupons', couponsRoutes);
 
 export default v1Router;
