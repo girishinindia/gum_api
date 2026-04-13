@@ -4,7 +4,7 @@
 // Authorization model:
 //   GET    /              social_media.read
 //   GET    /:id           social_media.read
-//   POST   /              social_media.create
+//   POST   /              social_media.create  (JSON or multipart/form-data)
 //   PATCH  /:id           social_media.update   (JSON or multipart/form-data)
 //   DELETE /:id           social_media.delete
 //   POST   /:id/restore   social_media.restore
@@ -78,13 +78,20 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon).
 router.post(
   '/',
   authorize('social_media.create'),
+  patchSocialMediaFiles,
+  coerceMultipartBody,
   validate({ body: createSocialMediaBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateSocialMediaBody;
+    const iconFile = getSlotFile(req, 'icon');
     const result = await socialMediasService.createSocialMedia(body, req.user?.id ?? null);
+    if (iconFile) {
+      await socialMediasService.processSocialMediaIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
     const sm = await socialMediasService.getSocialMediaById(result.id);
     return created(res, sm, 'Social media created');
   })

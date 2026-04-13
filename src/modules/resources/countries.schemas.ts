@@ -32,11 +32,15 @@ const iso3Schema = z
   .transform((v) => v.toUpperCase());
 
 const phoneCodeSchema = z
-  .string()
-  .trim()
-  .min(2, 'phoneCode is too short')
-  .max(8, 'phoneCode is too long')
-  .regex(/^\+?[0-9]{1,7}$/, 'phoneCode must be a + followed by digits');
+  .preprocess(
+    (v) => (typeof v === 'number' ? String(v) : v),
+    z
+      .string()
+      .trim()
+      .min(2, 'phoneCode is too short')
+      .max(8, 'phoneCode is too long')
+      .regex(/^\+?[0-9]{1,7}$/, 'phoneCode must be a + followed by digits')
+  );
 
 /** A list of human-readable language names; the DB stores it as JSONB. */
 const languagesSchema = z

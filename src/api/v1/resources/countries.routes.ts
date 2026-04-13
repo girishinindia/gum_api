@@ -4,7 +4,7 @@
 // Authorization model:
 //   GET    /            country.read
 //   GET    /:id         country.read
-//   POST   /            country.create
+//   POST   /            country.create  (JSON or multipart/form-data)
 //   PATCH  /:id         country.update   (JSON or multipart/form-data)
 //   DELETE /:id         country.delete
 //   POST   /:id/restore country.restore
@@ -81,15 +81,21 @@ router.get(
   })
 );
 
-// ─── POST /  create ──────────────────────────────────────────────
+// ─── POST /  create (JSON or multipart/form-data with optional flag) ─
 
 router.post(
   '/',
   authorize('country.create'),
+  patchCountryFiles,
+  coerceMultipartBody,
   validate({ body: createCountryBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateCountryBody;
+    const flagFile = getSlotFile(req, 'flag');
     const result = await countriesService.createCountry(body, req.user?.id ?? null);
+    if (flagFile) {
+      await countriesService.processCountryFlagUpload(result.id, flagFile, req.user?.id ?? null);
+    }
     const country = await countriesService.getCountryById(result.id);
     return created(res, country, 'Country created');
   })

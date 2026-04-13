@@ -16,7 +16,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§5.1](#51) | `GET` | `{{baseUrl}}/api/v1/countries` | country.read | List / search / filter countries (pagination + sort). |
 | [§5.2](#52) | `GET` | `{{baseUrl}}/api/v1/countries/:id` | country.read | Get a single country by id. |
-| [§5.3](#53) | `POST` | `{{baseUrl}}/api/v1/countries` | country.create | Create a new country. |
+| [§5.3](#53) | `POST` | `{{baseUrl}}/api/v1/countries` | country.create | Create a new country — accepts JSON or `multipart/form-data`. |
 | [§5.4](#54) | `PATCH` | `{{baseUrl}}/api/v1/countries/:id` | country.update | Partial update — accepts JSON or `multipart/form-data` with a `flag` file. |
 | [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/countries/:id` | **super_admin** + country.delete | Soft-delete a country. |
 | [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/countries/:id/restore` | **super_admin** + country.restore | Undo a soft-delete. |
@@ -286,9 +286,16 @@ Create a country. Permission: `country.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` or `multipart/form-data` |
 
-**Request body**
+**Request body** — JSON or multipart:
+
+This route accepts **two content types** and both hit the same handler:
+
+* **`application/json`** — all fields as JSON.
+* **`multipart/form-data`** — text fields and an optional flag file. The optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`). When the flag part is present, the server runs the flag pipeline before returning the created row: decode via sharp, enforce exact 90 × 90 dimensions, re-encode to WebP (quality 90), then PUT the WebP under the deterministic key **`countries/flags/<iso3>.webp`**. The CDN URL is returned in the `flagImage` field of the 201 response.
+
+*Text-only JSON:*
 
 ```json
 {
@@ -303,16 +310,41 @@ Create a country. Permission: `country.create`.
   "nationality": "Canadian",
   "languages": ["English", "French"],
   "tld": ".ca",
-  "flagImage": "https://flags.example/ca.svg",
   "isActive": true
 }
 ```
 
+*Multipart — create with text fields and flag file:*
+
+Form fields:
+- `name`: `Canada`
+- `iso2`: `CA`
+- `iso3`: `CAN`
+- `phoneCode`: `+1`
+- `currency`: `CAD`
+- `currencyName`: `Canadian Dollar`
+- `currencySymbol`: `$`
+- `nationalLanguage`: `English`
+- `nationality`: `Canadian`
+- `languages`: `["English", "French"]` (JSON array as string)
+- `tld`: `.ca`
+- `isActive`: `true`
+- `flag`: (binary file, optional)
+
 **Required fields**: `name`, `iso2`, `iso3`.
 
-**Optional fields**: `phoneCode`, `currency`, `currencyName`, `currencySymbol`, `nationalLanguage`, `nationality`, `languages`, `tld`, `flagImage`, `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
+**Optional fields**: `phoneCode`, `currency`, `currencyName`, `currencySymbol`, `nationalLanguage`, `nationality`, `languages`, `tld`, `flag` (multipart only), `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
 `iso2` is normalised to upper-case and `iso3` to upper-case at the DB layer.
+
+### Hard limits on the flag file (multipart only)
+
+| Rule | Value | Enforced by |
+|---|---|---|
+| Max file size | **25 KB** | multer (before sharp runs) |
+| MIME allowlist | `image/png`, `image/jpeg`, `image/webp` | multer |
+| Dimensions | **exactly 90 × 90 pixels** | sharp (after decode) |
+| Output format | always **WebP** | sharp (re-encoded server-side) |
 
 ### Responses
 
@@ -335,7 +367,7 @@ Create a country. Permission: `country.create`.
     "nationality": "Canadian",
     "languages": ["English", "French"],
     "tld": ".ca",
-    "flagImage": "https://flags.example/ca.svg",
+    "flagImage": "https://cdn.growupmore.com/countries/flags/can.webp",
     "isActive": true,
     "isDeleted": false,
     "createdAt": "2026-04-10T11:22:33.124Z",
@@ -344,6 +376,8 @@ Create a country. Permission: `country.create`.
   }
 }
 ```
+
+When created via multipart with a flag file, `flagImage` is set to the stable CDN URL under `countries/flags/<iso3>.webp`. When created via JSON without a flag, `flagImage` is `null` (the field must be added later via `PATCH /:id` or `PATCH /:id/flag`).
 
 #### 400 VALIDATION_ERROR — required field missing
 
@@ -371,6 +405,55 @@ Create a country. Permission: `country.create`.
 }
 ```
 
+#### 400 BAD_REQUEST — flag file over size cap
+
+Multipart only. Flag file exceeds 25 KB.
+
+```json
+{
+  "success": false,
+  "message": "Country flag must not exceed 25 KB",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — disallowed MIME type
+
+Multipart only. Flag file is not PNG, JPEG, or WebP.
+
+```json
+{
+  "success": false,
+  "message": "Country flag must be one of: image/png, image/jpeg, image/webp",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — bad pixel size
+
+Multipart only. Flag file dimensions are not exactly 90 × 90.
+
+```json
+{
+  "success": false,
+  "message": "Flag image must be exactly 90x90 pixels",
+  "code": "BAD_REQUEST",
+  "details": { "receivedWidth": 100, "receivedHeight": 100 }
+}
+```
+
+#### 400 BAD_REQUEST — corrupt image
+
+Multipart only. Uploaded file is not a readable image.
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
 #### 401 UNAUTHORIZED
 
 ```json
@@ -390,6 +473,18 @@ Create a country. Permission: `country.create`.
   "success": false,
   "message": "Country with iso2=CA already exists",
   "code": "DUPLICATE_ENTRY"
+}
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+Multipart only. Bunny Storage rejected the PUT (network or auth error against the CDN).
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload flag image to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
 }
 ```
 

@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§14.1](#141) | `GET` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.read | List sub-categories with filters and sort. |
 | [§14.2](#142) | `GET` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.read | Get a single sub-category by id. |
-| [§14.3](#143) | `POST` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.create | Create a new sub-category. |
+| [§14.3](#143) | `POST` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.create | Create a new sub-category. JSON **or** `multipart/form-data`. |
 | [§14.4](#144) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.update | Partial update — JSON or multipart with `icon`/`image`. |
 | [§14.5](#145) | `DELETE` | `{{baseUrl}}/api/v1/sub-categories/:id` | **super_admin** + sub_category.delete | Soft-delete. |
 | [§14.6](#146) | `POST` | `{{baseUrl}}/api/v1/sub-categories/:id/restore` | **super_admin** + sub_category.restore | Undo a soft-delete. |
@@ -239,9 +239,11 @@ Create a sub-category. Permission: `sub_category.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` or `multipart/form-data` |
 
-**Request body** (`application/json`)
+**Request body** — accepts both JSON and multipart/form-data.
+
+#### JSON (`application/json`)
 
 ```json
 {
@@ -253,6 +255,25 @@ Create a sub-category. Permission: `sub_category.create`.
 **Required fields**: `name`.
 
 **Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
+
+#### Form-data (`multipart/form-data`)
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Sub-category name. |
+| `isActive` | text | no | `"true"` or `"false"` (defaults to `false`). |
+| `icon` (or `iconImage`) | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed through WebP pipeline. Returns `iconUrl` in response. |
+| `image` (or `subCategoryImage`) | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed through WebP pipeline. Returns `imageUrl` in response. |
+
+Both `icon` and `image` fields are optional; include only the files you want to upload. Both are processed server-side and will appear in the response with their Bunny CDN URLs.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Create with JSON (text fields only) | `name` = `"Example"`, `isActive` = `true` |
+| Create with form-data (text + icon file) | `name` = `"Frontend"`, `icon` = `frontend-icon.png` |
+| Create with form-data (text + both files) | `name` = `"Backend"`, `icon` = `backend-icon.webp`, `image` = `backend-hero.webp` |
 
 ### Responses
 

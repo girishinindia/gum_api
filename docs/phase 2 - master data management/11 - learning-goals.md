@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§11.1](#111) | `GET` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.read | List learning goals with filters and sort. |
 | [§11.2](#112) | `GET` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.read | Get a single learning goal by id. |
-| [§11.3](#113) | `POST` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.create | Create a new learning goal. |
+| [§11.3](#113) | `POST` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.create | Create a new learning goal. Accepts `application/json` **or** `multipart/form-data` (with optional icon file). |
 | [§11.4](#114) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.update | Partial update: `application/json` (text-only) or `multipart/form-data` (text fields + optional icon file). |
 | [§11.5](#115) | `DELETE` | `{{baseUrl}}/api/v1/learning-goals/:id` | **super_admin** + learning_goal.delete | Soft-delete. |
 | [§11.6](#116) | `POST` | `{{baseUrl}}/api/v1/learning-goals/:id/restore` | **super_admin** + learning_goal.restore | Undo a soft-delete. |
@@ -237,9 +237,9 @@ Create a learning goal. Permission: `learning_goal.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` or `multipart/form-data` |
 
-**Request body** (`application/json`)
+### JSON request body (`application/json`)
 
 ```json
 {
@@ -251,6 +251,24 @@ Create a learning goal. Permission: `learning_goal.create`.
 **Required fields**: `name`.
 
 **Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
+
+### Multipart request body (`multipart/form-data`)
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Goal name. |
+| `isActive` | text | no | Active status: `"true"` or `"false"` (defaults to `"false"`). |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP. Field aliases: `iconImage`, `file`. |
+
+**Icon pipeline**: Uploaded files are decoded, enforced to fit a 256×256 box, re-encoded to WebP ≤100 KB, and stored at `learning-goals/icons/<id>.webp`.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Create with JSON | `Content-Type: application/json`; `{"name": "Python Basics", "isActive": true}` |
+| Create with multipart + icon | `name` = "Python Basics"; `isActive` = "true"; `icon` = file binary |
+| Create with multipart, no icon | `name` = "Python Basics"; `isActive` = "true"` |
 
 ### Responses
 

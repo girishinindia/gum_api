@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§10.1](#101) | `GET` | `{{baseUrl}}/api/v1/specializations` | specialization.read | List specializations with filters and sort. |
 | [§10.2](#102) | `GET` | `{{baseUrl}}/api/v1/specializations/:id` | specialization.read | Get a single specialization by id. |
-| [§10.3](#103) | `POST` | `{{baseUrl}}/api/v1/specializations` | specialization.create | Create a new specialization. |
+| [§10.3](#103) | `POST` | `{{baseUrl}}/api/v1/specializations` | specialization.create | Create a new specialization. Accepts JSON **or** `multipart/form-data`. |
 | [§10.4](#104) | `PATCH` | `{{baseUrl}}/api/v1/specializations/:id` | specialization.update | Partial update (JSON body). |
 | [§10.5](#105) | `DELETE` | `{{baseUrl}}/api/v1/specializations/:id` | **super_admin** + specialization.delete | Soft-delete. |
 | [§10.6](#106) | `POST` | `{{baseUrl}}/api/v1/specializations/:id/restore` | **super_admin** + specialization.restore | Undo a soft-delete. |
@@ -223,7 +223,7 @@ Same as 10.1.
 
 ## 10.3 `POST /api/v1/specializations`
 
-Create a specialization. Permission: `specialization.create`.
+Create a specialization. Permission: `specialization.create`. Accepts **JSON or `multipart/form-data`**.
 
 **Postman request**
 
@@ -238,9 +238,13 @@ Create a specialization. Permission: `specialization.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` (JSON) **or** `multipart/form-data` (file upload) |
 
-**Request body** (`application/json`)
+**Request body**
+
+Two options:
+
+#### Option 1: JSON (`application/json`)
 
 ```json
 {
@@ -253,9 +257,24 @@ Create a specialization. Permission: `specialization.create`.
 
 **Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
+#### Option 2: Form Data (`multipart/form-data`)
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Specialization name. |
+| `isActive` | text | no | `true` or `false`; defaults to `false`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Aliases: `iconImage`, `file`. Re-encoded server-side to WebP ≤ 100 KB. The icon URL will appear in the response. |
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Create with JSON | `name` = "Example", `isActive` = true |
+| Create with form-data + icon | `name` = "Example", `isActive` = true, `icon` = (file binary) |
+
 ### Responses
 
-#### 201 CREATED
+#### 201 CREATED — JSON body
 
 ```json
 {
@@ -264,6 +283,25 @@ Create a specialization. Permission: `specialization.create`.
   "data": {
     "id": 1,
     "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 201 CREATED — form-data with icon
+
+```json
+{
+  "success": true,
+  "message": "Specialization created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "iconUrl": "https://cdn.growupmore.com/specializations/icons/1.webp",
     "isActive": true,
     "isDeleted": false,
     "createdAt": "2026-04-11T00:00:00.000Z",

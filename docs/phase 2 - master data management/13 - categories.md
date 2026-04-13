@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§13.1](#131) | `GET` | `{{baseUrl}}/api/v1/categories` | category.read | List categories with filters and sort. |
 | [§13.2](#132) | `GET` | `{{baseUrl}}/api/v1/categories/:id` | category.read | Get a single category by id. |
-| [§13.3](#133) | `POST` | `{{baseUrl}}/api/v1/categories` | category.create | Create a new category. |
+| [§13.3](#133) | `POST` | `{{baseUrl}}/api/v1/categories` | category.create | Create a new category. JSON **or** `multipart/form-data`. |
 | [§13.4](#134) | `PATCH` | `{{baseUrl}}/api/v1/categories/:id` | category.update | Partial update — JSON or multipart with `icon`/`image`. |
 | [§13.5](#135) | `DELETE` | `{{baseUrl}}/api/v1/categories/:id` | **super_admin** + category.delete | Soft-delete. |
 | [§13.6](#136) | `POST` | `{{baseUrl}}/api/v1/categories/:id/restore` | **super_admin** + category.restore | Undo a soft-delete. |
@@ -239,9 +239,11 @@ Create a category. Permission: `category.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` or `multipart/form-data` |
 
-**Request body** (`application/json`)
+**Request body** — JSON or multipart/form-data
+
+#### Option 1: `application/json`
 
 ```json
 {
@@ -254,9 +256,33 @@ Create a category. Permission: `category.create`.
 
 **Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
+#### Option 2: `multipart/form-data`
+
+Include text fields plus optional image files. All files are processed through the WebP pipeline.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Category name. |
+| `isActive` | text | no | `true` or `false`; defaults to `false`. |
+| `icon` / `iconImage` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed to WebP. Optional field alias: `iconImage`. |
+| `image` / `categoryImage` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed to WebP. Optional field alias: `categoryImage`. |
+
+When both files are provided, both `iconUrl` and `imageUrl` will appear in the response.
+
+**Postman example — form-data:**
+
+| Field | Value | Type |
+|---|---|---|
+| `name` | `"Technology"` | text |
+| `isActive` | `true` | text |
+| `icon` | (binary file: `tech-icon.png`) | file |
+| `image` | (binary file: `tech-hero.webp`) | file |
+
 ### Responses
 
 #### 201 CREATED
+
+**JSON or form-data (without files):**
 
 ```json
 {
@@ -265,6 +291,26 @@ Create a category. Permission: `category.create`.
   "data": {
     "id": 1,
     "name": "Example",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+**Form-data with `icon` and/or `image` files:**
+
+```json
+{
+  "success": true,
+  "message": "Category created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "iconUrl": "https://cdn.growupmore.com/categories/icons/1.webp",
+    "imageUrl": "https://cdn.growupmore.com/categories/images/1.webp",
     "isActive": true,
     "isDeleted": false,
     "createdAt": "2026-04-11T00:00:00.000Z",
@@ -295,6 +341,26 @@ Create a category. Permission: `category.create`.
 
 ```json
 {"success": false, "message": "Permission denied: category.create", "code": "FORBIDDEN"}
+```
+
+#### 400 BAD_REQUEST — file too large (form-data only)
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported file type (form-data only)
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
 ```
 
 #### 409 DUPLICATE_ENTRY

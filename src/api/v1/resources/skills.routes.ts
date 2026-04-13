@@ -4,7 +4,7 @@
 // Authorization model:
 //   GET    /              skill.read
 //   GET    /:id           skill.read
-//   POST   /              skill.create
+//   POST   /              skill.create   (JSON or multipart/form-data)
 //   PATCH  /:id           skill.update   (JSON or multipart/form-data)
 //   DELETE /:id           skill.delete
 //   POST   /:id/restore   skill.restore
@@ -78,13 +78,20 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon).
 router.post(
   '/',
   authorize('skill.create'),
+  patchSkillFiles,
+  coerceMultipartBody,
   validate({ body: createSkillBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateSkillBody;
+    const iconFile = getSlotFile(req, 'icon');
     const result = await skillsService.createSkill(body, req.user?.id ?? null);
+    if (iconFile) {
+      await skillsService.processSkillIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
     const skill = await skillsService.getSkillById(result.id);
     return created(res, skill, 'Skill created');
   })

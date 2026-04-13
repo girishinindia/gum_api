@@ -4,7 +4,7 @@
 // Authorization model:
 //   GET    /              learning_goal.read
 //   GET    /:id           learning_goal.read
-//   POST   /              learning_goal.create
+//   POST   /              learning_goal.create  (JSON or multipart/form-data)
 //   PATCH  /:id           learning_goal.update   (JSON or multipart/form-data)
 //   DELETE /:id           learning_goal.delete
 //   POST   /:id/restore   learning_goal.restore
@@ -78,13 +78,20 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon).
 router.post(
   '/',
   authorize('learning_goal.create'),
+  patchLearningGoalFiles,
+  coerceMultipartBody,
   validate({ body: createLearningGoalBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateLearningGoalBody;
+    const iconFile = getSlotFile(req, 'icon');
     const result = await learningGoalsService.createLearningGoal(body, req.user?.id ?? null);
+    if (iconFile) {
+      await learningGoalsService.processLearningGoalIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
     const lg = await learningGoalsService.getLearningGoalById(result.id);
     return created(res, lg, 'Learning goal created');
   })

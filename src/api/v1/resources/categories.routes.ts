@@ -5,7 +5,7 @@
 //   Category CRUD:
 //     GET    /              category.read
 //     GET    /:id           category.read
-//     POST   /              category.create
+//     POST   /              category.create  (JSON or multipart/form-data)
 //     PATCH  /:id           category.update   (JSON or multipart/form-data)
 //     DELETE /:id           category.delete
 //     POST   /:id/restore   category.restore
@@ -89,13 +89,24 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon + image).
 router.post(
   '/',
   authorize('category.create'),
+  patchCategoryFiles,
+  coerceMultipartBody,
   validate({ body: createCategoryBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateCategoryBody;
+    const iconFile = getSlotFile(req, 'icon');
+    const imageFile = getSlotFile(req, 'image');
     const result = await categoriesService.createCategory(body, req.user?.id ?? null);
+    if (iconFile) {
+      await categoriesService.processCategoryIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
+    if (imageFile) {
+      await categoriesService.processCategoryImageUpload(result.id, imageFile, req.user?.id ?? null);
+    }
     const c = await categoriesService.getCategoryById(result.id);
     return created(res, c, 'Category created');
   })

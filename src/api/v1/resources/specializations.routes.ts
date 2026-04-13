@@ -4,7 +4,7 @@
 // Authorization model:
 //   GET    /              specialization.read
 //   GET    /:id           specialization.read
-//   POST   /              specialization.create
+//   POST   /              specialization.create  (JSON or multipart/form-data)
 //   PATCH  /:id           specialization.update   (JSON or multipart/form-data)
 //   DELETE /:id           specialization.delete
 //   POST   /:id/restore   specialization.restore
@@ -78,13 +78,20 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon).
 router.post(
   '/',
   authorize('specialization.create'),
+  patchSpecializationFiles,
+  coerceMultipartBody,
   validate({ body: createSpecializationBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateSpecializationBody;
+    const iconFile = getSlotFile(req, 'icon');
     const result = await specializationsService.createSpecialization(body, req.user?.id ?? null);
+    if (iconFile) {
+      await specializationsService.processSpecializationIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
     const s = await specializationsService.getSpecializationById(result.id);
     return created(res, s, 'Specialization created');
   })

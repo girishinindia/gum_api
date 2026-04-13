@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§3.1](#31) | `GET` | `{{baseUrl}}/api/v1/skills` | skill.read | List skills with category filter, search, and sort. |
 | [§3.2](#32) | `GET` | `{{baseUrl}}/api/v1/skills/:id` | skill.read | Get a single skill by id. |
-| [§3.3](#33) | `POST` | `{{baseUrl}}/api/v1/skills` | skill.create | Create a new skill. |
+| [§3.3](#33) | `POST` | `{{baseUrl}}/api/v1/skills` | skill.create | Create a new skill. Accepts JSON **or** `multipart/form-data` with an optional `icon` file. |
 | [§3.4](#34) | `PATCH` | `{{baseUrl}}/api/v1/skills/:id` | skill.update | Partial update — accepts JSON or `multipart/form-data` with an optional `icon` file. |
 | [§3.5](#35) | `DELETE` | `{{baseUrl}}/api/v1/skills/:id` | **super_admin** + skill.delete | Soft-delete a skill. |
 | [§3.6](#36) | `POST` | `{{baseUrl}}/api/v1/skills/:id/restore` | **super_admin** + skill.restore | Undo a soft-delete. |
@@ -251,7 +251,10 @@ Same shape as 3.1.
 
 ## 3.3 `POST /api/v1/skills`
 
-Create a skill. Permission: `skill.create`.
+Create a skill. Permission: `skill.create`. Accepts two content types:
+
+- **`application/json`** — text-only payload (fields: `name`, `category`, `description`, `isActive`). Every field is optional except `name`.
+- **`multipart/form-data`** — text fields + optional `icon` file slot. File aliases: `iconImage`, `file`.
 
 **Postman request**
 
@@ -261,6 +264,8 @@ Create a skill. Permission: `skill.create`.
 | URL | `{{baseUrl}}/api/v1/skills` |
 | Permission | `skill.create` |
 
+### Request body — `application/json` variant
+
 **Headers**
 
 | Key | Value |
@@ -268,7 +273,7 @@ Create a skill. Permission: `skill.create`.
 | `Authorization` | `Bearer {{accessToken}}` |
 | `Content-Type` | `application/json` |
 
-**Request body** (`application/json`)
+**Payload**
 
 ```json
 {
@@ -289,6 +294,41 @@ Create a skill. Permission: `skill.create`.
 |---|---|---|---|
 | `name` | 1 | 128 | |
 | `description` | — | 2000 | |
+
+### Request body — `multipart/form-data` variant
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
+
+**Form fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Skill name (1–128 chars). |
+| `category` | text | no | One of: `technical`, `soft_skill`, `tool`, `framework`, `language`, `domain`, `certification`, `other`. Defaults to `technical`. |
+| `description` | text | no | Skill description (≤ 2000 chars). |
+| `isActive` | text (boolean string) | no | `true` or `false`. Defaults to `false`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256×256 box, re-encoded to WebP, stored at `skills/icons/<id>.webp`. Field aliases: `iconImage`, `file`. |
+
+**Icon pipeline details**
+
+When an `icon` file is uploaded:
+- Input formats: PNG, JPEG, WebP, SVG (all ≤ 100 KB raw)
+- Processing: decoded, resized to fit within 256×256, re-encoded to WebP
+- Storage: Bunny CDN at `skills/icons/<id>.webp`
+- Response: `iconUrl` is set to the CDN path and returned in the response
+
+**Postman examples**
+
+| Example name | Body |
+|---|---|
+| JSON — text only | `name` = `"React"`, `category` = `"framework"` |
+| Form-data — text only | `name` = `"TypeScript"`, `category` = `"language"`, `description` = `"Typed superset of JavaScript"` |
+| Form-data — with icon | `name` = `"Rust"`, `category` = `"language"`, `icon` = `rust-logo.png` |
 
 ### Responses
 

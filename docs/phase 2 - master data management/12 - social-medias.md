@@ -18,7 +18,7 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 |---|---|---|---|---|
 | [§12.1](#121) | `GET` | `{{baseUrl}}/api/v1/social-medias` | social_media.read | List social media platforms with filters and sort. |
 | [§12.2](#122) | `GET` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.read | Get a single social media by id. |
-| [§12.3](#123) | `POST` | `{{baseUrl}}/api/v1/social-medias` | social_media.create | Create a new social media. |
+| [§12.3](#123) | `POST` | `{{baseUrl}}/api/v1/social-medias` | social_media.create | Create a new social media. JSON **or** `multipart/form-data` with optional icon file. |
 | [§12.4](#124) | `PATCH` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.update | Partial update: JSON body or multipart/form-data with optional icon file. |
 | [§12.5](#125) | `DELETE` | `{{baseUrl}}/api/v1/social-medias/:id` | **super_admin** + social_media.delete | Soft-delete. |
 | [§12.6](#126) | `POST` | `{{baseUrl}}/api/v1/social-medias/:id/restore` | **super_admin** + social_media.restore | Undo a soft-delete. |
@@ -222,7 +222,7 @@ Same as 12.1.
 
 ## 12.3 `POST /api/v1/social-medias`
 
-Create a social media. Permission: `social_media.create`.
+Create a social media. Permission: `social_media.create`. Accepts `application/json` for text-only creation, or `multipart/form-data` to include an optional icon file upload.
 
 **Postman request**
 
@@ -237,7 +237,11 @@ Create a social media. Permission: `social_media.create`.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` *or* `multipart/form-data` |
+
+### Text-only creation (application/json)
+
+**Headers** — set `Content-Type: application/json`
 
 **Request body** (`application/json`)
 
@@ -252,9 +256,32 @@ Create a social media. Permission: `social_media.create`.
 
 **Optional fields**: `isActive` (defaults to **`false`** — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
+### Icon upload (multipart/form-data)
+
+**Headers** — set `Content-Type: multipart/form-data` (Postman sets the boundary automatically)
+
+**Body fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | yes | Social media name. |
+| `isActive` | text | no | Active status (`"true"` or `"false"`). Defaults to `"false"`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256 × 256 box, re-encoded to WebP, stored at `social-medias/icons/<id>.webp`. |
+| `iconImage` | file | no | Alias for `icon` field. |
+| `file` | file | no | Alias for `icon` field. |
+
+\* For icon operations: Optionally upload a file via `icon`, `iconImage`, or `file`. File is processed through the same WebP pipeline as the PATCH icon upload.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Text only (JSON) | `Content-Type: application/json` with `{"name": "New Platform"}` |
+| Create with icon (form-data) | `Content-Type: multipart/form-data` with `name` + `icon` file |
+
 ### Responses
 
-#### 201 CREATED
+#### 201 CREATED — text only
 
 ```json
 {
@@ -263,7 +290,26 @@ Create a social media. Permission: `social_media.create`.
   "data": {
     "id": 1,
     "name": "Example",
-    "isActive": true,
+    "isActive": false,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 201 CREATED — with icon
+
+```json
+{
+  "success": true,
+  "message": "Social Media created",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "iconUrl": "https://cdn.growupmore.com/social-medias/icons/1.webp",
+    "isActive": false,
     "isDeleted": false,
     "createdAt": "2026-04-11T00:00:00.000Z",
     "updatedAt": "2026-04-11T00:00:00.000Z",
@@ -302,6 +348,46 @@ Create a social media. Permission: `social_media.create`.
   "success": false,
   "message": "Social Media with that name already exists",
   "code": "DUPLICATE_ENTRY"
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload social media icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
 }
 ```
 

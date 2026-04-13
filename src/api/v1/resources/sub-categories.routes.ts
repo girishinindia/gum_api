@@ -5,7 +5,7 @@
 //   Sub-Category CRUD:
 //     GET    /              sub_category.read
 //     GET    /:id           sub_category.read
-//     POST   /              sub_category.create
+//     POST   /              sub_category.create  (JSON or multipart/form-data)
 //     PATCH  /:id           sub_category.update   (JSON or multipart/form-data)
 //     DELETE /:id           sub_category.delete
 //     POST   /:id/restore   sub_category.restore
@@ -86,13 +86,24 @@ router.get(
   })
 );
 
+// POST / — create (JSON or multipart/form-data with optional icon + image).
 router.post(
   '/',
   authorize('sub_category.create'),
+  patchSubCategoryFiles,
+  coerceMultipartBody,
   validate({ body: createSubCategoryBodySchema }),
   asyncHandler(async (req, res) => {
     const body = req.body as CreateSubCategoryBody;
+    const iconFile = getSlotFile(req, 'icon');
+    const imageFile = getSlotFile(req, 'image');
     const result = await subCategoriesService.createSubCategory(body, req.user?.id ?? null);
+    if (iconFile) {
+      await subCategoriesService.processSubCategoryIconUpload(result.id, iconFile, req.user?.id ?? null);
+    }
+    if (imageFile) {
+      await subCategoriesService.processSubCategoryImageUpload(result.id, imageFile, req.user?.id ?? null);
+    }
     const sc = await subCategoriesService.getSubCategoryById(result.id);
     return created(res, sc, 'Sub-category created');
   })
