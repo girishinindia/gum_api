@@ -96,6 +96,19 @@ const singleFileUpload = (opts: SingleFileUploadOptions): RequestHandler => {
         return;
       }
 
+      // busboy throws a plain Error when Content-Type says multipart
+      // but the body has no boundary (e.g. manual header override).
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('Boundary not found')) {
+        next(
+          AppError.badRequest(
+            'Content-Type is multipart/form-data but no valid boundary was found. ' +
+            'Send JSON with Content-Type: application/json, or use proper form-data encoding.'
+          )
+        );
+        return;
+      }
+
       if (err instanceof MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
           next(
@@ -273,23 +286,43 @@ const multiSlotUpload = (opts: MultiSlotUploadOptions): RequestHandler => {
     }
   }).any();
 
+  // Helper: initialize empty slotFiles so downstream handlers can
+  // safely call `getSlotFile(req, ...)` without null-checks.
+  const initEmptySlots = (req: Request): void => {
+    (
+      req as unknown as {
+        slotFiles: Record<string, Express.Multer.File | undefined>;
+      }
+    ).slotFiles = Object.fromEntries(slotNames.map((s) => [s, undefined]));
+  };
+
   return (req: Request, res: Response, next: NextFunction) => {
-    // Skip multer entirely for non-multipart requests (e.g. plain JSON).
-    // Without this guard multer throws "Multipart: Boundary not found".
+    // Skip multer entirely for non-multipart requests (plain JSON, urlencoded, etc.).
     const ct = req.headers['content-type'] ?? '';
     if (!ct.startsWith('multipart/')) {
-      // Still initialize empty slotFiles so handlers can safely read slots.
-      (
-        req as unknown as {
-          slotFiles: Record<string, Express.Multer.File | undefined>;
-        }
-      ).slotFiles = Object.fromEntries(slotNames.map((s) => [s, undefined]));
+      initEmptySlots(req);
       next();
       return;
     }
 
     handler(req, res, (err: unknown) => {
       if (err) {
+        // busboy throws a plain Error (not MulterError) when the
+        // Content-Type header says multipart but the body has no
+        // boundary — e.g. a client that manually sets the header
+        // to "multipart/form-data" while sending raw JSON.
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes('Boundary not found')) {
+          initEmptySlots(req);
+          next(
+            AppError.badRequest(
+              'Content-Type is multipart/form-data but no valid boundary was found. ' +
+              'Send JSON with Content-Type: application/json, or use proper form-data encoding.'
+            )
+          );
+          return;
+        }
+
         if (err instanceof MulterError) {
           const state = (req as unknown as Record<symbol, MultiSlotFilterState>)[
             MULTI_SLOT_STATE

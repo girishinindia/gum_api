@@ -148,11 +148,33 @@ router.delete(
   })
 );
 
-// The dedicated POST /:id/flag endpoint was removed in phase-02
-// Stage 4 — use PATCH /:id with multipart/form-data (field `flag`)
-// instead. The server-side pipeline is unchanged: WebP conversion,
-// 90×90 dimension check, ISO3 key, delete-then-upload — all enforced
-// by `countries.service.processCountryFlagUpload`.
+// ─── PATCH /:id/flag  flag-only upload (convenience alias) ───────
+//
+// Accepts multipart/form-data with a single file field (flag / flagImage / file).
+// Equivalent to sending PATCH /:id with only the flag file and no text fields.
+
+router.patch(
+  '/:id/flag',
+  authorize('country.update'),
+  patchCountryFiles,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const id = Number((req.params as unknown as { id: number }).id);
+    const flagFile = getSlotFile(req, 'flag');
+    if (!flagFile) {
+      throw AppError.badRequest(
+        'No flag file provided. Send multipart/form-data with field "flag", "flagImage", or "file".'
+      );
+    }
+    await countriesService.processCountryFlagUpload(
+      id,
+      flagFile,
+      req.user?.id ?? null
+    );
+    const country = await countriesService.getCountryById(id);
+    return ok(res, country, 'Country flag updated');
+  })
+);
 
 // ─── POST /:id/restore  restore ──────────────────────────────────
 
