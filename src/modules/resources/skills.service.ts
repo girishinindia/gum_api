@@ -2,9 +2,15 @@
 // skills.service — UDF wrappers for the /api/v1/skills module.
 // ═══════════════════════════════════════════════════════════════
 
+import sharp from 'sharp';
+
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { AppError } from '../../core/errors/app-error';
+import { logger } from '../../core/logger/logger';
+import { env } from '../../config/env';
+import { bunnyStorageService } from '../../integrations/bunny/bunny-storage.service';
 
 import type {
   CreateSkillBody,
@@ -135,6 +141,130 @@ export const updateSkill = async (
     p_is_active: body.isActive ?? null,
     p_updated_by: callerId
   });
+};
+
+// ─── Icon upload pipeline ─────────────────────────────────────────
+//
+// Mirrors the pattern in specializations.service.ts:
+//   sharp decode → resize into 256×256 box → quality-loop WebP encode
+//   → Bunny delete-then-PUT → write icon_url column.
+
+const ICON_MAX_BYTES = 100 * 1024;
+const ICON_BOX_PX = 256;
+const ICON_INITIAL_QUALITY = 80;
+const ICON_MIN_QUALITY = 40;
+const ICON_QUALITY_STEP = 10;
+
+/** Direct SQL update of icon_url (UDF doesn't carry this column). */
+const setSkillIconUrl = async (
+  id: number,
+  iconUrl: string | null,
+  callerId: number | null
+): Promise<void> => {
+  await db.query(
+    `UPDATE skills
+        SET icon_url   = $2,
+            updated_by = COALESCE($3, updated_by),
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+        AND is_deleted = FALSE`,
+    [id, iconUrl, callerId]
+  );
+};
+
+const extractBunnyPath = (cdnUrl: string | null): string | null => {
+  if (!cdnUrl) return null;
+  const base = env.BUNNY_CDN_URL.replace(/\/+$/, '');
+  if (!cdnUrl.startsWith(base + '/')) return null;
+  return cdnUrl.slice(base.length + 1);
+};
+
+const safeDeleteFromBunny = async (path: string, skillId: number): Promise<void> => {
+  try {
+    await bunnyStorageService.delete(path);
+  } catch (err) {
+    logger.warn({ err, path, skillId }, 'Skill icon: best-effort Bunny delete failed; continuing');
+  }
+};
+
+const encodeIconToCappedWebp = async (input: Buffer): Promise<Buffer | null> => {
+  for (let quality = ICON_INITIAL_QUALITY; quality >= ICON_MIN_QUALITY; quality -= ICON_QUALITY_STEP) {
+    const out = await sharp(input)
+      .resize({ width: ICON_BOX_PX, height: ICON_BOX_PX, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer();
+    if (out.byteLength <= ICON_MAX_BYTES) return out;
+  }
+  return null;
+};
+
+export const processSkillIconUpload = async (
+  id: number,
+  file: Express.Multer.File,
+  callerId: number | null
+): Promise<SkillDto> => {
+  const existing = await getSkillById(id);
+  if (!existing) throw AppError.notFound(`Skill ${id} not found`);
+  if (existing.isDeleted) {
+    throw AppError.badRequest(`Skill ${id} is soft-deleted; restore it before uploading an icon`);
+  }
+
+  try {
+    await sharp(file.buffer).metadata();
+  } catch (err) {
+    logger.warn({ err, skillId: id }, 'Skill icon: sharp failed to read metadata');
+    throw AppError.badRequest('Uploaded file is not a readable image');
+  }
+
+  let webpBuffer: Buffer | null;
+  try {
+    webpBuffer = await encodeIconToCappedWebp(file.buffer);
+  } catch (err) {
+    logger.error({ err, skillId: id }, 'Skill icon: sharp WebP encode failed');
+    throw AppError.internal('Failed to convert skill icon to WebP');
+  }
+  if (!webpBuffer) {
+    throw AppError.badRequest(
+      `Skill icon is too complex to compress under ${Math.round(ICON_MAX_BYTES / 1024)} KB. Try a simpler image.`,
+      { maxBytes: ICON_MAX_BYTES }
+    );
+  }
+
+  const targetPath = `skills/icons/${id}.webp`;
+  const priorPathFromUrl = extractBunnyPath(existing.iconUrl);
+  const pathsToEvict = new Set<string>();
+  if (priorPathFromUrl) pathsToEvict.add(priorPathFromUrl);
+  if (priorPathFromUrl !== targetPath) pathsToEvict.add(targetPath);
+
+  for (const p of pathsToEvict) {
+    await safeDeleteFromBunny(p, id);
+  }
+
+  const uploadResult = await bunnyStorageService.upload({
+    buffer: webpBuffer,
+    targetPath,
+    contentType: 'image/webp'
+  });
+
+  const newIconUrl = uploadResult.cdnUrl;
+  await setSkillIconUrl(id, newIconUrl, callerId);
+
+  const updated = await getSkillById(id);
+  return updated!;
+};
+
+export const deleteSkillIcon = async (
+  id: number,
+  callerId: number | null
+): Promise<void> => {
+  const existing = await getSkillById(id);
+  if (!existing) throw AppError.notFound(`Skill ${id} not found`);
+  if (!existing.iconUrl) return; // nothing to delete
+
+  const bunnyPath = extractBunnyPath(existing.iconUrl);
+  if (bunnyPath) await safeDeleteFromBunny(bunnyPath, id);
+
+  await setSkillIconUrl(id, null, callerId);
 };
 
 // ─── Delete (soft) ───────────────────────────────────────────────

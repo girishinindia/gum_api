@@ -185,6 +185,14 @@ export const uploadSocialMediaIcon = singleFileUpload({
   label: 'Social media icon'
 });
 
+/** `PATCH /api/v1/skills/:id/icon` */
+export const uploadSkillIcon = singleFileUpload({
+  field: 'file',
+  maxBytes: PHASE2_IMAGE_MAX_BYTES,
+  mimeAllowlist: PHASE2_IMAGE_MIMES,
+  label: 'Skill icon'
+});
+
 // NOTE: The previously-exported single-file factories for countries,
 // specializations, categories and sub-categories were deleted when
 // their routes were unified into PATCH /:id. If you need to re-add a

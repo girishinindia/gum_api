@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
+import { uploadSkillIcon } from '../../../core/middlewares/upload';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -70,6 +71,32 @@ router.patch(
     await skillsService.updateSkill(id, body, req.user?.id ?? null);
     const skill = await skillsService.getSkillById(id);
     return ok(res, skill, 'Skill updated');
+  })
+);
+
+// ─── PATCH /:id/icon  icon file upload ────────────────────────────
+//
+// Accepts multipart/form-data with a single image file (field: "file").
+// Pipeline: decode → resize ≤256×256 → WebP encode → Bunny PUT.
+
+router.patch(
+  '/:id/icon',
+  authorize('skill.update'),
+  uploadSkillIcon,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const id = Number((req.params as unknown as { id: number }).id);
+    if (!req.file) {
+      throw AppError.badRequest(
+        'No icon file provided. Send multipart/form-data with field "file".'
+      );
+    }
+    const skill = await skillsService.processSkillIconUpload(
+      id,
+      req.file,
+      req.user?.id ?? null
+    );
+    return ok(res, skill, 'Skill icon updated');
   })
 );
 
