@@ -274,6 +274,20 @@ const multiSlotUpload = (opts: MultiSlotUploadOptions): RequestHandler => {
   }).any();
 
   return (req: Request, res: Response, next: NextFunction) => {
+    // Skip multer entirely for non-multipart requests (e.g. plain JSON).
+    // Without this guard multer throws "Multipart: Boundary not found".
+    const ct = req.headers['content-type'] ?? '';
+    if (!ct.startsWith('multipart/')) {
+      // Still initialize empty slotFiles so handlers can safely read slots.
+      (
+        req as unknown as {
+          slotFiles: Record<string, Express.Multer.File | undefined>;
+        }
+      ).slotFiles = Object.fromEntries(slotNames.map((s) => [s, undefined]));
+      next();
+      return;
+    }
+
     handler(req, res, (err: unknown) => {
       if (err) {
         if (err instanceof MulterError) {
