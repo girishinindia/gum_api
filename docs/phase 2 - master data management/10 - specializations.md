@@ -371,7 +371,11 @@ Partial update.
 |---|---|---|
 | `id` | int | Numeric specialization id. |
 
-**Request body** (`application/json`)
+### Text-only update (`application/json`)
+
+**Headers** — set `Content-Type: application/json`
+
+**Request body**
 
 ```json
 {
@@ -379,6 +383,26 @@ Partial update.
   "isActive": true
 }
 ```
+
+**Optional fields**: `name`, `description`, `isActive`. Provide at least one.
+
+### Icon upload / clear (`multipart/form-data`)
+
+**Headers** — set `Content-Type: multipart/form-data` (Postman sets the boundary automatically)
+
+**Body fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | no | Update the specialization name. |
+| `description` | text | no | Update the description. |
+| `isActive` | text | no | Update active status (`"true"` or `"false"`). |
+| `icon` | file | no* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256 × 256 box, re-encoded to WebP, stored at `specializations/icons/<id>.webp`. |
+| `iconImage` | file | no* | Alias for `icon` field. |
+| `file` | file | no* | Alias for `icon` field. |
+| `iconAction` | text | no | Send `delete` to clear the existing icon. Mutually exclusive with a file upload. |
+
+\* For icon operations: Either upload a file (via `icon`, `iconImage`, or `file`) **or** send `iconAction=delete`. At least one text field or one icon operation must be present.
 
 **Postman examples**
 

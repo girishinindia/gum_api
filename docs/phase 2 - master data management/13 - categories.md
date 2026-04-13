@@ -264,7 +264,7 @@ Include text fields plus optional image files. All files are processed through t
 |---|---|---|---|
 | `name` | text | yes | Category name. |
 | `isActive` | text | no | `true` or `false`; defaults to `false`. |
-| `icon` / `iconImage` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed to WebP. Optional field alias: `iconImage`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed to WebP. Optional field aliases: `iconImage`, `file`. |
 | `image` / `categoryImage` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed to WebP. Optional field alias: `categoryImage`. |
 
 When both files are provided, both `iconUrl` and `imageUrl` will appear in the response.

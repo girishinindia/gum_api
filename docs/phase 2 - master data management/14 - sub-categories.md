@@ -262,7 +262,7 @@ Create a sub-category. Permission: `sub_category.create`.
 |---|---|---|---|
 | `name` | text | yes | Sub-category name. |
 | `isActive` | text | no | `"true"` or `"false"` (defaults to `false`). |
-| `icon` (or `iconImage`) | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed through WebP pipeline. Returns `iconUrl` in response. |
+| `icon` (aliases: `iconImage`, `file`) | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed through WebP pipeline. Returns `iconUrl` in response. |
 | `image` (or `subCategoryImage`) | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Processed through WebP pipeline. Returns `imageUrl` in response. |
 
 Both `icon` and `image` fields are optional; include only the files you want to upload. Both are processed server-side and will appear in the response with their Bunny CDN URLs.
@@ -354,7 +354,11 @@ Partial update.
 |---|---|---|
 | `id` | int | Numeric sub-category id. |
 
-**Request body** (`application/json`)
+### Text-only update (`application/json`)
+
+**Headers** — set `Content-Type: application/json`
+
+**Request body**
 
 ```json
 {
@@ -363,13 +367,35 @@ Partial update.
 }
 ```
 
+**Optional fields**: `name`, `code`, `slug`, `displayOrder`, `isActive`, `categoryId`. Provide at least one.
+
+### Icon / image upload / clear (`multipart/form-data`)
+
+**Headers** — set `Content-Type: multipart/form-data` (Postman sets the boundary automatically)
+
+**Body fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | no | Update the sub-category name. |
+| `code` | text | no | Update the code. |
+| `slug` | text | no | Update the slug. |
+| `displayOrder` | text | no | Update the display order. |
+| `isActive` | text | no | Update active status (`"true"` or `"false"`). |
+| `icon` (aliases: `iconImage`, `file`) | file | no* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256 × 256 box, re-encoded to WebP, stored at `sub-categories/icons/<id>.webp`. |
+| `image` (alias: `subCategoryImage`) | file | no* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 1024 × 1024 box, re-encoded to WebP, stored at `sub-categories/images/<id>.webp`. |
+| `iconAction` | text | no | Send `delete` to clear the existing icon. Mutually exclusive with an icon file upload. |
+| `imageAction` | text | no | Send `delete` to clear the existing image. Mutually exclusive with an image file upload. |
+
+\* At least one text field or one file/action operation must be present in the request.
+
 **Postman examples**
 
 | # | Example name | Content-Type | Body |
 |---|---|---|---|
 | 1 | Update — JSON (no images) | `application/json` | `{ "displayOrder": 2, "isActive": true }` |
 | 2 | Update — form-data + text + icon + image | `multipart/form-data` | `slug` = `web-dev`, `icon` = `web-v2.png` (file), `image` = `web-hero-v2.png` (file) |
-| 3 | Update — form-data image only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
+| 3 | Update — form-data icon only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

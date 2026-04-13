@@ -103,7 +103,6 @@ export const createCountryBodySchema = z.object({
   nationality: z.string().trim().min(2).max(64).optional(),
   languages: languagesSchema.optional(),
   tld: z.string().trim().min(2).max(16).optional(),
-  flagImage: z.string().trim().min(1).max(255).optional(),
   isActive: z.boolean().optional()
 });
 export type CreateCountryBody = z.infer<typeof createCountryBodySchema>;

@@ -4,9 +4,12 @@ import authRoutes from './auth/auth.routes';
 import healthRoutes from './health/health.routes';
 import rolePermissionsRoutes from './junctions/role-permissions.routes';
 import userPermissionsRoutes from './junctions/user-permissions.routes';
+import branchDepartmentsRoutes from './resources/branch-departments.routes';
+import branchesRoutes from './resources/branches.routes';
 import categoriesRoutes from './resources/categories.routes';
 import citiesRoutes from './resources/cities.routes';
 import countriesRoutes from './resources/countries.routes';
+import departmentsRoutes from './resources/departments.routes';
 import designationsRoutes from './resources/designations.routes';
 import documentTypesRoutes from './resources/document-types.routes';
 import documentsRoutes from './resources/documents.routes';
@@ -23,7 +26,7 @@ import subCategoriesRoutes from './resources/sub-categories.routes';
 import usersRoutes from './users/users.routes';
 
 // ═══════════════════════════════════════════════════════════════
-// v1 router aggregator — Phase 00 / 01 / 02 only.
+// v1 router aggregator — Phase 00 / 01 / 02 / 03.
 // ═══════════════════════════════════════════════════════════════
 
 const v1Router = Router();
@@ -54,5 +57,10 @@ v1Router.use('/learning-goals', learningGoalsRoutes);
 v1Router.use('/social-medias', socialMediasRoutes);
 v1Router.use('/categories', categoriesRoutes);
 v1Router.use('/sub-categories', subCategoriesRoutes);
+
+// ── Phase 03 — Branch management ─────────────────────────────
+v1Router.use('/branches', branchesRoutes);
+v1Router.use('/departments', departmentsRoutes);
+v1Router.use('/branch-departments', branchDepartmentsRoutes);
 
 export default v1Router;

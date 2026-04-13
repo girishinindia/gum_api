@@ -416,12 +416,15 @@ export const getSlotFile = (
   return bag?.[slot];
 };
 
-// ─── Per-resource PATCH upload middlewares ──────────────────────
+// ─── Per-resource upload middlewares (POST + PATCH) ─────────────
 //
-// Each of the four resources below has a PATCH handler that accepts
-// text-field updates AND optional image uploads in the same request.
-// On JSON requests these middlewares no-op; on multipart they populate
-// `req.slotFiles`.
+// Reused by both POST (create with optional file) and PATCH (update
+// with optional file) handlers. On JSON requests these middlewares
+// no-op; on multipart they populate `req.slotFiles`.
+//
+// Alias convention: every icon slot accepts ['icon', 'iconImage', 'file'].
+// Image slots accept ['image', '<resource>Image']. The `file` alias is
+// deliberately reserved for the icon slot only (single-image resources).
 
 /** `PATCH /api/v1/countries/:id` — optional flag slot (25 KB). */
 export const patchCountryFiles = multiSlotUpload({
@@ -439,7 +442,7 @@ export const patchCountryFiles = multiSlotUpload({
 export const patchCategoryFiles = multiSlotUpload({
   slots: {
     icon: {
-      field: ['icon', 'iconImage'],
+      field: ['icon', 'iconImage', 'file'],
       maxBytes: PHASE2_IMAGE_MAX_BYTES,
       mimeAllowlist: PHASE2_IMAGE_MIMES,
       label: 'Category icon'
@@ -457,7 +460,7 @@ export const patchCategoryFiles = multiSlotUpload({
 export const patchSubCategoryFiles = multiSlotUpload({
   slots: {
     icon: {
-      field: ['icon', 'iconImage'],
+      field: ['icon', 'iconImage', 'file'],
       maxBytes: PHASE2_IMAGE_MAX_BYTES,
       mimeAllowlist: PHASE2_IMAGE_MIMES,
       label: 'Sub-category icon'

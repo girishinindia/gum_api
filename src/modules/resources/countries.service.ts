@@ -163,7 +163,7 @@ export const createCountry = async (
     p_nationality: body.nationality ?? null,
     p_languages: body.languages ? JSON.stringify(body.languages) : null,
     p_tld: body.tld ?? null,
-    p_flag_image: body.flagImage ?? null,
+    p_flag_image: null,  // set only by processCountryFlagUpload pipeline
     p_is_active: body.isActive ?? true,
     p_created_by: callerId
   });

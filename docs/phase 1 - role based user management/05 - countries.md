@@ -292,7 +292,7 @@ Create a country. Permission: `country.create`.
 
 This route accepts **two content types** and both hit the same handler:
 
-* **`application/json`** — all fields as JSON.
+* **`application/json`** — all fields as JSON. The `flagImage` response field is set only by the file upload pipeline — it cannot be passed as a JSON body field.
 * **`multipart/form-data`** — text fields and an optional flag file. The optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`). When the flag part is present, the server runs the flag pipeline before returning the created row: decode via sharp, enforce exact 90 × 90 dimensions, re-encode to WebP (quality 90), then PUT the WebP under the deterministic key **`countries/flags/<iso3>.webp`**. The CDN URL is returned in the `flagImage` field of the 201 response.
 
 **Postman examples**
@@ -304,7 +304,7 @@ This route accepts **two content types** and both hit the same handler:
 
 **Required fields**: `name`, `iso2`, `iso3`.
 
-**Optional fields**: `phoneCode`, `currency`, `currencyName`, `currencySymbol`, `nationalLanguage`, `nationality`, `languages`, `tld`, `flag` (multipart only), `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
+**Optional fields**: `phoneCode`, `currency`, `currencyName`, `currencySymbol`, `nationalLanguage`, `nationality`, `languages`, `tld`, `flag` (multipart only; aliases: `flagImage`, `file`), `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
 `iso2` is normalised to upper-case and `iso3` to upper-case at the DB layer.
 
@@ -494,6 +494,8 @@ This route accepts **two content types** and both hit the same handler:
 | `id` | int | Numeric country id. |
 
 **Request body** — JSON or multipart:
+
+For `multipart/form-data`, the optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`).
 
 **Postman examples**
 
