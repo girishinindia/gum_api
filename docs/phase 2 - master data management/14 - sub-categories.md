@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§14.2](#142) | `GET` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.read | Get a single sub-category by id. |
 | [§14.3](#143) | `POST` | `{{baseUrl}}/api/v1/sub-categories` | sub_category.create | Create a new sub-category. |
 | [§14.4](#144) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.update | Partial update — JSON or multipart with `icon`/`image`. |
-| [§14.5](#145) | `DELETE` | `{{baseUrl}}/api/v1/sub-categories/:id` | sub_category.delete | Soft-delete. |
-| [§14.6](#146) | `POST` | `{{baseUrl}}/api/v1/sub-categories/:id/restore` | sub_category.restore | Undo a soft-delete. |
+| [§14.5](#145) | `DELETE` | `{{baseUrl}}/api/v1/sub-categories/:id` | **super_admin** + sub_category.delete | Soft-delete. |
+| [§14.6](#146) | `POST` | `{{baseUrl}}/api/v1/sub-categories/:id/restore` | **super_admin** + sub_category.restore | Undo a soft-delete. |
 | [§14.7](#147) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id/icon` | sub_category.update | Upload / replace / clear icon via `multipart/form-data`. |
 | [§14.9](#149) | `PATCH` | `{{baseUrl}}/api/v1/sub-categories/:id/image` | sub_category.update | Upload / replace / clear image via `multipart/form-data`. |
 
@@ -380,7 +380,7 @@ Same as 14.3.
 
 ## 14.5 `DELETE /api/v1/sub-categories/:id`
 
-Soft delete. Permission: `sub_category.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `sub_category.delete`.
 
 **Postman request**
 
@@ -388,7 +388,7 @@ Soft delete. Permission: `sub_category.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/sub-categories/:id` |
-| Permission | `sub_category.delete` |
+| Permission | **super_admin** + `sub_category.delete` |
 
 **Headers**
 
@@ -440,7 +440,7 @@ Same as 14.3.
 
 ## 14.6 `POST /api/v1/sub-categories/:id/restore`
 
-Reverse a soft delete. Permission: `sub_category.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `sub_category.restore`.
 
 **Postman request**
 
@@ -448,7 +448,7 @@ Reverse a soft delete. Permission: `sub_category.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/sub-categories/:id/restore` |
-| Permission | `sub_category.restore` |
+| Permission | **super_admin** + `sub_category.restore` |
 
 **Headers**
 

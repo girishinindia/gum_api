@@ -18,8 +18,9 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§5.2](#52) | `GET` | `{{baseUrl}}/api/v1/countries/:id` | country.read | Get a single country by id. |
 | [§5.3](#53) | `POST` | `{{baseUrl}}/api/v1/countries` | country.create | Create a new country. |
 | [§5.4](#54) | `PATCH` | `{{baseUrl}}/api/v1/countries/:id` | country.update | Partial update — accepts JSON or `multipart/form-data` with a `flag` file. |
-| [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/countries/:id` | country.delete | Soft-delete a country. |
-| [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/countries/:id/restore` | country.restore | Undo a soft-delete. |
+| [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/countries/:id` | **super_admin** + country.delete | Soft-delete a country. |
+| [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/countries/:id/restore` | **super_admin** + country.restore | Undo a soft-delete. |
+| [§5.7a](#57a) | `PATCH` | `{{baseUrl}}/api/v1/countries/:id/flag` | country.update | Convenience alias — flag-only upload via `multipart/form-data`. |
 
 ---
 
@@ -592,7 +593,7 @@ Bunny Storage rejected the PUT (network or auth error against the CDN).
 
 ## 5.5 `DELETE /api/v1/countries/:id`
 
-Soft delete. Sets `is_deleted = TRUE` on the row but keeps it in the table — call `POST /:id/restore` to bring it back. Permission: `country.delete`.
+Soft delete. Sets `is_deleted = TRUE` on the row but keeps it in the table — call `POST /:id/restore` to bring it back. **Requires `super_admin` role** + permission: `country.delete`.
 
 **Postman request**
 
@@ -665,7 +666,7 @@ Non-numeric id.
 
 ## 5.6 `POST /api/v1/countries/:id/restore`
 
-Reverse a soft delete — sets `is_deleted = FALSE`. Permission: `country.restore`.
+Reverse a soft delete — sets `is_deleted = FALSE`. **Requires `super_admin` role** + permission: `country.restore`.
 
 **Postman request**
 
@@ -754,7 +755,7 @@ Non-numeric id, or the row was never deleted (`is_deleted = FALSE`):
 
 ## 5.7 Flag upload — unified into `PATCH /:id`
 
-The dedicated `POST /api/v1/countries/:id/flag` endpoint was **removed in phase-02 Stage 4**. Flag uploads now travel through `PATCH /:id` (section 5.4) with a `multipart/form-data` body that carries the file under the form-data field **`flag`**.
+Flag uploads travel through `PATCH /:id` (section 5.4) with a `multipart/form-data` body that carries the file under the form-data field **`flag`**. A **convenience alias** `PATCH /:id/flag` is also available — it accepts the same multipart body with only the flag file (no text fields) and runs the same pipeline. See [§5.7a](#57a) below.
 
 **Sample — upload a new flag with no other field changes**
 
@@ -797,6 +798,42 @@ The dedicated `POST /api/v1/countries/:id/flag` endpoint was **removed in phase-
 **Body** — form-data:
 - Field name: `phoneCode`, Value: `+91`
 - Field name: `flag`, File: `india-90x90.png`
+
+---
+
+## 5.7a `PATCH /api/v1/countries/:id/flag`
+
+Convenience alias for flag-only uploads. Equivalent to sending `PATCH /:id` with only the flag file and no text fields. Permission: `country.update`.
+
+**Postman request**
+
+| Field | Value |
+|---|---|
+| Method | `PATCH` |
+| URL | `{{baseUrl}}/api/v1/countries/:id/flag` |
+| Permission | `country.update` |
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` |
+
+**Body** — form-data:
+- Field name: `flag` (aliases: `flagImage`, `file`), File: `india-90x90.png`
+
+If no flag file is provided, returns:
+
+```json
+{
+  "success": false,
+  "message": "No flag file provided. Send multipart/form-data with field \"flag\", \"flagImage\", or \"file\".",
+  "code": "BAD_REQUEST"
+}
+```
+
+All other responses and error codes are the same as §5.4 (flag validation rules, Bunny upload errors, etc.).
 
 ---
 

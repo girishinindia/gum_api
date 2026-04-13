@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§4.2](#42) | `GET` | `{{baseUrl}}/api/v1/languages/:id` | language.read | Get a single language by id. |
 | [§4.3](#43) | `POST` | `{{baseUrl}}/api/v1/languages` | language.create | Create a new language. |
 | [§4.4](#44) | `PATCH` | `{{baseUrl}}/api/v1/languages/:id` | language.update | Partial update of a language. |
-| [§4.5](#45) | `DELETE` | `{{baseUrl}}/api/v1/languages/:id` | language.delete | Soft-delete a language. |
-| [§4.6](#46) | `POST` | `{{baseUrl}}/api/v1/languages/:id/restore` | language.restore | Undo a soft-delete. |
+| [§4.5](#45) | `DELETE` | `{{baseUrl}}/api/v1/languages/:id` | **super_admin** + language.delete | Soft-delete a language. |
+| [§4.6](#46) | `POST` | `{{baseUrl}}/api/v1/languages/:id/restore` | **super_admin** + language.restore | Undo a soft-delete. |
 
 ---
 
@@ -380,7 +380,7 @@ Same as 4.3.
 
 ## 4.5 `DELETE /api/v1/languages/:id`
 
-Soft delete. Permission: `language.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `language.delete`.
 
 **Postman request**
 
@@ -388,7 +388,7 @@ Soft delete. Permission: `language.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/languages/:id` |
-| Permission | `language.delete` |
+| Permission | **super_admin** + `language.delete` |
 
 **Headers**
 
@@ -440,7 +440,7 @@ Same as 4.3.
 
 ## 4.6 `POST /api/v1/languages/:id/restore`
 
-Reverse a soft delete. Permission: `language.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `language.restore`.
 
 **Postman request**
 
@@ -448,7 +448,7 @@ Reverse a soft delete. Permission: `language.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/languages/:id/restore` |
-| Permission | `language.restore` |
+| Permission | **super_admin** + `language.restore` |
 
 **Headers**
 

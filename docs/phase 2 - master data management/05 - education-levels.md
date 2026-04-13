@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§5.2](#52) | `GET` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.read | Get a single education level by id. |
 | [§5.3](#53) | `POST` | `{{baseUrl}}/api/v1/education-levels` | education_level.create | Create a new education level. |
 | [§5.4](#54) | `PATCH` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.update | Partial update. |
-| [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/education-levels/:id` | education_level.delete | Soft-delete. |
-| [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/education-levels/:id/restore` | education_level.restore | Undo a soft-delete. |
+| [§5.5](#55) | `DELETE` | `{{baseUrl}}/api/v1/education-levels/:id` | **super_admin** + education_level.delete | Soft-delete. |
+| [§5.6](#56) | `POST` | `{{baseUrl}}/api/v1/education-levels/:id/restore` | **super_admin** + education_level.restore | Undo a soft-delete. |
 
 ---
 
@@ -378,7 +378,7 @@ Same as 5.3.
 
 ## 5.5 `DELETE /api/v1/education-levels/:id`
 
-Soft delete. Permission: `education_level.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `education_level.delete`.
 
 **Postman request**
 
@@ -386,7 +386,7 @@ Soft delete. Permission: `education_level.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/education-levels/:id` |
-| Permission | `education_level.delete` |
+| Permission | **super_admin** + `education_level.delete` |
 
 **Headers**
 
@@ -438,7 +438,7 @@ Same as 5.3.
 
 ## 5.6 `POST /api/v1/education-levels/:id/restore`
 
-Reverse a soft delete. Permission: `education_level.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `education_level.restore`.
 
 **Postman request**
 
@@ -446,7 +446,7 @@ Reverse a soft delete. Permission: `education_level.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/education-levels/:id/restore` |
-| Permission | `education_level.restore` |
+| Permission | **super_admin** + `education_level.restore` |
 
 **Headers**
 

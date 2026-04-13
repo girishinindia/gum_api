@@ -2,7 +2,7 @@
 
 End-to-end walkthrough for phase-2 master data management — from logging in as Super Admin through creating a geography chain (country → state → city), seeding leaf resources (skills, languages, etc.), and verifying the 65-row auto-seeded permission set. All requests use the Postman collection and environment variables established in [§7 of 00 - overview](00%20-%20overview.md#7-postman-environment).
 
-← [05 education-levels](05%20-%20education-levels.md) · **Next →** [07 document-types](07%20-%20document-types.md) · [Phase 1 walkthrough](../phase%201%20-%20role%20based%20user%20management/10%20-%20walkthrough%20and%20index.md) · [Phase 3 walkthrough](../phase%203%20-%20branch%20management/04%20-%20walkthrough%20and%20index.md)
+← [05 education-levels](05%20-%20education-levels.md) · **Next →** [07 document-types](07%20-%20document-types.md) · [Phase 1 walkthrough](../phase%201%20-%20role%20based%20user%20management/10%20-%20walkthrough%20and%20index.md)
 
 ---
 
@@ -119,7 +119,7 @@ Phase 2 permission seed calls `udf_auto_create_resource_permissions` 13 times, p
 | All state permissions | `GET {{baseUrl}}/api/v1/permissions?searchTerm=state.&pageSize=50` | 5 rows: `read`, `create`, `update`, `delete`, `restore` |
 | All permissions (spot check) | `GET {{baseUrl}}/api/v1/permissions?pageSize=100` | At least 65 rows across the 13 resources |
 | Super Admin has all | `GET {{baseUrl}}/api/v1/role-permissions?roleName=super_admin&pageSize=100` | All 65 rows (role level 0 gets everything) |
-| Admin has all except delete | `GET {{baseUrl}}/api/v1/role-permissions?roleName=admin&resource=state&pageSize=50` | 4 rows: `read`, `create`, `update`, `restore` (no `delete`) |
+| Admin has read/create/update | `GET {{baseUrl}}/api/v1/role-permissions?roleName=admin&resource=state&pageSize=50` | 3 rows: `read`, `create`, `update` (no `delete` or `restore` — both require `super_admin` role) |
 
 ---
 
@@ -142,19 +142,96 @@ Full reference table for all phase-2 routes:
 
 | # | Resource | Method | URL | Permission | Doc |
 |---|---|---|---|---|---|
-| 1 | States | GET | `{{baseUrl}}/api/v1/states` | `state.read` | [01 §1.1](01%20-%20states.md#11-get-apiv1states) |
-| 2 | States | GET | `{{baseUrl}}/api/v1/states/:id` | `state.read` | [01 §1.2](01%20-%20states.md#12-get-apiv1statesid) |
-| 3 | States | POST | `{{baseUrl}}/api/v1/states` | `state.create` | [01 §1.3](01%20-%20states.md#13-post-apiv1states) |
-| 4 | States | PATCH | `{{baseUrl}}/api/v1/states/:id` | `state.update` | [01 §1.4](01%20-%20states.md#14-patch-apiv1statesid) |
-| 5 | States | DELETE | `{{baseUrl}}/api/v1/states/:id` | `state.delete` | [01 §1.5](01%20-%20states.md#15-delete-apiv1statesid) |
-| 6 | States | POST | `{{baseUrl}}/api/v1/states/:id/restore` | `state.restore` | [01 §1.6](01%20-%20states.md#16-post-apiv1statesidrestore) |
-| 7 | Cities | GET | `{{baseUrl}}/api/v1/cities` | `city.read` | [02 §2.1](02%20-%20cities.md#21-get-apiv1cities) |
-| 8 | Cities | GET | `{{baseUrl}}/api/v1/cities/:id` | `city.read` | [02 §2.2](02%20-%20cities.md#22-get-apiv1citiesid) |
-| 9 | Cities | POST | `{{baseUrl}}/api/v1/cities` | `city.create` | [02 §2.3](02%20-%20cities.md#23-post-apiv1cities) |
-| 10 | Cities | PATCH | `{{baseUrl}}/api/v1/cities/:id` | `city.update` | [02 §2.4](02%20-%20cities.md#24-patch-apiv1citiesid) |
-| 11 | Cities | DELETE | `{{baseUrl}}/api/v1/cities/:id` | `city.delete` | [02 §2.5](02%20-%20cities.md#25-delete-apiv1citiesid) |
-| 12 | Cities | POST | `{{baseUrl}}/api/v1/cities/:id/restore` | `city.restore` | [02 §2.6](02%20-%20cities.md#26-post-apiv1citiesidrestore) |
-| (13-78) | Skills, Languages, Education Levels, Document Types, Documents, Designations, Specializations, Learning Goals, Social Medias, Categories, Sub-Categories | GET, GET /:id, POST, PATCH, DELETE, POST /:id/restore | `/api/v1/<resource>` and variants | `<resource>.read/create/update/delete/restore` | [03–14] |
+| 1 | States | GET | `/api/v1/states` | `state.read` | [01](01%20-%20states.md) |
+| 2 | States | GET | `/api/v1/states/:id` | `state.read` | [01](01%20-%20states.md) |
+| 3 | States | POST | `/api/v1/states` | `state.create` | [01](01%20-%20states.md) |
+| 4 | States | PATCH | `/api/v1/states/:id` | `state.update` | [01](01%20-%20states.md) |
+| 5 | States | DELETE | `/api/v1/states/:id` | **super_admin** + `state.delete` | [01](01%20-%20states.md) |
+| 6 | States | POST | `/api/v1/states/:id/restore` | **super_admin** + `state.restore` | [01](01%20-%20states.md) |
+| 7 | Cities | GET | `/api/v1/cities` | `city.read` | [02](02%20-%20cities.md) |
+| 8 | Cities | GET | `/api/v1/cities/:id` | `city.read` | [02](02%20-%20cities.md) |
+| 9 | Cities | POST | `/api/v1/cities` | `city.create` | [02](02%20-%20cities.md) |
+| 10 | Cities | PATCH | `/api/v1/cities/:id` | `city.update` | [02](02%20-%20cities.md) |
+| 11 | Cities | DELETE | `/api/v1/cities/:id` | **super_admin** + `city.delete` | [02](02%20-%20cities.md) |
+| 12 | Cities | POST | `/api/v1/cities/:id/restore` | **super_admin** + `city.restore` | [02](02%20-%20cities.md) |
+| 13 | Skills | GET | `/api/v1/skills` | `skill.read` | [03](03%20-%20skills.md) |
+| 14 | Skills | GET | `/api/v1/skills/:id` | `skill.read` | [03](03%20-%20skills.md) |
+| 15 | Skills | POST | `/api/v1/skills` | `skill.create` | [03](03%20-%20skills.md) |
+| 16 | Skills | PATCH | `/api/v1/skills/:id` | `skill.update` | [03](03%20-%20skills.md) |
+| 17 | Skills | DELETE | `/api/v1/skills/:id` | **super_admin** + `skill.delete` | [03](03%20-%20skills.md) |
+| 18 | Skills | POST | `/api/v1/skills/:id/restore` | **super_admin** + `skill.restore` | [03](03%20-%20skills.md) |
+| 19 | Languages | GET | `/api/v1/languages` | `language.read` | [04](04%20-%20languages.md) |
+| 20 | Languages | GET | `/api/v1/languages/:id` | `language.read` | [04](04%20-%20languages.md) |
+| 21 | Languages | POST | `/api/v1/languages` | `language.create` | [04](04%20-%20languages.md) |
+| 22 | Languages | PATCH | `/api/v1/languages/:id` | `language.update` | [04](04%20-%20languages.md) |
+| 23 | Languages | DELETE | `/api/v1/languages/:id` | **super_admin** + `language.delete` | [04](04%20-%20languages.md) |
+| 24 | Languages | POST | `/api/v1/languages/:id/restore` | **super_admin** + `language.restore` | [04](04%20-%20languages.md) |
+| 25 | Education Levels | GET | `/api/v1/education-levels` | `education_level.read` | [05](05%20-%20education-levels.md) |
+| 26 | Education Levels | GET | `/api/v1/education-levels/:id` | `education_level.read` | [05](05%20-%20education-levels.md) |
+| 27 | Education Levels | POST | `/api/v1/education-levels` | `education_level.create` | [05](05%20-%20education-levels.md) |
+| 28 | Education Levels | PATCH | `/api/v1/education-levels/:id` | `education_level.update` | [05](05%20-%20education-levels.md) |
+| 29 | Education Levels | DELETE | `/api/v1/education-levels/:id` | **super_admin** + `education_level.delete` | [05](05%20-%20education-levels.md) |
+| 30 | Education Levels | POST | `/api/v1/education-levels/:id/restore` | **super_admin** + `education_level.restore` | [05](05%20-%20education-levels.md) |
+| 31 | Document Types | GET | `/api/v1/document-types` | `document_type.read` | [07](07%20-%20document-types.md) |
+| 32 | Document Types | GET | `/api/v1/document-types/:id` | `document_type.read` | [07](07%20-%20document-types.md) |
+| 33 | Document Types | POST | `/api/v1/document-types` | `document_type.create` | [07](07%20-%20document-types.md) |
+| 34 | Document Types | PATCH | `/api/v1/document-types/:id` | `document_type.update` | [07](07%20-%20document-types.md) |
+| 35 | Document Types | DELETE | `/api/v1/document-types/:id` | **super_admin** + `document_type.delete` | [07](07%20-%20document-types.md) |
+| 36 | Document Types | POST | `/api/v1/document-types/:id/restore` | **super_admin** + `document_type.restore` | [07](07%20-%20document-types.md) |
+| 37 | Documents | GET | `/api/v1/documents` | `document.read` | [08](08%20-%20documents.md) |
+| 38 | Documents | GET | `/api/v1/documents/:id` | `document.read` | [08](08%20-%20documents.md) |
+| 39 | Documents | POST | `/api/v1/documents` | `document.create` | [08](08%20-%20documents.md) |
+| 40 | Documents | PATCH | `/api/v1/documents/:id` | `document.update` | [08](08%20-%20documents.md) |
+| 41 | Documents | DELETE | `/api/v1/documents/:id` | **super_admin** + `document.delete` | [08](08%20-%20documents.md) |
+| 42 | Documents | POST | `/api/v1/documents/:id/restore` | **super_admin** + `document.restore` | [08](08%20-%20documents.md) |
+| 43 | Designations | GET | `/api/v1/designations` | `designation.read` | [09](09%20-%20designations.md) |
+| 44 | Designations | GET | `/api/v1/designations/:id` | `designation.read` | [09](09%20-%20designations.md) |
+| 45 | Designations | POST | `/api/v1/designations` | `designation.create` | [09](09%20-%20designations.md) |
+| 46 | Designations | PATCH | `/api/v1/designations/:id` | `designation.update` | [09](09%20-%20designations.md) |
+| 47 | Designations | DELETE | `/api/v1/designations/:id` | **super_admin** + `designation.delete` | [09](09%20-%20designations.md) |
+| 48 | Designations | POST | `/api/v1/designations/:id/restore` | **super_admin** + `designation.restore` | [09](09%20-%20designations.md) |
+| 49 | Specializations | GET | `/api/v1/specializations` | `specialization.read` | [10](10%20-%20specializations.md) |
+| 50 | Specializations | GET | `/api/v1/specializations/:id` | `specialization.read` | [10](10%20-%20specializations.md) |
+| 51 | Specializations | POST | `/api/v1/specializations` | `specialization.create` | [10](10%20-%20specializations.md) |
+| 52 | Specializations | PATCH | `/api/v1/specializations/:id` | `specialization.update` | [10](10%20-%20specializations.md) |
+| 53 | Specializations | DELETE | `/api/v1/specializations/:id` | **super_admin** + `specialization.delete` | [10](10%20-%20specializations.md) |
+| 54 | Specializations | POST | `/api/v1/specializations/:id/restore` | **super_admin** + `specialization.restore` | [10](10%20-%20specializations.md) |
+| 55 | Learning Goals | GET | `/api/v1/learning-goals` | `learning_goal.read` | [11](11%20-%20learning-goals.md) |
+| 56 | Learning Goals | GET | `/api/v1/learning-goals/:id` | `learning_goal.read` | [11](11%20-%20learning-goals.md) |
+| 57 | Learning Goals | POST | `/api/v1/learning-goals` | `learning_goal.create` | [11](11%20-%20learning-goals.md) |
+| 58 | Learning Goals | PATCH | `/api/v1/learning-goals/:id` | `learning_goal.update` | [11](11%20-%20learning-goals.md) |
+| 59 | Learning Goals | DELETE | `/api/v1/learning-goals/:id` | **super_admin** + `learning_goal.delete` | [11](11%20-%20learning-goals.md) |
+| 60 | Learning Goals | POST | `/api/v1/learning-goals/:id/restore` | **super_admin** + `learning_goal.restore` | [11](11%20-%20learning-goals.md) |
+| 61 | Social Medias | GET | `/api/v1/social-medias` | `social_media.read` | [12](12%20-%20social-medias.md) |
+| 62 | Social Medias | GET | `/api/v1/social-medias/:id` | `social_media.read` | [12](12%20-%20social-medias.md) |
+| 63 | Social Medias | POST | `/api/v1/social-medias` | `social_media.create` | [12](12%20-%20social-medias.md) |
+| 64 | Social Medias | PATCH | `/api/v1/social-medias/:id` | `social_media.update` | [12](12%20-%20social-medias.md) |
+| 65 | Social Medias | DELETE | `/api/v1/social-medias/:id` | **super_admin** + `social_media.delete` | [12](12%20-%20social-medias.md) |
+| 66 | Social Medias | POST | `/api/v1/social-medias/:id/restore` | **super_admin** + `social_media.restore` | [12](12%20-%20social-medias.md) |
+| 67 | Categories | GET | `/api/v1/categories` | `category.read` | [13](13%20-%20categories.md) |
+| 68 | Categories | GET | `/api/v1/categories/:id` | `category.read` | [13](13%20-%20categories.md) |
+| 69 | Categories | POST | `/api/v1/categories` | `category.create` | [13](13%20-%20categories.md) |
+| 70 | Categories | PATCH | `/api/v1/categories/:id` | `category.update` | [13](13%20-%20categories.md) |
+| 71 | Categories | DELETE | `/api/v1/categories/:id` | **super_admin** + `category.delete` | [13](13%20-%20categories.md) |
+| 72 | Categories | POST | `/api/v1/categories/:id/restore` | **super_admin** + `category.restore` | [13](13%20-%20categories.md) |
+| 73 | Categories | GET | `/api/v1/categories/:id/translations` | `category_translation.read` | [13](13%20-%20categories.md) |
+| 74 | Categories | GET | `/api/v1/categories/:id/translations/:tid` | `category_translation.read` | [13](13%20-%20categories.md) |
+| 75 | Categories | POST | `/api/v1/categories/:id/translations` | `category_translation.create` | [13](13%20-%20categories.md) |
+| 76 | Categories | PATCH | `/api/v1/categories/:id/translations/:tid` | `category_translation.update` | [13](13%20-%20categories.md) |
+| 77 | Categories | DELETE | `/api/v1/categories/:id/translations/:tid` | **super_admin** + `category_translation.delete` | [13](13%20-%20categories.md) |
+| 78 | Categories | POST | `/api/v1/categories/:id/translations/:tid/restore` | **super_admin** + `category_translation.restore` | [13](13%20-%20categories.md) |
+| 79 | Sub-Categories | GET | `/api/v1/sub-categories` | `sub_category.read` | [14](14%20-%20sub-categories.md) |
+| 80 | Sub-Categories | GET | `/api/v1/sub-categories/:id` | `sub_category.read` | [14](14%20-%20sub-categories.md) |
+| 81 | Sub-Categories | POST | `/api/v1/sub-categories` | `sub_category.create` | [14](14%20-%20sub-categories.md) |
+| 82 | Sub-Categories | PATCH | `/api/v1/sub-categories/:id` | `sub_category.update` | [14](14%20-%20sub-categories.md) |
+| 83 | Sub-Categories | DELETE | `/api/v1/sub-categories/:id` | **super_admin** + `sub_category.delete` | [14](14%20-%20sub-categories.md) |
+| 84 | Sub-Categories | POST | `/api/v1/sub-categories/:id/restore` | **super_admin** + `sub_category.restore` | [14](14%20-%20sub-categories.md) |
+| 85 | Sub-Categories | GET | `/api/v1/sub-categories/:id/translations` | `sub_category_translation.read` | [14](14%20-%20sub-categories.md) |
+| 86 | Sub-Categories | GET | `/api/v1/sub-categories/:id/translations/:tid` | `sub_category_translation.read` | [14](14%20-%20sub-categories.md) |
+| 87 | Sub-Categories | POST | `/api/v1/sub-categories/:id/translations` | `sub_category_translation.create` | [14](14%20-%20sub-categories.md) |
+| 88 | Sub-Categories | PATCH | `/api/v1/sub-categories/:id/translations/:tid` | `sub_category_translation.update` | [14](14%20-%20sub-categories.md) |
+| 89 | Sub-Categories | DELETE | `/api/v1/sub-categories/:id/translations/:tid` | **super_admin** + `sub_category_translation.delete` | [14](14%20-%20sub-categories.md) |
+| 90 | Sub-Categories | POST | `/api/v1/sub-categories/:id/translations/:tid/restore` | **super_admin** + `sub_category_translation.restore` | [14](14%20-%20sub-categories.md) |
 
 ---
 
@@ -165,7 +242,7 @@ Full reference table for all phase-2 routes:
 | [00 overview](00%20-%20overview.md) | How phase 2 fits; the thirteen resources; permission auto-seed; list contract; Postman environment variables. |
 | [01 states](01%20-%20states.md) | `/api/v1/states` — country-joined CRUD, soft-delete, restore. |
 | [02 cities](02%20-%20cities.md) | `/api/v1/cities` — state/country-joined CRUD, soft-delete, restore. |
-| [03 skills](03%20-%20skills.md) | `/api/v1/skills` — flat resource with category enum. |
+| [03 skills](03%20-%20skills.md) | `/api/v1/skills` — flat resource with category enum; also exposes Bunny-backed icon upload. |
 | [04 languages](04%20-%20languages.md) | `/api/v1/languages` — flat resource with code and native name. |
 | [05 education-levels](05%20-%20education-levels.md) | `/api/v1/education-levels` — flat resource with display order. |
 | **06 walkthrough and index** | *(you are here)* End-to-end walkthrough + endpoint index + verify script entry point. |

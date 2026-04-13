@@ -97,19 +97,22 @@ export type CreateSocialMediaBody = z.infer<typeof createSocialMediaBodySchema>;
 
 // ─── Update body ─────────────────────────────────────────────────
 //
-// `iconUrl` is intentionally omitted here as well.
+// `iconUrl` is intentionally omitted — icons are set by uploading a
+// file under the `icon` field of this same PATCH request, or cleared
+// by passing `iconAction=delete`. Empty-body rejection is enforced in
+// the handler, not here, so that a multipart request with only an
+// icon upload still validates.
 
-export const updateSocialMediaBodySchema = z
-  .object({
-    name: nameSchema.optional(),
-    code: codeSchema.optional(),
-    baseUrl: baseUrlSchema,
-    placeholder: placeholderSchema,
-    platformType: platformTypeSchema.optional(),
-    displayOrder: z.number().int().optional(),
-    isActive: z.boolean().optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateSocialMediaBodySchema = z.object({
+  name: nameSchema.optional(),
+  code: codeSchema.optional(),
+  baseUrl: baseUrlSchema,
+  placeholder: placeholderSchema,
+  platformType: platformTypeSchema.optional(),
+  displayOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
+  iconAction: imageActionSchema
+});
 export type UpdateSocialMediaBody = z.infer<typeof updateSocialMediaBodySchema>;

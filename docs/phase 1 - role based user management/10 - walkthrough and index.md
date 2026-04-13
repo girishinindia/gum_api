@@ -142,48 +142,51 @@ The hierarchy check happens at the service layer before the UDF call, so the err
 | POST | `/api/v1/auth/reset-password/verify` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
 | POST | `/api/v1/auth/verify-email` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
 | POST | `/api/v1/auth/verify-email/confirm` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
+| POST | `/api/v1/auth/verify-email/resend` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
 | POST | `/api/v1/auth/verify-mobile` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
 | POST | `/api/v1/auth/verify-mobile/confirm` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
-| POST | `/api/v1/auth/change-email` | bearer | — | [04 email and mobile](04%20-%20email%20and%20mobile.md) |
-| POST | `/api/v1/auth/change-email/confirm` | bearer | — | [04 email and mobile](04%20-%20email%20and%20mobile.md) |
-| POST | `/api/v1/auth/change-mobile` | bearer | — | [04 email and mobile](04%20-%20email%20and%20mobile.md) |
-| POST | `/api/v1/auth/change-mobile/confirm` | bearer | — | [04 email and mobile](04%20-%20email%20and%20mobile.md) |
+| POST | `/api/v1/auth/verify-mobile/resend` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
+| POST | `/api/v1/auth/change-email` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
+| POST | `/api/v1/auth/change-email/confirm` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
+| POST | `/api/v1/auth/change-mobile` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
+| POST | `/api/v1/auth/change-mobile/confirm` | bearer | — | [03 auth otp flows](03%20-%20auth%20otp%20flows.md) |
 | GET | `/api/v1/users` | bearer | `user.read` | [05 users](05%20-%20users.md) |
 | GET | `/api/v1/users/:id` | bearer | `user.read` | [05 users](05%20-%20users.md) |
 | POST | `/api/v1/users` | bearer | `user.create` | [05 users](05%20-%20users.md) |
 | PATCH | `/api/v1/users/:id` | bearer | `user.update` | [05 users](05%20-%20users.md) |
-| DELETE | `/api/v1/users/:id` | bearer | `user.delete` | [05 users](05%20-%20users.md) |
-| POST | `/api/v1/users/:id/restore` | bearer | `user.restore` | [05 users](05%20-%20users.md) |
+| DELETE | `/api/v1/users/:id` | bearer | **super_admin** + `user.delete` | [05 users](05%20-%20users.md) |
+| POST | `/api/v1/users/:id/restore` | bearer | **super_admin** + `user.restore` | [05 users](05%20-%20users.md) |
 | POST | `/api/v1/users/:id/change-role` | bearer | `user.update` (super-admin only) | [05 users](05%20-%20users.md) |
 | POST | `/api/v1/users/:id/deactivate` | bearer | `user.update` (super-admin only) | [05 users](05%20-%20users.md) |
 | POST | `/api/v1/users/:id/set-verification` | bearer | `user.update` | [05 users](05%20-%20users.md) |
-| GET | `/api/v1/countries` | bearer | `country.read` | [06 master data](06%20-%20master%20data.md) |
-| GET | `/api/v1/countries/:id` | bearer | `country.read` | [06 master data](06%20-%20master%20data.md) |
-| POST | `/api/v1/countries` | bearer | `country.create` | [06 master data](06%20-%20master%20data.md) |
-| PATCH | `/api/v1/countries/:id` | bearer | `country.update` | [06 master data](06%20-%20master%20data.md) |
-| DELETE | `/api/v1/countries/:id` | bearer | `country.delete` | [06 master data](06%20-%20master%20data.md) |
-| POST | `/api/v1/countries/:id/restore` | bearer | `country.restore` | [06 master data](06%20-%20master%20data.md) |
-| GET | `/api/v1/roles` | bearer | `role.read` | [06 master data](06%20-%20master%20data.md) |
-| GET | `/api/v1/roles/:id` | bearer | `role.read` | [06 master data](06%20-%20master%20data.md) |
-| POST | `/api/v1/roles` | bearer | `role.create` | [06 master data](06%20-%20master%20data.md) |
-| PATCH | `/api/v1/roles/:id` | bearer | `role.update` | [06 master data](06%20-%20master%20data.md) |
-| DELETE | `/api/v1/roles/:id` | bearer | `role.delete` | [06 master data](06%20-%20master%20data.md) |
-| POST | `/api/v1/roles/:id/restore` | bearer | `role.restore` | [06 master data](06%20-%20master%20data.md) |
+| GET | `/api/v1/countries` | bearer | `country.read` | [05 countries](05%20-%20countries.md) |
+| GET | `/api/v1/countries/:id` | bearer | `country.read` | [05 countries](05%20-%20countries.md) |
+| POST | `/api/v1/countries` | bearer | `country.create` | [05 countries](05%20-%20countries.md) |
+| PATCH | `/api/v1/countries/:id` | bearer | `country.update` | [05 countries](05%20-%20countries.md) |
+| PATCH | `/api/v1/countries/:id/flag` | bearer | `country.update` | [05 countries](05%20-%20countries.md) |
+| DELETE | `/api/v1/countries/:id` | bearer | **super_admin** + `country.delete` | [05 countries](05%20-%20countries.md) |
+| POST | `/api/v1/countries/:id/restore` | bearer | **super_admin** + `country.restore` | [05 countries](05%20-%20countries.md) |
+| GET | `/api/v1/roles` | bearer | `role.read` | [06 roles](06%20-%20roles.md) |
+| GET | `/api/v1/roles/:id` | bearer | `role.read` | [06 roles](06%20-%20roles.md) |
+| POST | `/api/v1/roles` | bearer | `role.create` | [06 roles](06%20-%20roles.md) |
+| PATCH | `/api/v1/roles/:id` | bearer | `role.update` | [06 roles](06%20-%20roles.md) |
+| DELETE | `/api/v1/roles/:id` | bearer | **super_admin** + `role.delete` | [06 roles](06%20-%20roles.md) |
+| POST | `/api/v1/roles/:id/restore` | bearer | **super_admin** + `role.restore` | [06 roles](06%20-%20roles.md) |
 | GET | `/api/v1/permissions` | bearer | `permission.read` | [07 permissions](07%20-%20permissions.md) |
 | GET | `/api/v1/permissions/:id` | bearer | `permission.read` | [07 permissions](07%20-%20permissions.md) |
 | POST | `/api/v1/permissions` | bearer | `permission.create` | [07 permissions](07%20-%20permissions.md) |
 | PATCH | `/api/v1/permissions/:id` | bearer | `permission.update` | [07 permissions](07%20-%20permissions.md) |
-| DELETE | `/api/v1/permissions/:id` | bearer | `permission.delete` | [07 permissions](07%20-%20permissions.md) |
-| POST | `/api/v1/permissions/:id/restore` | bearer | `permission.restore` | [07 permissions](07%20-%20permissions.md) |
+| DELETE | `/api/v1/permissions/:id` | bearer | **super_admin** + `permission.delete` | [07 permissions](07%20-%20permissions.md) |
+| POST | `/api/v1/permissions/:id/restore` | bearer | **super_admin** + `permission.restore` | [07 permissions](07%20-%20permissions.md) |
 | GET | `/api/v1/role-permissions` | bearer | `permission.read` | [08 § 8.1](08%20-%20role-permissions.md#81-get-apiv1role-permissions) |
 | GET | `/api/v1/role-permissions/:id` | bearer | `permission.read` | [08 § 8.2](08%20-%20role-permissions.md#82-get-apiv1role-permissionsid) |
 | POST | `/api/v1/role-permissions` | bearer | `permission.assign` | [08 § 8.3](08%20-%20role-permissions.md#83-post-apiv1role-permissions) |
 | POST | `/api/v1/role-permissions/revoke` | bearer | `permission.assign` | [08 § 8.4](08%20-%20role-permissions.md#84-post-apiv1role-permissionsrevoke) |
-| DELETE | `/api/v1/role-permissions/:id` | bearer | `permission.assign` | [08 § 8.5](08%20-%20role-permissions.md#85-delete-apiv1role-permissionsid) |
-| POST | `/api/v1/role-permissions/:id/restore` | bearer | `permission.assign` | [08 § 8.6](08%20-%20role-permissions.md#86-post-apiv1role-permissionsidrestore) |
+| DELETE | `/api/v1/role-permissions/:id` | bearer | **super_admin** + `permission.assign` | [08 § 8.5](08%20-%20role-permissions.md#85-delete-apiv1role-permissionsid) |
+| POST | `/api/v1/role-permissions/:id/restore` | bearer | **super_admin** + `permission.assign` | [08 § 8.6](08%20-%20role-permissions.md#86-post-apiv1role-permissionsidrestore) |
 | GET | `/api/v1/user-permissions` | bearer | `permission.read` | [09 § 9.1](09%20-%20user-permissions.md#91-get-apiv1user-permissions) |
 | GET | `/api/v1/user-permissions/:id` | bearer | `permission.read` | [09 § 9.2](09%20-%20user-permissions.md#92-get-apiv1user-permissionsid) |
 | POST | `/api/v1/user-permissions` | bearer | `permission.assign` | [09 § 9.3](09%20-%20user-permissions.md#93-post-apiv1user-permissions) |
 | POST | `/api/v1/user-permissions/revoke` | bearer | `permission.assign` | [09 § 9.4](09%20-%20user-permissions.md#94-post-apiv1user-permissionsrevoke) |
-| DELETE | `/api/v1/user-permissions/:id` | bearer | `permission.assign` | [09 § 9.5](09%20-%20user-permissions.md#95-delete-apiv1user-permissionsid) |
-| POST | `/api/v1/user-permissions/:id/restore` | bearer | `permission.assign` | [09 § 9.6](09%20-%20user-permissions.md#96-post-apiv1user-permissionsidrestore) |
+| DELETE | `/api/v1/user-permissions/:id` | bearer | **super_admin** + `permission.assign` | [09 § 9.5](09%20-%20user-permissions.md#95-delete-apiv1user-permissionsid) |
+| POST | `/api/v1/user-permissions/:id/restore` | bearer | **super_admin** + `permission.assign` | [09 § 9.6](09%20-%20user-permissions.md#96-post-apiv1user-permissionsidrestore) |

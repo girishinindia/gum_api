@@ -65,16 +65,19 @@ export type CreateLearningGoalBody = z.infer<typeof createLearningGoalBodySchema
 
 // ─── Update body ─────────────────────────────────────────────────
 //
-// `iconUrl` is intentionally omitted here as well.
+// `iconUrl` is intentionally omitted — icons are set by uploading a
+// file under the `icon` field of this same PATCH request, or cleared
+// by passing `iconAction=delete`. Empty-body rejection is enforced in
+// the handler, not here, so that a multipart request with only an
+// icon upload still validates.
 
-export const updateLearningGoalBodySchema = z
-  .object({
-    name: nameSchema.optional(),
-    description: descriptionSchema,
-    displayOrder: z.number().int().optional(),
-    isActive: z.boolean().optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateLearningGoalBodySchema = z.object({
+  name: nameSchema.optional(),
+  description: descriptionSchema,
+  displayOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
+  iconAction: imageActionSchema
+});
 export type UpdateLearningGoalBody = z.infer<typeof updateLearningGoalBodySchema>;

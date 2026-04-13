@@ -439,7 +439,7 @@ Soft delete the override by junction id. Sets `is_deleted = TRUE` on the row. Pe
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/user-permissions/:id` |
-| Permission | `permission.assign` |
+| Permission | **super_admin** + `permission.assign` |
 
 **Headers**
 
@@ -511,7 +511,7 @@ Reverse a soft delete by junction id. Sets `is_deleted = FALSE` and returns the 
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/user-permissions/:id/restore` |
-| Permission | `permission.assign` |
+| Permission | **super_admin** + `permission.assign` |
 
 **Headers**
 

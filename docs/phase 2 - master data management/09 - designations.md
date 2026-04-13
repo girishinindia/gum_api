@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§9.2](#92) | `GET` | `{{baseUrl}}/api/v1/designations/:id` | designation.read | Get a single designation by id. |
 | [§9.3](#93) | `POST` | `{{baseUrl}}/api/v1/designations` | designation.create | Create a new designation. |
 | [§9.4](#94) | `PATCH` | `{{baseUrl}}/api/v1/designations/:id` | designation.update | Partial update. |
-| [§9.5](#95) | `DELETE` | `{{baseUrl}}/api/v1/designations/:id` | designation.delete | Soft-delete. |
-| [§9.6](#96) | `POST` | `{{baseUrl}}/api/v1/designations/:id/restore` | designation.restore | Undo a soft-delete. |
+| [§9.5](#95) | `DELETE` | `{{baseUrl}}/api/v1/designations/:id` | **super_admin** + designation.delete | Soft-delete. |
+| [§9.6](#96) | `POST` | `{{baseUrl}}/api/v1/designations/:id/restore` | **super_admin** + designation.restore | Undo a soft-delete. |
 
 ---
 
@@ -378,7 +378,7 @@ Same as 9.3.
 
 ## 9.5 `DELETE /api/v1/designations/:id`
 
-Soft delete. Permission: `designation.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `designation.delete`.
 
 **Postman request**
 
@@ -386,7 +386,7 @@ Soft delete. Permission: `designation.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/designations/:id` |
-| Permission | `designation.delete` |
+| Permission | **super_admin** + `designation.delete` |
 
 **Headers**
 
@@ -438,7 +438,7 @@ Same as 9.3.
 
 ## 9.6 `POST /api/v1/designations/:id/restore`
 
-Reverse a soft delete. Permission: `designation.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `designation.restore`.
 
 **Postman request**
 
@@ -446,7 +446,7 @@ Reverse a soft delete. Permission: `designation.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/designations/:id/restore` |
-| Permission | `designation.restore` |
+| Permission | **super_admin** + `designation.restore` |
 
 **Headers**
 

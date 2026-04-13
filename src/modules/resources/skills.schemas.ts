@@ -35,7 +35,6 @@ const nameSchema = z
   .max(128, 'name is too long');
 
 const descriptionSchema = z.string().trim().max(2000).optional();
-const iconUrlSchema = z.string().trim().max(512).optional();
 
 // ─── Sort allowlist ──────────────────────────────────────────────
 
@@ -70,22 +69,25 @@ export const createSkillBodySchema = z.object({
   name: nameSchema,
   category: categorySchema.default('technical'),
   description: descriptionSchema,
-  iconUrl: iconUrlSchema,
   isActive: z.boolean().optional()
 });
 export type CreateSkillBody = z.infer<typeof createSkillBodySchema>;
 
 // ─── Update body ─────────────────────────────────────────────────
+//
+// `iconUrl` is intentionally omitted — icons are set by uploading a
+// file under the `icon` field of this same PATCH request, or cleared
+// by passing `iconAction=delete`. Empty-body rejection is enforced in
+// the handler, not here, so that a multipart request with only an
+// icon upload still validates.
 
-export const updateSkillBodySchema = z
-  .object({
-    name: nameSchema.optional(),
-    category: categorySchema.optional(),
-    description: descriptionSchema,
-    iconUrl: iconUrlSchema,
-    isActive: z.boolean().optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+const imageActionSchema = z.enum(['delete']).optional();
+
+export const updateSkillBodySchema = z.object({
+  name: nameSchema.optional(),
+  category: categorySchema.optional(),
+  description: descriptionSchema,
+  isActive: z.boolean().optional(),
+  iconAction: imageActionSchema
+});
 export type UpdateSkillBody = z.infer<typeof updateSkillBodySchema>;

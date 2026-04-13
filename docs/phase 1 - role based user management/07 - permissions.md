@@ -18,8 +18,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§7.2](#72) | `GET` | `{{baseUrl}}/api/v1/permissions/:id` | permission.read | Get a single permission by id. |
 | [§7.3](#73) | `POST` | `{{baseUrl}}/api/v1/permissions` | permission.create | Create a new permission. |
 | [§7.4](#74) | `PATCH` | `{{baseUrl}}/api/v1/permissions/:id` | permission.update | Partial update of a permission. |
-| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/permissions/:id` | permission.delete | Soft-delete a permission. |
-| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/permissions/:id/restore` | permission.restore | Undo a soft-delete. |
+| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/permissions/:id` | **super_admin** + permission.delete | Soft-delete a permission. |
+| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/permissions/:id/restore` | **super_admin** + permission.restore | Undo a soft-delete. |
 
 ---
 
@@ -488,7 +488,7 @@ Partial update — supply any subset of fields, but at least one. Permission: `p
 
 ## 7.5 `DELETE /api/v1/permissions/:id`
 
-Soft delete — sets `is_deleted = TRUE`. Permission: `permission.delete`.
+Soft delete — sets `is_deleted = TRUE`. **Requires `super_admin` role** + permission: `permission.delete`.
 
 **Postman request**
 
@@ -496,7 +496,7 @@ Soft delete — sets `is_deleted = TRUE`. Permission: `permission.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/permissions/:id` |
-| Permission | `permission.delete` |
+| Permission | `**super_admin** + permission.delete` |
 
 **Headers**
 
@@ -561,7 +561,7 @@ Non-numeric id.
 
 ## 7.6 `POST /api/v1/permissions/:id/restore`
 
-Reverse a soft delete. Permission: `permission.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `permission.restore`.
 
 **Postman request**
 
@@ -569,7 +569,7 @@ Reverse a soft delete. Permission: `permission.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/permissions/:id/restore` |
-| Permission | `permission.restore` |
+| Permission | `**super_admin** + permission.restore` |
 
 **Headers**
 

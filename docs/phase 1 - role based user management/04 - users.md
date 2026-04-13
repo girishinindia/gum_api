@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§4.2](#42) | `GET` | `{{baseUrl}}/api/v1/users/:id` | user.read | Get a single user by numeric id. |
 | [§4.3](#43) | `POST` | `{{baseUrl}}/api/v1/users` | user.create | Create a new user. |
 | [§4.4](#44) | `PATCH` | `{{baseUrl}}/api/v1/users/:id` | user.update | Partial update of a user profile. |
-| [§4.5](#45) | `DELETE` | `{{baseUrl}}/api/v1/users/:id` | user.delete | Soft-delete a user. |
-| [§4.6](#46) | `POST` | `{{baseUrl}}/api/v1/users/:id/restore` | user.restore | Undo a soft-delete (sets `is_deleted=false`). |
+| [§4.5](#45) | `DELETE` | `{{baseUrl}}/api/v1/users/:id` | **super_admin** + user.delete | Soft-delete a user. |
+| [§4.6](#46) | `POST` | `{{baseUrl}}/api/v1/users/:id/restore` | **super_admin** + user.restore | Undo a soft-delete (sets `is_deleted=false`). |
 | [§4.7](#47) | `POST` | `{{baseUrl}}/api/v1/users/:id/change-role` | user.manage_roles | Change a user's role assignment. |
 | [§4.8](#48) | `POST` | `{{baseUrl}}/api/v1/users/:id/deactivate` | user.update | Flip `is_active` off without deleting. |
 | [§4.9](#49) | `POST` | `{{baseUrl}}/api/v1/users/:id/set-verification` | user.manage_verification | Admin override of `isEmailVerified` / `isMobileVerified`. |
@@ -555,7 +555,7 @@ Caller lacks `user.update`, or hierarchy guard tripped (target outranks caller).
 
 ## 4.5 `DELETE /api/v1/users/:id`
 
-Soft delete. Permission: `user.delete`. Hierarchy-guarded. Sets `is_deleted = TRUE` on the row and revokes all of the target's sessions in Redis.
+Soft delete. **Requires `super_admin` role** + permission: `user.delete`. Hierarchy-guarded. Sets `is_deleted = TRUE` on the row and revokes all of the target's sessions in Redis.
 
 > **Side effect → email.** On success, fires `mailer.sendAccountDeleted(...)` to the target user's email. Sent with admin BCC if `EMAIL_ADMIN_NOTIFY` is set. The user's contact details are read BEFORE the soft-delete so the email is still deliverable. See [11 — email notifications](11%20-%20email%20notifications.md).
 
@@ -565,7 +565,7 @@ Soft delete. Permission: `user.delete`. Hierarchy-guarded. Sets `is_deleted = TR
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/users/:id` |
-| Permission | `user.delete` |
+| Permission | `**super_admin** + user.delete` |
 
 **Headers**
 
@@ -632,7 +632,7 @@ Caller lacks `user.delete`, or target outranks caller.
 
 ## 4.6 `POST /api/v1/users/:id/restore`
 
-Reverse a soft delete. Permission: `user.restore`. Hierarchy-guarded.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `user.restore`. Hierarchy-guarded.
 
 > **Side effect → email.** On success, fires `mailer.sendAccountRestored(...)` to the user's email. See [11 — email notifications](11%20-%20email%20notifications.md).
 
@@ -642,7 +642,7 @@ Reverse a soft delete. Permission: `user.restore`. Hierarchy-guarded.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/users/:id/restore` |
-| Permission | `user.restore` |
+| Permission | `**super_admin** + user.restore` |
 
 **Headers**
 

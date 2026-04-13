@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§7.2](#72) | `GET` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.read | Get a single document type by id. |
 | [§7.3](#73) | `POST` | `{{baseUrl}}/api/v1/document-types` | document_type.create | Create a new document type. |
 | [§7.4](#74) | `PATCH` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.update | Partial update. |
-| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/document-types/:id` | document_type.delete | Soft-delete. |
-| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/document-types/:id/restore` | document_type.restore | Undo a soft-delete. |
+| [§7.5](#75) | `DELETE` | `{{baseUrl}}/api/v1/document-types/:id` | **super_admin** + document_type.delete | Soft-delete. |
+| [§7.6](#76) | `POST` | `{{baseUrl}}/api/v1/document-types/:id/restore` | **super_admin** + document_type.restore | Undo a soft-delete. |
 
 ---
 
@@ -378,7 +378,7 @@ Same as 7.3.
 
 ## 7.5 `DELETE /api/v1/document-types/:id`
 
-Soft delete. Permission: `document_type.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `document_type.delete`.
 
 **Postman request**
 
@@ -386,7 +386,7 @@ Soft delete. Permission: `document_type.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/document-types/:id` |
-| Permission | `document_type.delete` |
+| Permission | **super_admin** + `document_type.delete` |
 
 **Headers**
 
@@ -438,7 +438,7 @@ Same as 7.3.
 
 ## 7.6 `POST /api/v1/document-types/:id/restore`
 
-Reverse a soft delete. Permission: `document_type.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `document_type.restore`.
 
 **Postman request**
 
@@ -446,7 +446,7 @@ Reverse a soft delete. Permission: `document_type.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/document-types/:id/restore` |
-| Permission | `document_type.restore` |
+| Permission | **super_admin** + `document_type.restore` |
 
 **Headers**
 

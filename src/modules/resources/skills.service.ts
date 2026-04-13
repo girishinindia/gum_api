@@ -118,7 +118,7 @@ export const createSkill = async (
     p_name: body.name,
     p_category: body.category,
     p_description: body.description ?? null,
-    p_icon_url: body.iconUrl ?? null,
+    p_icon_url: null,
     p_is_active: body.isActive ?? true,
     p_created_by: callerId
   });
@@ -137,7 +137,7 @@ export const updateSkill = async (
     p_name: body.name ?? null,
     p_category: body.category ?? null,
     p_description: body.description ?? null,
-    p_icon_url: body.iconUrl ?? null,
+    p_icon_url: null,
     p_is_active: body.isActive ?? null,
     p_updated_by: callerId
   });

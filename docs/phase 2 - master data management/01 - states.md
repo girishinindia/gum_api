@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§1.2](#12) | `GET` | `{{baseUrl}}/api/v1/states/:id` | state.read | Get a single state by id. |
 | [§1.3](#13) | `POST` | `{{baseUrl}}/api/v1/states` | state.create | Create a new state. |
 | [§1.4](#14) | `PATCH` | `{{baseUrl}}/api/v1/states/:id` | state.update | Partial update of a state. |
-| [§1.5](#15) | `DELETE` | `{{baseUrl}}/api/v1/states/:id` | state.delete | Soft-delete a state. |
-| [§1.6](#16) | `POST` | `{{baseUrl}}/api/v1/states/:id/restore` | state.restore | Undo a soft-delete. |
+| [§1.5](#15) | `DELETE` | `{{baseUrl}}/api/v1/states/:id` | **super_admin** + state.delete | Soft-delete a state. |
+| [§1.6](#16) | `POST` | `{{baseUrl}}/api/v1/states/:id/restore` | **super_admin** + state.restore | Undo a soft-delete. |
 
 ---
 
@@ -502,7 +502,7 @@ Same row shape as `1.2 GET /:id`, wrapped in success envelope:
 
 ## 1.5 `DELETE /api/v1/states/:id`
 
-Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW()`. Permission: `state.delete`.
+Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW()`. **Requires `super_admin` role** + permission: `state.delete`.
 
 **Postman request**
 
@@ -510,7 +510,7 @@ Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/states/:id` |
-| Permission | `state.delete` |
+| Permission | **super_admin** + `state.delete` |
 
 **Headers**
 
@@ -570,7 +570,7 @@ Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW
 
 ## 1.6 `POST /api/v1/states/:id/restore`
 
-Reverse a soft delete. Permission: `state.restore`. Restore sets `is_deleted = FALSE` and `is_active = TRUE` in one shot and returns the full refreshed row.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `state.restore`. Restore sets `is_deleted = FALSE` and `is_active = TRUE` in one shot and returns the full refreshed row.
 
 **Postman request**
 
@@ -578,7 +578,7 @@ Reverse a soft delete. Permission: `state.restore`. Restore sets `is_deleted = F
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/states/:id/restore` |
-| Permission | `state.restore` |
+| Permission | **super_admin** + `state.restore` |
 
 **Headers**
 

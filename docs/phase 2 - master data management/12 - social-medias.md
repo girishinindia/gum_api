@@ -1,6 +1,6 @@
 # Phase 2 — Social Medias
 
-Social media platform reference. Also exposes a Bunny-backed icon upload route.
+Social media platform reference with unified icon upload via PATCH.
 
 All routes require auth. Permission codes: `social_media.read`, `social_media.create`, `social_media.update`, `social_media.delete`, `social_media.restore`.
 
@@ -19,10 +19,9 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§12.1](#121) | `GET` | `{{baseUrl}}/api/v1/social-medias` | social_media.read | List social media platforms with filters and sort. |
 | [§12.2](#122) | `GET` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.read | Get a single social media by id. |
 | [§12.3](#123) | `POST` | `{{baseUrl}}/api/v1/social-medias` | social_media.create | Create a new social media. |
-| [§12.4](#124) | `PATCH` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.update | Partial update (JSON body). |
-| [§12.5](#125) | `DELETE` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.delete | Soft-delete. |
-| [§12.6](#126) | `POST` | `{{baseUrl}}/api/v1/social-medias/:id/restore` | social_media.restore | Undo a soft-delete. |
-| [§12.7](#127) | `PATCH` | `{{baseUrl}}/api/v1/social-medias/:id/icon` | social_media.update | Upload / replace / clear the icon via `multipart/form-data`. |
+| [§12.4](#124) | `PATCH` | `{{baseUrl}}/api/v1/social-medias/:id` | social_media.update | Partial update: JSON body or multipart/form-data with optional icon file. |
+| [§12.5](#125) | `DELETE` | `{{baseUrl}}/api/v1/social-medias/:id` | **super_admin** + social_media.delete | Soft-delete. |
+| [§12.6](#126) | `POST` | `{{baseUrl}}/api/v1/social-medias/:id/restore` | **super_admin** + social_media.restore | Undo a soft-delete. |
 
 ---
 
@@ -310,7 +309,7 @@ Create a social media. Permission: `social_media.create`.
 
 ## 12.4 `PATCH /api/v1/social-medias/:id`
 
-Partial update.
+Unified partial update endpoint. Accepts `application/json` for text-only updates, or `multipart/form-data` to include an optional icon file upload.
 
 **Postman request**
 
@@ -325,7 +324,7 @@ Partial update.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` *or* `multipart/form-data` |
 
 **Path params**
 
@@ -333,7 +332,11 @@ Partial update.
 |---|---|---|
 | `id` | int | Numeric social media id. |
 
-**Request body** (`application/json`)
+### Text-only update (application/json)
+
+**Headers** — set `Content-Type: application/json`
+
+**Request body**
 
 ```json
 {
@@ -342,11 +345,87 @@ Partial update.
 }
 ```
 
+**Optional fields**: `name`, `isActive`. Provide at least one.
+
+### Icon upload / clear (multipart/form-data)
+
+**Headers** — set `Content-Type: multipart/form-data` (Postman sets the boundary automatically)
+
+**Body fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | no | Update the social media name. |
+| `isActive` | text | no | Update active status (`"true"` or `"false"`). |
+| `icon` | file | no* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256 × 256 box, re-encoded to WebP, stored at `social-medias/icons/<id>.webp`. |
+| `iconImage` | file | no* | Alias for `icon` field. |
+| `file` | file | no* | Alias for `icon` field. |
+| `iconAction` | text | no | Send `delete` to clear the existing icon. Mutually exclusive with a file upload. |
+
+\* For icon operations: Either upload a file (via `icon`, `iconImage`, or `file`) **or** send `iconAction=delete`. At least one text field (`name` or `isActive`) or one icon operation must be present.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Update name only (JSON) | `Content-Type: application/json` with `{"name": "New Name"}` |
+| Upload new icon + update name | `Content-Type: multipart/form-data` with `name` + `icon` file |
+| Replace existing icon | `Content-Type: multipart/form-data` with new `icon` file binary |
+| Clear icon only | `Content-Type: multipart/form-data` with `iconAction=delete` |
+| Update active status + clear icon | `Content-Type: multipart/form-data` with `isActive=true` + `iconAction=delete` |
+
 ### Responses
 
-#### 200 OK
+#### 200 OK — text update
 
 Same row shape as 12.2, wrapped in success envelope.
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": {
+    "id": 1,
+    "name": "Updated Name",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+#### 200 OK — icon uploaded
+
+```json
+{
+  "success": true,
+  "message": "Social media icon uploaded",
+  "data": {
+    "id": 1,
+    "name": "Example",
+    "iconUrl": "https://cdn.growupmore.com/social-medias/icons/1.webp",
+    "isActive": true,
+    "isDeleted": false,
+    "updatedAt": "2026-04-11T12:14:55.108Z"
+  }
+}
+```
+
+#### 200 OK — icon cleared
+
+```json
+{
+  "success": true,
+  "message": "Social media icon deleted",
+  "data": {
+    "id": 1,
+    "iconUrl": null,
+    "updatedAt": "2026-04-11T12:15:02.771Z"
+  }
+}
+```
 
 #### 400 VALIDATION_ERROR — empty body
 
@@ -356,6 +435,56 @@ Same row shape as 12.2, wrapped in success envelope.
   "message": "Validation failed",
   "code": "VALIDATION_ERROR",
   "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — conflicting action
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload a new social media icon AND iconAction=delete in the same request — pick one.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted
+
+```json
+{
+  "success": false,
+  "message": "Social media 1 is soft-deleted; restore it before uploading an icon",
+  "code": "BAD_REQUEST"
 }
 ```
 
@@ -375,11 +504,37 @@ Same as 12.3.
 {"success": false, "message": "Social Media with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
+#### 429 RATE_LIMIT_EXCEEDED
+
+```json
+{
+  "success": false,
+  "message": "Too many requests from this IP, please try again later",
+  "code": "RATE_LIMIT_EXCEEDED"
+}
+```
+
+#### 500 INTERNAL_ERROR
+
+```json
+{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
+```
+
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload social media icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
 ---
 
 ## 12.5 `DELETE /api/v1/social-medias/:id`
 
-Soft delete. Permission: `social_media.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `social_media.delete`.
 
 **Postman request**
 
@@ -387,7 +542,7 @@ Soft delete. Permission: `social_media.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/social-medias/:id` |
-| Permission | `social_media.delete` |
+| Permission | **super_admin** + `social_media.delete` |
 
 **Headers**
 
@@ -439,7 +594,7 @@ Same as 12.3.
 
 ## 12.6 `POST /api/v1/social-medias/:id/restore`
 
-Reverse a soft delete. Permission: `social_media.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `social_media.restore`.
 
 **Postman request**
 
@@ -447,7 +602,7 @@ Reverse a soft delete. Permission: `social_media.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/social-medias/:id/restore` |
-| Permission | `social_media.restore` |
+| Permission | **super_admin** + `social_media.restore` |
 
 **Headers**
 
@@ -501,189 +656,6 @@ Same as 12.3.
 
 ```json
 {"success": false, "message": "Social Media 9999 not found", "code": "NOT_FOUND"}
-```
-
----
-
-## 12.7 `PATCH /api/v1/social-medias/:id/icon`
-
-Dedicated file-upload sibling of the JSON `PATCH /api/v1/social-medias/:id`. Where that route takes a `application/json` body of text fields, **this route takes a `multipart/form-data` body with a binary `icon` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the icon box (≤ 256 × 256), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `social-medias/icons/<id>.webp`, and return the refreshed row with the new `iconUrl` in the same response. Permission: `social_media.update`.
-
-> **Backend status.** The current Express router exposes this upload under `POST /api/v1/social-medias/:id/icon` (see `api/src/api/v1/resources/social-medias.routes.ts`) with `uploadSocialMediaIcon` multer middleware and the same Bunny pipeline described below. The `PATCH /api/v1/social-medias/:id/icon` form documented here is the target convention alignment with the other phase-2 resources; both `POST` and `PATCH` verbs are wired to the same handler during the transition.
-
-**Postman request**
-
-| Field | Value |
-|---|---|
-| Method | `PATCH` |
-| URL | `{{baseUrl}}/api/v1/social-medias/:id/icon` |
-| Permission | `social_media.update` |
-
-**Headers**
-
-| Key | Value |
-|---|---|
-| `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
-
-**Path params**
-
-| Name | Type | Notes |
-|---|---|---|
-| `id` | int | Numeric social media id. Must exist and not be soft-deleted. |
-
-**Body** — `multipart/form-data`:
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `icon` | file | yes* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP ≤ 100 KB. |
-| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
-
-\* Either the file part **or** `iconAction=delete` must be present — sending neither is a `400 VALIDATION_ERROR`.
-
-**Saved examples to add in Postman**
-
-| Example name | Body |
-|---|---|
-| Upload new icon | `icon` = `linkedin-256.png` |
-| Replace existing icon | `icon` = new file binary |
-| Clear icon | `iconAction` = `delete` |
-
-### Responses
-
-#### 200 OK — icon uploaded
-
-```json
-{
-  "success": true,
-  "message": "Social media icon uploaded",
-  "data": {
-    "id": 2,
-    "name": "LinkedIn",
-    "iconUrl": "https://cdn.growupmore.com/social-medias/icons/2.webp",
-    "isActive": true,
-    "isDeleted": false,
-    "updatedAt": "2026-04-11T12:14:55.108Z"
-  }
-}
-```
-
-#### 200 OK — icon cleared (`iconAction=delete`)
-
-```json
-{
-  "success": true,
-  "message": "Social media icon deleted",
-  "data": {
-    "id": 2,
-    "iconUrl": null,
-    "updatedAt": "2026-04-11T12:15:02.771Z"
-  }
-}
-```
-
-#### 400 VALIDATION_ERROR — missing file part and no delete action
-
-```json
-{
-  "success": false,
-  "message": "icon field is required (multipart/form-data) or iconAction=delete",
-  "code": "VALIDATION_ERROR"
-}
-```
-
-#### 400 BAD_REQUEST — file too large
-
-```json
-{
-  "success": false,
-  "message": "File too large: icon must be ≤ 100 KB raw",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unsupported media type
-
-```json
-{
-  "success": false,
-  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unreadable image
-
-```json
-{
-  "success": false,
-  "message": "Uploaded file is not a readable image",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — conflicting action
-
-```json
-{
-  "success": false,
-  "message": "Cannot upload a new social media icon AND iconAction=delete in the same request — pick one.",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — soft-deleted
-
-```json
-{
-  "success": false,
-  "message": "Social media 2 is soft-deleted; restore it before uploading a icon",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 401 UNAUTHORIZED
-
-```json
-{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
-```
-
-#### 403 FORBIDDEN
-
-```json
-{ "success": false, "message": "Permission denied: social_media.update", "code": "FORBIDDEN" }
-```
-
-#### 404 NOT_FOUND
-
-```json
-{ "success": false, "message": "Social media 9999 not found", "code": "NOT_FOUND" }
-```
-
-#### 429 RATE_LIMIT_EXCEEDED
-
-```json
-{
-  "success": false,
-  "message": "Too many requests from this IP, please try again later",
-  "code": "RATE_LIMIT_EXCEEDED"
-}
-```
-
-#### 500 INTERNAL_ERROR
-
-```json
-{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
-```
-
-#### 502 BUNNY_UPLOAD_FAILED
-
-```json
-{
-  "success": false,
-  "message": "Failed to upload social media icon to CDN",
-  "code": "BUNNY_UPLOAD_FAILED"
-}
 ```
 
 ---

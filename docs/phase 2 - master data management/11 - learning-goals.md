@@ -19,10 +19,9 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§11.1](#111) | `GET` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.read | List learning goals with filters and sort. |
 | [§11.2](#112) | `GET` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.read | Get a single learning goal by id. |
 | [§11.3](#113) | `POST` | `{{baseUrl}}/api/v1/learning-goals` | learning_goal.create | Create a new learning goal. |
-| [§11.4](#114) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.update | Partial update (JSON body). |
-| [§11.5](#115) | `DELETE` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.delete | Soft-delete. |
-| [§11.6](#116) | `POST` | `{{baseUrl}}/api/v1/learning-goals/:id/restore` | learning_goal.restore | Undo a soft-delete. |
-| [§11.7](#117) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id/icon` | learning_goal.update | Upload / replace / clear the icon via `multipart/form-data`. |
+| [§11.4](#114) | `PATCH` | `{{baseUrl}}/api/v1/learning-goals/:id` | learning_goal.update | Partial update: `application/json` (text-only) or `multipart/form-data` (text fields + optional icon file). |
+| [§11.5](#115) | `DELETE` | `{{baseUrl}}/api/v1/learning-goals/:id` | **super_admin** + learning_goal.delete | Soft-delete. |
+| [§11.6](#116) | `POST` | `{{baseUrl}}/api/v1/learning-goals/:id/restore` | **super_admin** + learning_goal.restore | Undo a soft-delete. |
 
 ---
 
@@ -310,7 +309,7 @@ Create a learning goal. Permission: `learning_goal.create`.
 
 ## 11.4 `PATCH /api/v1/learning-goals/:id`
 
-Partial update.
+Partial update. Accepts either `application/json` for text-only changes, or `multipart/form-data` to update text fields and/or upload a new icon. Icon file is optional; text fields are optional.
 
 **Postman request**
 
@@ -325,7 +324,7 @@ Partial update.
 | Key | Value |
 |---|---|
 | `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `application/json` |
+| `Content-Type` | `application/json` or `multipart/form-data` |
 
 **Path params**
 
@@ -333,7 +332,9 @@ Partial update.
 |---|---|---|
 | `id` | int | Numeric learning goal id. |
 
-**Request body** (`application/json`)
+### JSON request body (`application/json`)
+
+Text-only patch: update name and/or isActive. At least one field is required.
 
 ```json
 {
@@ -342,11 +343,49 @@ Partial update.
 }
 ```
 
+### Multipart request body (`multipart/form-data`)
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | no | New name (if updating). |
+| `isActive` | text | no | New active status: `"true"` or `"false"`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP. Field aliases: `iconImage`, `file`. |
+| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
+
+**At least one field** (text field or icon/iconAction) **is required.**
+
+**Icon pipeline**: Uploaded files are decoded, enforced to fit a 256×256 box, re-encoded to WebP ≤100 KB, and stored at `learning-goals/icons/<id>.webp`.
+
+**Saved examples to add in Postman**
+
+| Example name | Body |
+|---|---|
+| Update name (JSON) | `Content-Type: application/json`; `{"name": "New Name"}` |
+| Update name + active status (JSON) | `Content-Type: application/json`; `{"name": "New Name", "isActive": false}` |
+| Update + upload new icon (multipart) | `name` = "New Name"; `icon` = file binary |
+| Upload icon only (multipart) | `icon` = file binary |
+| Clear icon (multipart) | `iconAction` = `delete` |
+
 ### Responses
 
 #### 200 OK
 
-Same row shape as 11.2, wrapped in success envelope.
+```json
+{
+  "success": true,
+  "message": "Learning Goal updated",
+  "data": {
+    "id": 1,
+    "name": "Updated Name",
+    "iconUrl": "https://cdn.growupmore.com/learning-goals/icons/1.webp",
+    "isActive": true,
+    "isDeleted": false,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "updatedAt": "2026-04-11T00:00:00.000Z",
+    "deletedAt": null
+  }
+}
+```
 
 #### 400 VALIDATION_ERROR — empty body
 
@@ -356,6 +395,56 @@ Same row shape as 11.2, wrapped in success envelope.
   "message": "Validation failed",
   "code": "VALIDATION_ERROR",
   "details": [{"path": "", "message": "Provide at least one field to update", "code": "custom"}]
+}
+```
+
+#### 400 BAD_REQUEST — file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — conflicting action
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload a new learning goal icon AND iconAction=delete in the same request — pick one.",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted
+
+```json
+{
+  "success": false,
+  "message": "Learning goal 3 is soft-deleted; restore it before uploading an icon",
+  "code": "BAD_REQUEST"
 }
 ```
 
@@ -375,11 +464,21 @@ Same as 11.3.
 {"success": false, "message": "Learning Goal with that name already exists", "code": "DUPLICATE_ENTRY"}
 ```
 
+#### 502 BUNNY_UPLOAD_FAILED
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload learning goal icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
 ---
 
 ## 11.5 `DELETE /api/v1/learning-goals/:id`
 
-Soft delete. Permission: `learning_goal.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `learning_goal.delete`.
 
 **Postman request**
 
@@ -387,7 +486,7 @@ Soft delete. Permission: `learning_goal.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/learning-goals/:id` |
-| Permission | `learning_goal.delete` |
+| Permission | **super_admin** + `learning_goal.delete` |
 
 **Headers**
 
@@ -439,7 +538,7 @@ Same as 11.3.
 
 ## 11.6 `POST /api/v1/learning-goals/:id/restore`
 
-Reverse a soft delete. Permission: `learning_goal.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `learning_goal.restore`.
 
 **Postman request**
 
@@ -447,7 +546,7 @@ Reverse a soft delete. Permission: `learning_goal.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/learning-goals/:id/restore` |
-| Permission | `learning_goal.restore` |
+| Permission | **super_admin** + `learning_goal.restore` |
 
 **Headers**
 
@@ -501,189 +600,6 @@ Same as 11.3.
 
 ```json
 {"success": false, "message": "Learning Goal 9999 not found", "code": "NOT_FOUND"}
-```
-
----
-
-## 11.7 `PATCH /api/v1/learning-goals/:id/icon`
-
-Dedicated file-upload sibling of the JSON `PATCH /api/v1/learning-goals/:id`. Where that route takes a `application/json` body of text fields, **this route takes a `multipart/form-data` body with a binary `icon` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the icon box (≤ 256 × 256), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `learning-goals/icons/<id>.webp`, and return the refreshed row with the new `iconUrl` in the same response. Permission: `learning_goal.update`.
-
-> **Backend status.** The current Express router exposes this upload under `POST /api/v1/learning-goals/:id/icon` (see `api/src/api/v1/resources/learning-goals.routes.ts`) with `uploadLearningGoalIcon` multer middleware and the same Bunny pipeline described below. The `PATCH /api/v1/learning-goals/:id/icon` form documented here is the target convention alignment with the other phase-2 resources; both `POST` and `PATCH` verbs are wired to the same handler during the transition.
-
-**Postman request**
-
-| Field | Value |
-|---|---|
-| Method | `PATCH` |
-| URL | `{{baseUrl}}/api/v1/learning-goals/:id/icon` |
-| Permission | `learning_goal.update` |
-
-**Headers**
-
-| Key | Value |
-|---|---|
-| `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
-
-**Path params**
-
-| Name | Type | Notes |
-|---|---|---|
-| `id` | int | Numeric learning goal id. Must exist and not be soft-deleted. |
-
-**Body** — `multipart/form-data`:
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `icon` | file | yes* | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP ≤ 100 KB. |
-| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
-
-\* Either the file part **or** `iconAction=delete` must be present — sending neither is a `400 VALIDATION_ERROR`.
-
-**Saved examples to add in Postman**
-
-| Example name | Body |
-|---|---|
-| Upload new icon | `icon` = `python-256.png` |
-| Replace existing icon | `icon` = new file binary |
-| Clear icon | `iconAction` = `delete` |
-
-### Responses
-
-#### 200 OK — icon uploaded
-
-```json
-{
-  "success": true,
-  "message": "Learning goal icon uploaded",
-  "data": {
-    "id": 3,
-    "name": "Learn Python",
-    "iconUrl": "https://cdn.growupmore.com/learning-goals/icons/3.webp",
-    "isActive": true,
-    "isDeleted": false,
-    "updatedAt": "2026-04-11T12:14:55.108Z"
-  }
-}
-```
-
-#### 200 OK — icon cleared (`iconAction=delete`)
-
-```json
-{
-  "success": true,
-  "message": "Learning goal icon deleted",
-  "data": {
-    "id": 3,
-    "iconUrl": null,
-    "updatedAt": "2026-04-11T12:15:02.771Z"
-  }
-}
-```
-
-#### 400 VALIDATION_ERROR — missing file part and no delete action
-
-```json
-{
-  "success": false,
-  "message": "icon field is required (multipart/form-data) or iconAction=delete",
-  "code": "VALIDATION_ERROR"
-}
-```
-
-#### 400 BAD_REQUEST — file too large
-
-```json
-{
-  "success": false,
-  "message": "File too large: icon must be ≤ 100 KB raw",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unsupported media type
-
-```json
-{
-  "success": false,
-  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unreadable image
-
-```json
-{
-  "success": false,
-  "message": "Uploaded file is not a readable image",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — conflicting action
-
-```json
-{
-  "success": false,
-  "message": "Cannot upload a new learning goal icon AND iconAction=delete in the same request — pick one.",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — soft-deleted
-
-```json
-{
-  "success": false,
-  "message": "Learning goal 3 is soft-deleted; restore it before uploading a icon",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 401 UNAUTHORIZED
-
-```json
-{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
-```
-
-#### 403 FORBIDDEN
-
-```json
-{ "success": false, "message": "Permission denied: learning_goal.update", "code": "FORBIDDEN" }
-```
-
-#### 404 NOT_FOUND
-
-```json
-{ "success": false, "message": "Learning goal 9999 not found", "code": "NOT_FOUND" }
-```
-
-#### 429 RATE_LIMIT_EXCEEDED
-
-```json
-{
-  "success": false,
-  "message": "Too many requests from this IP, please try again later",
-  "code": "RATE_LIMIT_EXCEEDED"
-}
-```
-
-#### 500 INTERNAL_ERROR
-
-```json
-{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
-```
-
-#### 502 BUNNY_UPLOAD_FAILED
-
-```json
-{
-  "success": false,
-  "message": "Failed to upload learning goal icon to CDN",
-  "code": "BUNNY_UPLOAD_FAILED"
-}
 ```
 
 ---

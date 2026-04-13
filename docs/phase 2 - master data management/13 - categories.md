@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§13.2](#132) | `GET` | `{{baseUrl}}/api/v1/categories/:id` | category.read | Get a single category by id. |
 | [§13.3](#133) | `POST` | `{{baseUrl}}/api/v1/categories` | category.create | Create a new category. |
 | [§13.4](#134) | `PATCH` | `{{baseUrl}}/api/v1/categories/:id` | category.update | Partial update — JSON or multipart with `icon`/`image`. |
-| [§13.5](#135) | `DELETE` | `{{baseUrl}}/api/v1/categories/:id` | category.delete | Soft-delete. |
-| [§13.6](#136) | `POST` | `{{baseUrl}}/api/v1/categories/:id/restore` | category.restore | Undo a soft-delete. |
+| [§13.5](#135) | `DELETE` | `{{baseUrl}}/api/v1/categories/:id` | **super_admin** + category.delete | Soft-delete. |
+| [§13.6](#136) | `POST` | `{{baseUrl}}/api/v1/categories/:id/restore` | **super_admin** + category.restore | Undo a soft-delete. |
 | [§13.7](#137) | `PATCH` | `{{baseUrl}}/api/v1/categories/:id/icon` | category.update | Upload / replace / clear icon via `multipart/form-data`. |
 | [§13.9](#139) | `PATCH` | `{{baseUrl}}/api/v1/categories/:id/image` | category.update | Upload / replace / clear image via `multipart/form-data`. |
 
@@ -380,7 +380,7 @@ Same as 13.3.
 
 ## 13.5 `DELETE /api/v1/categories/:id`
 
-Soft delete. Permission: `category.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `category.delete`.
 
 **Postman request**
 
@@ -388,7 +388,7 @@ Soft delete. Permission: `category.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/categories/:id` |
-| Permission | `category.delete` |
+| Permission | **super_admin** + `category.delete` |
 
 **Headers**
 
@@ -440,7 +440,7 @@ Same as 13.3.
 
 ## 13.6 `POST /api/v1/categories/:id/restore`
 
-Reverse a soft delete. Permission: `category.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `category.restore`.
 
 **Postman request**
 
@@ -448,7 +448,7 @@ Reverse a soft delete. Permission: `category.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/categories/:id/restore` |
-| Permission | `category.restore` |
+| Permission | **super_admin** + `category.restore` |
 
 **Headers**
 

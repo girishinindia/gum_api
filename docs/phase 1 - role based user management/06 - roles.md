@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§6.2](#62) | `GET` | `{{baseUrl}}/api/v1/roles/:id` | role.read | Get a single role by id. |
 | [§6.3](#63) | `POST` | `{{baseUrl}}/api/v1/roles` | role.create | Create a new role. |
 | [§6.4](#64) | `PATCH` | `{{baseUrl}}/api/v1/roles/:id` | role.update | Partial update of a role. |
-| [§6.5](#65) | `DELETE` | `{{baseUrl}}/api/v1/roles/:id` | role.delete | Soft-delete a role. |
-| [§6.6](#66) | `POST` | `{{baseUrl}}/api/v1/roles/:id/restore` | role.restore | Undo a soft-delete. |
+| [§6.5](#65) | `DELETE` | `{{baseUrl}}/api/v1/roles/:id` | **super_admin** + role.delete | Soft-delete a role. |
+| [§6.6](#66) | `POST` | `{{baseUrl}}/api/v1/roles/:id/restore` | **super_admin** + role.restore | Undo a soft-delete. |
 
 ---
 
@@ -502,7 +502,7 @@ Partial update — supply any subset of fields, but at least one. Permission: `r
 
 ## 6.5 `DELETE /api/v1/roles/:id`
 
-Soft delete — sets `is_deleted = TRUE`. **Blocked at the DB layer if the role's `isSystemRole = true`**. Permission: `role.delete`.
+Soft delete — sets `is_deleted = TRUE`. **Blocked at the DB layer if the role's `isSystemRole = true`**. **Requires `super_admin` role** + permission: `role.delete`.
 
 **Postman request**
 
@@ -510,7 +510,7 @@ Soft delete — sets `is_deleted = TRUE`. **Blocked at the DB layer if the role'
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/roles/:id` |
-| Permission | `role.delete` |
+| Permission | `**super_admin** + role.delete` |
 
 **Headers**
 
@@ -570,7 +570,7 @@ Soft delete — sets `is_deleted = TRUE`. **Blocked at the DB layer if the role'
 
 ## 6.6 `POST /api/v1/roles/:id/restore`
 
-Reverse a soft delete. Permission: `role.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `role.restore`.
 
 **Postman request**
 
@@ -578,7 +578,7 @@ Reverse a soft delete. Permission: `role.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/roles/:id/restore` |
-| Permission | `role.restore` |
+| Permission | `**super_admin** + role.restore` |
 
 **Headers**
 

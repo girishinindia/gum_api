@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§8.2](#82) | `GET` | `{{baseUrl}}/api/v1/documents/:id` | document.read | Get a single document by id. |
 | [§8.3](#83) | `POST` | `{{baseUrl}}/api/v1/documents` | document.create | Create a new document. |
 | [§8.4](#84) | `PATCH` | `{{baseUrl}}/api/v1/documents/:id` | document.update | Partial update. |
-| [§8.5](#85) | `DELETE` | `{{baseUrl}}/api/v1/documents/:id` | document.delete | Soft-delete. |
-| [§8.6](#86) | `POST` | `{{baseUrl}}/api/v1/documents/:id/restore` | document.restore | Undo a soft-delete. |
+| [§8.5](#85) | `DELETE` | `{{baseUrl}}/api/v1/documents/:id` | **super_admin** + document.delete | Soft-delete. |
+| [§8.6](#86) | `POST` | `{{baseUrl}}/api/v1/documents/:id/restore` | **super_admin** + document.restore | Undo a soft-delete. |
 
 ---
 
@@ -378,7 +378,7 @@ Same as 8.3.
 
 ## 8.5 `DELETE /api/v1/documents/:id`
 
-Soft delete. Permission: `document.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `document.delete`.
 
 **Postman request**
 
@@ -386,7 +386,7 @@ Soft delete. Permission: `document.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/documents/:id` |
-| Permission | `document.delete` |
+| Permission | **super_admin** + `document.delete` |
 
 **Headers**
 
@@ -438,7 +438,7 @@ Same as 8.3.
 
 ## 8.6 `POST /api/v1/documents/:id/restore`
 
-Reverse a soft delete. Permission: `document.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `document.restore`.
 
 **Postman request**
 
@@ -446,7 +446,7 @@ Reverse a soft delete. Permission: `document.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/documents/:id/restore` |
-| Permission | `document.restore` |
+| Permission | **super_admin** + `document.restore` |
 
 **Headers**
 

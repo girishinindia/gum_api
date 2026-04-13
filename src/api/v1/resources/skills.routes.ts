@@ -1,5 +1,30 @@
 // ═══════════════════════════════════════════════════════════════
 // /api/v1/skills router — phase 02 master data CRUD.
+//
+// Authorization model:
+//   GET    /              skill.read
+//   GET    /:id           skill.read
+//   POST   /              skill.create
+//   PATCH  /:id           skill.update   (JSON or multipart/form-data)
+//   DELETE /:id           skill.delete
+//   POST   /:id/restore   skill.restore
+//
+// All routes require an authenticated user.
+//
+// Unified PATCH accepts BOTH text field updates and optional icon
+// uploads in a single request:
+//   • JSON body: plain text-field patch
+//   • multipart/form-data: text fields + optional `icon` slot (100 KB
+//     WebP pipeline). Aliases: `iconImage`, `file`.
+//   • To clear the icon, set `iconAction=delete` in the same body.
+//     Uploading + deleting the same slot in one request is rejected.
+//
+// Icons (pipeline spec, enforced downstream):
+//   • Input MIME:   PNG / JPEG / WebP / SVG
+//   • Max raw size: 100 KB
+//   • Output:       always WebP, resized to fit 256×256 box
+//   • Storage key:  skills/icons/<id>.webp  (deterministic)
+//   • On replace:   prior Bunny object(s) deleted BEFORE new PUT
 // ═══════════════════════════════════════════════════════════════
 
 import { Router } from 'express';
@@ -7,7 +32,11 @@ import { Router } from 'express';
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
-import { uploadSkillIcon } from '../../../core/middlewares/upload';
+import {
+  patchSkillFiles,
+  getSlotFile
+} from '../../../core/middlewares/upload';
+import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-coerce';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
@@ -61,42 +90,56 @@ router.post(
   })
 );
 
+// PATCH /:id — unified text + icon update.
 router.patch(
   '/:id',
   authorize('skill.update'),
+  patchSkillFiles,
+  coerceMultipartBody,
   validate({ params: idParamSchema, body: updateSkillBodySchema }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const body = req.body as UpdateSkillBody;
-    await skillsService.updateSkill(id, body, req.user?.id ?? null);
-    const skill = await skillsService.getSkillById(id);
-    return ok(res, skill, 'Skill updated');
-  })
-);
 
-// ─── PATCH /:id/icon  icon file upload ────────────────────────────
-//
-// Accepts multipart/form-data with a single image file (field: "file").
-// Pipeline: decode → resize ≤256×256 → WebP encode → Bunny PUT.
+    const { iconAction, ...textFields } = body;
+    const iconFile = getSlotFile(req, 'icon');
 
-router.patch(
-  '/:id/icon',
-  authorize('skill.update'),
-  uploadSkillIcon,
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    const id = Number((req.params as unknown as { id: number }).id);
-    if (!req.file) {
+    if (iconFile && iconAction === 'delete') {
       throw AppError.badRequest(
-        'No icon file provided. Send multipart/form-data with field "file".'
+        "Cannot upload a new skill icon AND iconAction=delete in the same request — pick one."
       );
     }
-    const skill = await skillsService.processSkillIconUpload(
-      id,
-      req.file,
-      req.user?.id ?? null
-    );
-    return ok(res, skill, 'Skill icon updated');
+
+    const hasTextChange = Object.keys(textFields).length > 0;
+    const hasFileChange = Boolean(iconFile);
+    const hasDelete = iconAction === 'delete';
+    if (!hasTextChange && !hasFileChange && !hasDelete) {
+      throw AppError.badRequest('Provide at least one field to update');
+    }
+
+    if (hasTextChange) {
+      await skillsService.updateSkill(
+        id,
+        textFields as UpdateSkillBody,
+        req.user?.id ?? null
+      );
+    }
+
+    if (iconFile) {
+      await skillsService.processSkillIconUpload(
+        id,
+        iconFile,
+        req.user?.id ?? null
+      );
+    } else if (iconAction === 'delete') {
+      await skillsService.deleteSkillIcon(
+        id,
+        req.user?.id ?? null
+      );
+    }
+
+    const skill = await skillsService.getSkillById(id);
+    return ok(res, skill, 'Skill updated');
   })
 );
 

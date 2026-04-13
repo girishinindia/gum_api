@@ -159,45 +159,10 @@ const singleFileUpload = (opts: SingleFileUploadOptions): RequestHandler => {
   };
 };
 
-// ─── Phase-02 single-file upload defaults ───────────────────────
-//
-// Shared MIME / byte-cap constants reused by the remaining
-// `POST /:id/icon` endpoints on learning-goals and social-medias
-// (neither has been unified into PATCH yet) AND by the multi-slot
-// factory below.
+// ─── Phase-02 shared image constants ────────────────────────────
 
 const PHASE2_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
 const PHASE2_IMAGE_MAX_BYTES = 100 * 1024; // 100 KB
-
-/** `POST /api/v1/learning-goals/:id/icon` */
-export const uploadLearningGoalIcon = singleFileUpload({
-  field: 'file',
-  maxBytes: PHASE2_IMAGE_MAX_BYTES,
-  mimeAllowlist: PHASE2_IMAGE_MIMES,
-  label: 'Learning goal icon'
-});
-
-/** `POST /api/v1/social-medias/:id/icon` */
-export const uploadSocialMediaIcon = singleFileUpload({
-  field: 'file',
-  maxBytes: PHASE2_IMAGE_MAX_BYTES,
-  mimeAllowlist: PHASE2_IMAGE_MIMES,
-  label: 'Social media icon'
-});
-
-/** `PATCH /api/v1/skills/:id/icon` */
-export const uploadSkillIcon = singleFileUpload({
-  field: 'file',
-  maxBytes: PHASE2_IMAGE_MAX_BYTES,
-  mimeAllowlist: PHASE2_IMAGE_MIMES,
-  label: 'Skill icon'
-});
-
-// NOTE: The previously-exported single-file factories for countries,
-// specializations, categories and sub-categories were deleted when
-// their routes were unified into PATCH /:id. If you need to re-add a
-// standalone icon/image endpoint for any of those resources, prefer
-// adding it to the PATCH multi-slot factory instead.
 
 // ─── Unified PATCH multi-slot upload ────────────────────────────
 //
@@ -514,6 +479,42 @@ export const patchSpecializationFiles = multiSlotUpload({
       maxBytes: PHASE2_IMAGE_MAX_BYTES,
       mimeAllowlist: PHASE2_IMAGE_MIMES,
       label: 'Specialization icon'
+    }
+  }
+});
+
+/** `PATCH /api/v1/skills/:id` — optional icon slot only. */
+export const patchSkillFiles = multiSlotUpload({
+  slots: {
+    icon: {
+      field: ['icon', 'iconImage', 'file'],
+      maxBytes: PHASE2_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE2_IMAGE_MIMES,
+      label: 'Skill icon'
+    }
+  }
+});
+
+/** `PATCH /api/v1/learning-goals/:id` — optional icon slot only. */
+export const patchLearningGoalFiles = multiSlotUpload({
+  slots: {
+    icon: {
+      field: ['icon', 'iconImage', 'file'],
+      maxBytes: PHASE2_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE2_IMAGE_MIMES,
+      label: 'Learning goal icon'
+    }
+  }
+});
+
+/** `PATCH /api/v1/social-medias/:id` — optional icon slot only. */
+export const patchSocialMediaFiles = multiSlotUpload({
+  slots: {
+    icon: {
+      field: ['icon', 'iconImage', 'file'],
+      maxBytes: PHASE2_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE2_IMAGE_MIMES,
+      label: 'Social media icon'
     }
   }
 });

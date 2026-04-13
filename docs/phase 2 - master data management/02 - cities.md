@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§2.2](#22) | `GET` | `{{baseUrl}}/api/v1/cities/:id` | city.read | Get a single city by id. |
 | [§2.3](#23) | `POST` | `{{baseUrl}}/api/v1/cities` | city.create | Create a new city. |
 | [§2.4](#24) | `PATCH` | `{{baseUrl}}/api/v1/cities/:id` | city.update | Partial update of a city. |
-| [§2.5](#25) | `DELETE` | `{{baseUrl}}/api/v1/cities/:id` | city.delete | Soft-delete a city. |
-| [§2.6](#26) | `POST` | `{{baseUrl}}/api/v1/cities/:id/restore` | city.restore | Undo a soft-delete. |
+| [§2.5](#25) | `DELETE` | `{{baseUrl}}/api/v1/cities/:id` | **super_admin** + city.delete | Soft-delete a city. |
+| [§2.6](#26) | `POST` | `{{baseUrl}}/api/v1/cities/:id/restore` | **super_admin** + city.restore | Undo a soft-delete. |
 
 ---
 
@@ -299,7 +299,7 @@ Standard shapes.
 
 ## 2.5 `DELETE /api/v1/cities/:id`
 
-Soft delete. Permission: `city.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `city.delete`.
 
 **Postman request**
 
@@ -307,7 +307,7 @@ Soft delete. Permission: `city.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/cities/:id` |
-| Permission | `city.delete` |
+| Permission | **super_admin** + `city.delete` |
 
 **Headers**
 
@@ -339,7 +339,7 @@ Standard shapes.
 
 ## 2.6 `POST /api/v1/cities/:id/restore`
 
-Reverse a soft delete. Permission: `city.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `city.restore`.
 
 **Postman request**
 
@@ -347,7 +347,7 @@ Reverse a soft delete. Permission: `city.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/cities/:id/restore` |
-| Permission | `city.restore` |
+| Permission | **super_admin** + `city.restore` |
 
 **Headers**
 

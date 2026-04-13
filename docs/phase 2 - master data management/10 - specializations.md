@@ -20,8 +20,8 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§10.2](#102) | `GET` | `{{baseUrl}}/api/v1/specializations/:id` | specialization.read | Get a single specialization by id. |
 | [§10.3](#103) | `POST` | `{{baseUrl}}/api/v1/specializations` | specialization.create | Create a new specialization. |
 | [§10.4](#104) | `PATCH` | `{{baseUrl}}/api/v1/specializations/:id` | specialization.update | Partial update (JSON body). |
-| [§10.5](#105) | `DELETE` | `{{baseUrl}}/api/v1/specializations/:id` | specialization.delete | Soft-delete. |
-| [§10.6](#106) | `POST` | `{{baseUrl}}/api/v1/specializations/:id/restore` | specialization.restore | Undo a soft-delete. |
+| [§10.5](#105) | `DELETE` | `{{baseUrl}}/api/v1/specializations/:id` | **super_admin** + specialization.delete | Soft-delete. |
+| [§10.6](#106) | `POST` | `{{baseUrl}}/api/v1/specializations/:id/restore` | **super_admin** + specialization.restore | Undo a soft-delete. |
 | [§10.7](#107) | `PATCH` | `{{baseUrl}}/api/v1/specializations/:id/icon` | specialization.update | Upload / replace / clear the icon via `multipart/form-data`. |
 
 ---
@@ -379,7 +379,7 @@ Same as 10.3.
 
 ## 10.5 `DELETE /api/v1/specializations/:id`
 
-Soft delete. Permission: `specialization.delete`.
+Soft delete. **Requires `super_admin` role** + permission: `specialization.delete`.
 
 **Postman request**
 
@@ -387,7 +387,7 @@ Soft delete. Permission: `specialization.delete`.
 |---|---|
 | Method | `DELETE` |
 | URL | `{{baseUrl}}/api/v1/specializations/:id` |
-| Permission | `specialization.delete` |
+| Permission | **super_admin** + `specialization.delete` |
 
 **Headers**
 
@@ -439,7 +439,7 @@ Same as 10.3.
 
 ## 10.6 `POST /api/v1/specializations/:id/restore`
 
-Reverse a soft delete. Permission: `specialization.restore`.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `specialization.restore`.
 
 **Postman request**
 
@@ -447,7 +447,7 @@ Reverse a soft delete. Permission: `specialization.restore`.
 |---|---|
 | Method | `POST` |
 | URL | `{{baseUrl}}/api/v1/specializations/:id/restore` |
-| Permission | `specialization.restore` |
+| Permission | **super_admin** + `specialization.restore` |
 
 **Headers**
 

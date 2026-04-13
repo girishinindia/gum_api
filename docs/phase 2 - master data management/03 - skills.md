@@ -19,10 +19,9 @@ Quick reference of every endpoint documented on this page. Section numbers link 
 | [§3.1](#31) | `GET` | `{{baseUrl}}/api/v1/skills` | skill.read | List skills with category filter, search, and sort. |
 | [§3.2](#32) | `GET` | `{{baseUrl}}/api/v1/skills/:id` | skill.read | Get a single skill by id. |
 | [§3.3](#33) | `POST` | `{{baseUrl}}/api/v1/skills` | skill.create | Create a new skill. |
-| [§3.4](#34) | `PATCH` | `{{baseUrl}}/api/v1/skills/:id` | skill.update | Partial update of a skill (JSON body). |
-| [§3.5](#35) | `DELETE` | `{{baseUrl}}/api/v1/skills/:id` | skill.delete | Soft-delete a skill. |
-| [§3.6](#36) | `POST` | `{{baseUrl}}/api/v1/skills/:id/restore` | skill.restore | Undo a soft-delete. |
-| [§3.7](#37) | `PATCH` | `{{baseUrl}}/api/v1/skills/:id/icon` | skill.update | Upload / replace / clear the skill icon via `multipart/form-data`. |
+| [§3.4](#34) | `PATCH` | `{{baseUrl}}/api/v1/skills/:id` | skill.update | Partial update — accepts JSON or `multipart/form-data` with an optional `icon` file. |
+| [§3.5](#35) | `DELETE` | `{{baseUrl}}/api/v1/skills/:id` | **super_admin** + skill.delete | Soft-delete a skill. |
+| [§3.6](#36) | `POST` | `{{baseUrl}}/api/v1/skills/:id/restore` | **super_admin** + skill.restore | Undo a soft-delete. |
 
 ---
 
@@ -276,14 +275,13 @@ Create a skill. Permission: `skill.create`.
   "name": "TypeScript",
   "category": "language",
   "description": "Typed superset of JavaScript that compiles to plain JS.",
-  "iconUrl": null,
   "isActive": true
 }
 ```
 
 **Required fields**: `name`.
 
-**Optional fields**: `category` (defaults to `technical`), `description`, `iconUrl`, `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
+**Optional fields**: `category` (defaults to `technical`), `description`, `isActive` (defaults to **`false`** at the API layer — see [§6 in 00 - overview](00%20-%20overview.md#6-active-flag-defaults)).
 
 **Field hard-limits** (zod-rejected before reaching the DB)
 
@@ -291,7 +289,6 @@ Create a skill. Permission: `skill.create`.
 |---|---|---|---|
 | `name` | 1 | 128 | |
 | `description` | — | 2000 | |
-| `iconUrl` | — | 512 | Must parse as URL if provided. |
 
 ### Responses
 
@@ -374,9 +371,10 @@ Name is unique over `is_deleted = FALSE`, so soft-deleted skills free up their n
 
 ## 3.4 `PATCH /api/v1/skills/:id`
 
-Partial update. Every field is optional, but the body must contain **at least one** known key — an empty body returns `400 VALIDATION_ERROR` with `"Provide at least one field to update"`.
+Partial update. Accepts two content types:
 
-Patchable fields: `name`, `category`, `description`, `iconUrl`, `isActive`.
+- **`application/json`** — text-only patch (patchable fields: `name`, `category`, `description`, `isActive`). Every field is optional, but the body must contain **at least one** known key.
+- **`multipart/form-data`** — text fields + optional `icon` file slot. To clear icon, send `iconAction=delete`. Uploading and deleting an icon in the same request is rejected.
 
 **Postman request**
 
@@ -386,6 +384,14 @@ Patchable fields: `name`, `category`, `description`, `iconUrl`, `isActive`.
 | URL | `{{baseUrl}}/api/v1/skills/:id` |
 | Permission | `skill.update` |
 
+**Path params**
+
+| Name | Type | Notes |
+|---|---|---|
+| `id` | int | Numeric skill id. |
+
+### Request body — `application/json` variant
+
 **Headers**
 
 | Key | Value |
@@ -393,13 +399,7 @@ Patchable fields: `name`, `category`, `description`, `iconUrl`, `isActive`.
 | `Authorization` | `Bearer {{accessToken}}` |
 | `Content-Type` | `application/json` |
 
-**Path params**
-
-| Name | Type | Notes |
-|---|---|---|
-| `id` | int | Numeric skill id. |
-
-**Request body** (`application/json`) — some sample variants:
+Sample variants:
 
 *Update description*
 
@@ -413,6 +413,47 @@ Patchable fields: `name`, `category`, `description`, `iconUrl`, `isActive`.
 { "category": "tool", "isActive": true }
 ```
 
+### Request body — `multipart/form-data` variant
+
+**Headers**
+
+| Key | Value |
+|---|---|
+| `Authorization` | `Bearer {{accessToken}}` |
+| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
+
+**Form fields**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | text | no | Skill name (1–128 chars). |
+| `category` | text | no | One of: `technical`, `soft_skill`, `tool`, `framework`, `language`, `domain`, `certification`, `other`. |
+| `description` | text | no | Skill description (≤ 2000 chars). |
+| `isActive` | text (boolean string) | no | `true` or `false`. |
+| `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Resized to fit 256×256 box, re-encoded to WebP, stored at `skills/icons/<id>.webp`. Field aliases: `iconImage`, `file`. |
+| `iconAction` | text | no | Send `delete` to clear the icon. Do not upload an icon in the same request. |
+
+**Icon pipeline details**
+
+When an `icon` file is uploaded:
+- Input formats: PNG, JPEG, WebP, SVG (all ≤ 100 KB raw)
+- Processing: decoded, resized to fit within 256×256, re-encoded to WebP
+- Storage: Bunny CDN at `skills/icons/<id>.webp`
+- Response: `iconUrl` is set to the CDN path and returned in the patched skill object
+
+To clear an icon without uploading a new one, send `iconAction=delete` as a form field. This removes the Bunny CDN object and sets `iconUrl` to `null` in the database.
+
+**Note**: `iconUrl` is NOT a patchable text field — it is set only by the icon pipeline (upload or delete).
+
+**Postman examples**
+
+| Example name | Body |
+|---|---|
+| Text patch only | `name` = `"TypeScript (Modern)"`, `description` = `"Updated description"` |
+| Upload new icon | `icon` = `typescript-256.png` |
+| Replace existing icon | `icon` = `typescript-v2.webp` |
+| Clear icon only | `iconAction` = `delete` |
+
 ### Responses
 
 #### 200 OK
@@ -423,7 +464,7 @@ Same row shape as `3.2 GET /:id`, wrapped in:
 { "success": true, "message": "Skill updated", "data": { "id": 14, "...": "..." } }
 ```
 
-#### 400 VALIDATION_ERROR — empty body
+#### 400 VALIDATION_ERROR — empty body (JSON variant)
 
 ```json
 {
@@ -433,6 +474,56 @@ Same row shape as `3.2 GET /:id`, wrapped in:
   "details": [
     { "path": "", "message": "Provide at least one field to update", "code": "custom" }
   ]
+}
+```
+
+#### 400 BAD_REQUEST — upload and delete in same request
+
+```json
+{
+  "success": false,
+  "message": "Cannot upload an icon and delete it in the same request",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — icon file too large
+
+```json
+{
+  "success": false,
+  "message": "File too large: icon must be ≤ 100 KB raw",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unsupported media type
+
+```json
+{
+  "success": false,
+  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — unreadable image
+
+```json
+{
+  "success": false,
+  "message": "Uploaded file is not a readable image",
+  "code": "BAD_REQUEST"
+}
+```
+
+#### 400 BAD_REQUEST — soft-deleted (multipart variant)
+
+```json
+{
+  "success": false,
+  "message": "Skill 14 is soft-deleted; restore it before uploading an icon",
+  "code": "BAD_REQUEST"
 }
 ```
 
@@ -450,11 +541,23 @@ Same row shape as `3.2 GET /:id`, wrapped in:
 { "success": false, "message": "Skill with name \"TypeScript\" already exists", "code": "DUPLICATE_ENTRY" }
 ```
 
+#### 502 BUNNY_UPLOAD_FAILED
+
+Returned only on icon upload (multipart variant) when Bunny CDN Storage rejects the PUT:
+
+```json
+{
+  "success": false,
+  "message": "Failed to upload skill icon to CDN",
+  "code": "BUNNY_UPLOAD_FAILED"
+}
+```
+
 ---
 
 ## 3.5 `DELETE /api/v1/skills/:id`
 
-Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW()`. Permission: `skill.delete`.
+Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW()`. **Requires `super_admin` role** + permission: `skill.delete`.
 
 **Postman request**
 
@@ -522,7 +625,7 @@ Soft delete — sets `is_deleted = TRUE`, `is_active = FALSE`, `deleted_at = NOW
 
 ## 3.6 `POST /api/v1/skills/:id/restore`
 
-Reverse a soft delete. Permission: `skill.restore`. Restore sets `is_deleted = FALSE` and `is_active = TRUE` in one shot and returns the full refreshed row.
+Reverse a soft delete. **Requires `super_admin` role** + permission: `skill.restore`. Restore sets `is_deleted = FALSE` and `is_active = TRUE` in one shot and returns the full refreshed row.
 
 **Postman request**
 
@@ -585,191 +688,6 @@ Reverse a soft delete. Permission: `skill.restore`. Restore sets `is_deleted = F
 
 ```json
 { "success": false, "message": "Skill 9999 not found", "code": "NOT_FOUND" }
-```
-
----
-
-## 3.7 `PATCH /api/v1/skills/:id/icon`
-
-Dedicated file-upload sibling of §3.4. Where `PATCH /api/v1/skills/:id` takes a JSON body of text fields (and accepts `iconUrl` only as a plain string), **this route takes a `multipart/form-data` body with a binary `icon` part** and runs the file through the shared Bunny-CDN pipeline — decode with sharp, enforce the icon box (≤ 256 × 256), re-encode to WebP, delete the prior Bunny object (if any), PUT the new WebP under `skills/icons/<id>.webp`, and return the refreshed row with the new `iconUrl` in the same response. Permission: `skill.update`.
-
-> **Implementation status.** The skills table already has the `icon_url` column and the sharp-backed upload pipeline is shared with specializations / learning-goals / social-medias / categories / sub-categories. The router entry itself is tracked as a follow-up alongside a new `udf_skills_set_icon_url` SQL setter and a `uploadSkillIcon` multer middleware — the doc is published here ahead of the code change so clients can wire Postman environments against the final convention. Until the route ships, fall back to setting `iconUrl` as a plain URL via §3.4 (and host the image yourself).
-
-**Postman request**
-
-| Field | Value |
-|---|---|
-| Method | `PATCH` |
-| URL | `{{baseUrl}}/api/v1/skills/:id/icon` |
-| Permission | `skill.update` |
-
-**Headers**
-
-| Key | Value |
-|---|---|
-| `Authorization` | `Bearer {{accessToken}}` |
-| `Content-Type` | `multipart/form-data` (Postman sets the boundary automatically) |
-
-**Path params**
-
-| Name | Type | Notes |
-|---|---|---|
-| `id` | int | Numeric skill id. Must exist and not be soft-deleted. |
-
-**Body** — `multipart/form-data`:
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `icon` | file | yes | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**, fits a 256 × 256 box. Re-encoded server-side to WebP ≤ 100 KB. |
-| `iconAction` | text | no | Send `delete` (with no file part) to clear the existing icon. Mutually exclusive with a file upload. |
-
-**Saved examples to add in Postman**
-
-| Example name | Body |
-|---|---|
-| Upload new icon | `icon` = `typescript-256.png` |
-| Replace existing icon | `icon` = `typescript-v2.webp` |
-| Clear icon | `iconAction` = `delete` |
-
-### Responses
-
-#### 200 OK — icon uploaded
-
-```json
-{
-  "success": true,
-  "message": "Skill icon uploaded",
-  "data": {
-    "id": 14,
-    "name": "TypeScript",
-    "category": "language",
-    "description": "Typed superset of JavaScript that compiles to plain JS.",
-    "iconUrl": "https://cdn.growupmore.com/skills/icons/14.webp",
-    "isActive": true,
-    "isDeleted": false,
-    "createdAt": "2026-04-11T00:00:00.000Z",
-    "updatedAt": "2026-04-11T12:14:55.108Z",
-    "deletedAt": null
-  }
-}
-```
-
-#### 200 OK — icon cleared (`iconAction=delete`)
-
-```json
-{
-  "success": true,
-  "message": "Skill icon deleted",
-  "data": {
-    "id": 14,
-    "iconUrl": null,
-    "updatedAt": "2026-04-11T12:15:02.771Z"
-  }
-}
-```
-
-#### 400 VALIDATION_ERROR — missing file part
-
-```json
-{
-  "success": false,
-  "message": "icon field is required (multipart/form-data)",
-  "code": "VALIDATION_ERROR"
-}
-```
-
-#### 400 BAD_REQUEST — file too large
-
-```json
-{
-  "success": false,
-  "message": "File too large: icon must be ≤ 100 KB raw",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unsupported media type
-
-```json
-{
-  "success": false,
-  "message": "Unsupported media type: expected image/png, image/jpeg, image/webp, or image/svg+xml",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — unreadable image
-
-```json
-{
-  "success": false,
-  "message": "Uploaded file is not a readable image",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — conflicting action
-
-```json
-{
-  "success": false,
-  "message": "Cannot upload a new skill icon AND iconAction=delete in the same request — pick one.",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 400 BAD_REQUEST — soft-deleted
-
-```json
-{
-  "success": false,
-  "message": "Skill 14 is soft-deleted; restore it before uploading an icon",
-  "code": "BAD_REQUEST"
-}
-```
-
-#### 401 UNAUTHORIZED
-
-```json
-{ "success": false, "message": "Missing or invalid access token", "code": "UNAUTHORIZED" }
-```
-
-#### 403 FORBIDDEN
-
-```json
-{ "success": false, "message": "Permission denied: skill.update", "code": "FORBIDDEN" }
-```
-
-#### 404 NOT_FOUND
-
-```json
-{ "success": false, "message": "Skill 9999 not found", "code": "NOT_FOUND" }
-```
-
-#### 429 RATE_LIMIT_EXCEEDED
-
-```json
-{
-  "success": false,
-  "message": "Too many requests from this IP, please try again later",
-  "code": "RATE_LIMIT_EXCEEDED"
-}
-```
-
-#### 500 INTERNAL_ERROR
-
-```json
-{ "success": false, "message": "An unexpected error occurred", "code": "INTERNAL_ERROR" }
-```
-
-#### 502 BUNNY_UPLOAD_FAILED
-
-```json
-{
-  "success": false,
-  "message": "Failed to upload skill icon to CDN",
-  "code": "BUNNY_UPLOAD_FAILED"
-}
 ```
 
 ---
