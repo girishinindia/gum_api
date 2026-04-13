@@ -272,12 +272,12 @@ Create a social media. Permission: `social_media.create`. Accepts `application/j
 
 \* For icon operations: Optionally upload a file via `icon`, `iconImage`, or `file`. File is processed through the same WebP pipeline as the PATCH icon upload.
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Text only (JSON) | `Content-Type: application/json` with `{"name": "New Platform"}` |
-| Create with icon (form-data) | `Content-Type: multipart/form-data` with `name` + `icon` file |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no icon) | `application/json` | `{ "name": "LinkedIn", "code": "LINKEDIN", "baseUrl": "https://linkedin.com", "placeholder": "https://linkedin.com/in/{username}", "platformType": "professional" }` |
+| 2 | Create — form-data + icon | `multipart/form-data` | `name` = `LinkedIn`, `code` = `LINKEDIN`, `baseUrl` = `https://linkedin.com`, `placeholder` = `https://linkedin.com/in/{username}`, `platformType` = `professional`, `icon` = `linkedin-logo.png` (file) |
 
 ### Responses
 
@@ -450,15 +450,13 @@ Unified partial update endpoint. Accepts `application/json` for text-only update
 
 \* For icon operations: Either upload a file (via `icon`, `iconImage`, or `file`) **or** send `iconAction=delete`. At least one text field (`name` or `isActive`) or one icon operation must be present.
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Update name only (JSON) | `Content-Type: application/json` with `{"name": "New Name"}` |
-| Upload new icon + update name | `Content-Type: multipart/form-data` with `name` + `icon` file |
-| Replace existing icon | `Content-Type: multipart/form-data` with new `icon` file binary |
-| Clear icon only | `Content-Type: multipart/form-data` with `iconAction=delete` |
-| Update active status + clear icon | `Content-Type: multipart/form-data` with `isActive=true` + `iconAction=delete` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no icon) | `application/json` | `{ "baseUrl": "https://www.linkedin.com", "displayOrder": 1 }` |
+| 2 | Update — form-data + text + icon | `multipart/form-data` | `name` = `LinkedIn Professional`, `icon` = `linkedin-v2.png` (file) |
+| 3 | Update — form-data icon only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

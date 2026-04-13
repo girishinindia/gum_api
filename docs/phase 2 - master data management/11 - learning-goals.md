@@ -262,13 +262,12 @@ Create a learning goal. Permission: `learning_goal.create`.
 
 **Icon pipeline**: Uploaded files are decoded, enforced to fit a 256×256 box, re-encoded to WebP ≤100 KB, and stored at `learning-goals/icons/<id>.webp`.
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Create with JSON | `Content-Type: application/json`; `{"name": "Python Basics", "isActive": true}` |
-| Create with multipart + icon | `name` = "Python Basics"; `isActive` = "true"; `icon` = file binary |
-| Create with multipart, no icon | `name` = "Python Basics"; `isActive` = "true"` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no icon) | `application/json` | `{ "name": "Master React", "description": "Learn React from scratch", "isActive": true }` |
+| 2 | Create — form-data + icon | `multipart/form-data` | `name` = `Master React`, `description` = `Learn React from scratch`, `isActive` = `true`, `icon` = `react-goal.png` (file) |
 
 ### Responses
 
@@ -374,15 +373,13 @@ Text-only patch: update name and/or isActive. At least one field is required.
 
 **Icon pipeline**: Uploaded files are decoded, enforced to fit a 256×256 box, re-encoded to WebP ≤100 KB, and stored at `learning-goals/icons/<id>.webp`.
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Update name (JSON) | `Content-Type: application/json`; `{"name": "New Name"}` |
-| Update name + active status (JSON) | `Content-Type: application/json`; `{"name": "New Name", "isActive": false}` |
-| Update + upload new icon (multipart) | `name` = "New Name"; `icon` = file binary |
-| Upload icon only (multipart) | `icon` = file binary |
-| Clear icon (multipart) | `iconAction` = `delete` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no icon) | `application/json` | `{ "description": "Updated learning path", "displayOrder": 5 }` |
+| 2 | Update — form-data + text + icon | `multipart/form-data` | `name` = `Advanced React`, `icon` = `react-adv.png` (file) |
+| 3 | Update — form-data icon only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

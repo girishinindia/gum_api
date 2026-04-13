@@ -265,12 +265,12 @@ Two options:
 | `isActive` | text | no | `true` or `false`; defaults to `false`. |
 | `icon` | file | no | PNG / JPEG / WebP / SVG, **≤ 100 KB raw**. Aliases: `iconImage`, `file`. Re-encoded server-side to WebP ≤ 100 KB. The icon URL will appear in the response. |
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Create with JSON | `name` = "Example", `isActive` = true |
-| Create with form-data + icon | `name` = "Example", `isActive` = true, `icon` = (file binary) |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no icon) | `application/json` | `{ "name": "Full Stack Development", "description": "End-to-end web development", "isActive": true }` |
+| 2 | Create — form-data + icon | `multipart/form-data` | `name` = `Full Stack Development`, `description` = `End-to-end web development`, `isActive` = `true`, `icon` = `fullstack-icon.png` (file) |
 
 ### Responses
 
@@ -379,6 +379,14 @@ Partial update.
   "isActive": true
 }
 ```
+
+**Postman examples**
+
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no icon) | `application/json` | `{ "description": "Updated specialization description" }` |
+| 2 | Update — form-data + text + icon | `multipart/form-data` | `name` = `Full Stack (Modern)`, `icon` = `fullstack-v2.png` (file) |
+| 3 | Update — form-data icon only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

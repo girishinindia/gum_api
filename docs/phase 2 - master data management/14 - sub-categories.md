@@ -267,13 +267,12 @@ Create a sub-category. Permission: `sub_category.create`.
 
 Both `icon` and `image` fields are optional; include only the files you want to upload. Both are processed server-side and will appear in the response with their Bunny CDN URLs.
 
-**Saved examples to add in Postman**
+**Postman examples**
 
-| Example name | Body |
-|---|---|
-| Create with JSON (text fields only) | `name` = `"Example"`, `isActive` = `true` |
-| Create with form-data (text + icon file) | `name` = `"Frontend"`, `icon` = `frontend-icon.png` |
-| Create with form-data (text + both files) | `name` = `"Backend"`, `icon` = `backend-icon.webp`, `image` = `backend-hero.webp` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no images) | `application/json` | `{ "categoryId": 1, "code": "WEB", "slug": "web", "displayOrder": 1, "isActive": true }` |
+| 2 | Create — form-data + icon + image | `multipart/form-data` | `categoryId` = `1`, `code` = `WEB`, `slug` = `web`, `displayOrder` = `1`, `isActive` = `true`, `icon` = `web-icon.png` (file), `image` = `web-hero.png` (file) |
 
 ### Responses
 
@@ -363,6 +362,14 @@ Partial update.
   "isActive": true
 }
 ```
+
+**Postman examples**
+
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no images) | `application/json` | `{ "displayOrder": 2, "isActive": true }` |
+| 2 | Update — form-data + text + icon + image | `multipart/form-data` | `slug` = `web-dev`, `icon` = `web-v2.png` (file), `image` = `web-hero-v2.png` (file) |
+| 3 | Update — form-data image only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

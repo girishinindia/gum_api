@@ -7,7 +7,7 @@ All phase 2 routes:
 - require a valid bearer token (Phase 1 JWT, `authenticate` middleware),
 - are CRUD + soft-delete + restore — shape identical to `/api/v1/countries`,
 - return the standard envelope (`{ success, message, data, meta? }`),
-- and call Postgres `udf_*` functions exclusively — no raw SQL in the service layer (the single exception is the icon / image setters for specialization, learning-goal, social-media, category, and sub-category, which write `icon_url`/`image_url` directly because the update UDF signatures intentionally exclude these columns).
+- and call Postgres `udf_*` functions exclusively — no raw SQL in the service layer (the single exception is the icon / image setters for skill, specialization, learning-goal, social-media, category, and sub-category, which write `icon_url`/`image_url` directly because the update UDF signatures intentionally exclude these columns).
 
 ← [Phase 1 walkthrough](../phase%201%20-%20role%20based%20user%20management/10%20-%20walkthrough%20and%20index.md) · **Next →** [01 states](01%20-%20states.md)
 
@@ -33,14 +33,15 @@ All phase 2 routes:
 
 URLs are **kebab-case**, permission codes are **snake_case** (`education_level`, `learning_goal`, `social_media`, `sub_category` — not camelCase and not kebab-case) because they match the DB table name and the `.` separator in `<code>.read` is what the authorize middleware parses.
 
-> **File uploads.** Five phase-2 resources expose Bunny-backed image routes:
-> - `/specializations/:id/icon` — [§10.7](10%20-%20specializations.md#107-post-apiv1specializationsidicon)
-> - `/learning-goals/:id/icon` — [§11.7](11%20-%20learning-goals.md#117-post-apiv1learning-goalsidicon)
-> - `/social-medias/:id/icon` — [§12.7](12%20-%20social-medias.md#127-post-apiv1social-mediasidicon)
-> - `/categories/:id/icon` + `/categories/:id/image` — [§13.7](13%20-%20categories.md#137-post-apiv1categoriesidicon) / [§13.9](13%20-%20categories.md#139-post-apiv1categoriesidimage)
-> - `/sub-categories/:id/icon` + `/sub-categories/:id/image` — [§14.7](14%20-%20sub-categories.md#147-post-apiv1sub-categoriesidicon) / [§14.9](14%20-%20sub-categories.md#149-post-apiv1sub-categoriesidimage)
+> **File uploads.** Six phase-2 resources support Bunny-backed image uploads inline on both `POST` (create) and `PATCH` (update) — no separate icon/image endpoints. Send `multipart/form-data` with the text fields plus the optional file slot(s):
+> - `/skills` — `icon` slot — [§3.3](03%20-%20skills.md#33-post-apiv1skills) / [§3.4](03%20-%20skills.md#34-patch-apiv1skillsid)
+> - `/specializations` — `icon` slot — [§10.3](10%20-%20specializations.md#103-post-apiv1specializations) / [§10.4](10%20-%20specializations.md#104-patch-apiv1specializationsid)
+> - `/learning-goals` — `icon` slot — [§11.3](11%20-%20learning-goals.md#113-post-apiv1learning-goals) / [§11.4](11%20-%20learning-goals.md#114-patch-apiv1learning-goalsid)
+> - `/social-medias` — `icon` slot — [§12.3](12%20-%20social-medias.md#123-post-apiv1social-medias) / [§12.4](12%20-%20social-medias.md#124-patch-apiv1social-mediasid)
+> - `/categories` — `icon` + `image` slots — [§13.3](13%20-%20categories.md#133-post-apiv1categories) / [§13.4](13%20-%20categories.md#134-patch-apiv1categoriesid)
+> - `/sub-categories` — `icon` + `image` slots — [§14.3](14%20-%20sub-categories.md#143-post-apiv1sub-categories) / [§14.4](14%20-%20sub-categories.md#144-patch-apiv1sub-categoriesid)
 >
-> Every upload enforces the same contract: **PNG / JPEG / WebP / SVG, ≤ 100 KB raw, always re-encoded to WebP, ≤ 100 KB final**. Icons fit a 256 × 256 box; hero `/image` routes fit a 1024 × 1024 box. Storage keys are deterministic (`<resource>/<icons|images>/<id>.webp`), and on replace the previous Bunny object is deleted **before** the new PUT to avoid orphans — delete failures are logged at WARN and do **not** block the new upload.
+> Every upload enforces the same contract: **PNG / JPEG / WebP / SVG, ≤ 100 KB raw, always re-encoded to WebP, ≤ 100 KB final**. Icons fit a 256 × 256 box; hero `image` slots fit a 1024 × 1024 box. Storage keys are deterministic (`<resource>/<icons|images>/<id>.webp`), and on replace the previous Bunny object is deleted **before** the new PUT to avoid orphans — delete failures are logged at WARN and do **not** block the new upload. On `PATCH`, set `iconAction=delete` (or `imageAction=delete`) to clear the image without uploading a replacement.
 >
 > **Translation sub-resources.** Categories and sub-categories each expose a nested translation sub-resource (`/:id/translations`, `/:id/translations/:tid`) covering list/get/create/patch/delete/restore of per-language rows. Create also supports a **combined parent + first-translation insert** via an optional `translation` block in the main `POST` body — committed atomically by the UDF, returning both ids. See [§13.3](13%20-%20categories.md#133-post-apiv1categories) and [§14.3](14%20-%20sub-categories.md#143-post-apiv1sub-categories).
 
@@ -128,7 +129,7 @@ A machine-readable Postman v2.1 collection is also available at `api/docs/postma
 |---|---|
 | States (country join) | [01 states](01%20-%20states.md) |
 | Cities (state + country join) | [02 cities](02%20-%20cities.md) |
-| Skills | [03 skills](03%20-%20skills.md) |
+| Skills (+ icon upload) | [03 skills](03%20-%20skills.md) |
 | Languages | [04 languages](04%20-%20languages.md) |
 | Education levels | [05 education-levels](05%20-%20education-levels.md) |
 | End-to-end walkthrough | [06 walkthrough and index](06%20-%20walkthrough%20and%20index.md) |

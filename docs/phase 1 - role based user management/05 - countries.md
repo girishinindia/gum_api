@@ -295,41 +295,12 @@ This route accepts **two content types** and both hit the same handler:
 * **`application/json`** — all fields as JSON.
 * **`multipart/form-data`** — text fields and an optional flag file. The optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`). When the flag part is present, the server runs the flag pipeline before returning the created row: decode via sharp, enforce exact 90 × 90 dimensions, re-encode to WebP (quality 90), then PUT the WebP under the deterministic key **`countries/flags/<iso3>.webp`**. The CDN URL is returned in the `flagImage` field of the 201 response.
 
-*Text-only JSON:*
+**Postman examples**
 
-```json
-{
-  "name": "Canada",
-  "iso2": "CA",
-  "iso3": "CAN",
-  "phoneCode": "+1",
-  "currency": "CAD",
-  "currencyName": "Canadian Dollar",
-  "currencySymbol": "$",
-  "nationalLanguage": "English",
-  "nationality": "Canadian",
-  "languages": ["English", "French"],
-  "tld": ".ca",
-  "isActive": true
-}
-```
-
-*Multipart — create with text fields and flag file:*
-
-Form fields:
-- `name`: `Canada`
-- `iso2`: `CA`
-- `iso3`: `CAN`
-- `phoneCode`: `+1`
-- `currency`: `CAD`
-- `currencyName`: `Canadian Dollar`
-- `currencySymbol`: `$`
-- `nationalLanguage`: `English`
-- `nationality`: `Canadian`
-- `languages`: `["English", "French"]` (JSON array as string)
-- `tld`: `.ca`
-- `isActive`: `true`
-- `flag`: (binary file, optional)
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no flag) | `application/json` | `{ "name": "Canada", "iso2": "CA", "iso3": "CAN", "phoneCode": "+1", "currency": "CAD", "currencySymbol": "$" }` |
+| 2 | Create — form-data + flag | `multipart/form-data` | `name` = `Canada`, `iso2` = `CA`, `iso3` = `CAN`, `phoneCode` = `+1`, `currency` = `CAD`, `currencySymbol` = `$`, `flag` = `canada-flag-90x90.png` (file) |
 
 **Required fields**: `name`, `iso2`, `iso3`.
 
@@ -524,21 +495,13 @@ This route accepts **two content types** and both hit the same handler:
 
 **Request body** — JSON or multipart:
 
-*Text-only patch:*
+**Postman examples**
 
-```json
-{
-  "currencyName": "Canadian Dollar",
-  "languages": ["English", "French", "Inuktitut"],
-  "isActive": true
-}
-```
-
-*Multipart — update phone code and upload flag:*
-
-Form fields:
-- `phoneCode`: `+91`
-- `flag`: (binary file)
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no flag) | `application/json` | `{ "nationality": "Canadian", "nationalLanguage": "English" }` |
+| 2 | Update — form-data + text + flag | `multipart/form-data` | `nationality` = `Canadian`, `flag` = `canada-flag-v2.png` (file) |
+| 3 | Update — form-data flag only | `multipart/form-data` | `flag` = `new-flag-90x90.png` (file) |
 
 ### Hard limits on the flag file
 

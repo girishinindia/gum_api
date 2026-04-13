@@ -269,14 +269,12 @@ Include text fields plus optional image files. All files are processed through t
 
 When both files are provided, both `iconUrl` and `imageUrl` will appear in the response.
 
-**Postman example — form-data:**
+**Postman examples**
 
-| Field | Value | Type |
-|---|---|---|
-| `name` | `"Technology"` | text |
-| `isActive` | `true` | text |
-| `icon` | (binary file: `tech-icon.png`) | file |
-| `image` | (binary file: `tech-hero.webp`) | file |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no images) | `application/json` | `{ "name": "Technology", "isActive": true }` |
+| 2 | Create — form-data + icon + image | `multipart/form-data` | `name` = `Technology`, `isActive` = `true`, `icon` = `tech-icon.png` (file), `image` = `tech-hero.png` (file) |
 
 ### Responses
 
@@ -408,6 +406,14 @@ Partial update.
   "isActive": true
 }
 ```
+
+**Postman examples**
+
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no images) | `application/json` | `{ "displayOrder": 2, "isActive": true }` |
+| 2 | Update — form-data + text + icon + image | `multipart/form-data` | `slug` = `technology`, `icon` = `tech-v2.png` (file), `image` = `tech-hero-v2.png` (file) |
+| 3 | Update — form-data image only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 

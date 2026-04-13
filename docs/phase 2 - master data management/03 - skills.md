@@ -324,11 +324,10 @@ When an `icon` file is uploaded:
 
 **Postman examples**
 
-| Example name | Body |
-|---|---|
-| JSON — text only | `name` = `"React"`, `category` = `"framework"` |
-| Form-data — text only | `name` = `"TypeScript"`, `category` = `"language"`, `description` = `"Typed superset of JavaScript"` |
-| Form-data — with icon | `name` = `"Rust"`, `category` = `"language"`, `icon` = `rust-logo.png` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Create — JSON (no icon) | `application/json` | `{ "name": "React", "category": "framework", "description": "A JS library for building UIs" }` |
+| 2 | Create — form-data + icon | `multipart/form-data` | `name` = `React`, `category` = `framework`, `description` = `A JS library for building UIs`, `icon` = `react-logo.png` (file) |
 
 ### Responses
 
@@ -487,12 +486,11 @@ To clear an icon without uploading a new one, send `iconAction=delete` as a form
 
 **Postman examples**
 
-| Example name | Body |
-|---|---|
-| Text patch only | `name` = `"TypeScript (Modern)"`, `description` = `"Updated description"` |
-| Upload new icon | `icon` = `typescript-256.png` |
-| Replace existing icon | `icon` = `typescript-v2.webp` |
-| Clear icon only | `iconAction` = `delete` |
+| # | Example name | Content-Type | Body |
+|---|---|---|---|
+| 1 | Update — JSON (no icon) | `application/json` | `{ "description": "Updated description" }` |
+| 2 | Update — form-data + text + icon | `multipart/form-data` | `name` = `TypeScript (Modern)`, `icon` = `ts-v2.png` (file) |
+| 3 | Update — form-data icon only | `multipart/form-data` | `icon` = `new-icon.png` (file) |
 
 ### Responses
 
