@@ -127,10 +127,11 @@ export const listUserProjectsQuerySchema = paginationSchema.extend({
   // Project filters
   projectType: projectTypeSchema.optional(),
   projectStatus: projectStatusSchema.optional(),
-  industry: z.string().trim().min(2).max(128).optional(),
+  platform: z.string().trim().min(2).max(128).optional(),
   isOngoing: queryBooleanSchema.optional(),
   isFeatured: queryBooleanSchema.optional(),
   isPublished: queryBooleanSchema.optional(),
+  isSoloProject: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
   isDeleted: queryBooleanSchema.optional(),
 

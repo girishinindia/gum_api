@@ -17,6 +17,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { db } from '../../database/db';
+import { AppError } from '../../core/errors/app-error';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 
@@ -550,11 +551,19 @@ export const createMyUserProfile = async (
   userId: number,
   body: CreateMyUserProfileBody
 ): Promise<CreateUserProfileResult> => {
-  const result = await db.callFunction(
-    'udf_insert_user_profiles',
-    buildInsertParams(userId, body, userId)
-  );
-  return { id: Number(result.id) };
+  try {
+    const result = await db.callFunction(
+      'udf_insert_user_profiles',
+      buildInsertParams(userId, body, userId)
+    );
+    return { id: Number(result.id) };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Profile already exists')) {
+      throw AppError.conflict(`Profile already exists for user id ${userId}`);
+    }
+    throw err;
+  }
 };
 
 // ─── Update ──────────────────────────────────────────────────────

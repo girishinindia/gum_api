@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { db } from '../../database/db';
+import { AppError } from '../../core/errors/app-error';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 
@@ -281,10 +282,29 @@ export interface CreateBranchResult {
   id: number;
 }
 
+/**
+ * Validate that branch_manager_id references an existing, non-deleted user.
+ */
+const validateBranchManagerId = async (managerId: number): Promise<void> => {
+  const row = await db.queryOne<{ id: number; is_deleted: boolean }>(
+    'SELECT id, is_deleted FROM users WHERE id = $1',
+    [managerId]
+  );
+  if (!row) {
+    throw AppError.badRequest(`branchManagerId ${managerId}: user does not exist`);
+  }
+  if (row.is_deleted) {
+    throw AppError.badRequest(`branchManagerId ${managerId}: user has been deleted`);
+  }
+};
+
 export const createBranch = async (
   body: CreateBranchBody,
   callerId: number | null
 ): Promise<CreateBranchResult> => {
+  if (body.branchManagerId) {
+    await validateBranchManagerId(body.branchManagerId);
+  }
   const result = await db.callFunction('udf_branches_insert', {
     p_country_id: body.countryId,
     p_state_id: body.stateId,
@@ -314,6 +334,9 @@ export const updateBranch = async (
   body: UpdateBranchBody,
   callerId: number | null
 ): Promise<void> => {
+  if (body.branchManagerId) {
+    await validateBranchManagerId(body.branchManagerId);
+  }
   await db.callFunction('udf_branches_update', {
     p_id: id,
     p_country_id: body.countryId ?? null,

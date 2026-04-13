@@ -112,7 +112,7 @@ export const listCourseInstructors = async (
   q: ListCourseInstructorsQuery
 ): Promise<ListResult> => {
   const limit = q.pageSize;
-  const offset = q.pageIndex * q.pageSize;
+  const offset = (q.pageIndex - 1) * q.pageSize;
 
   const { rows, totalCount } = await db.callTableFunction<CourseInstructorRow>(
     'udf_get_course_instructors',

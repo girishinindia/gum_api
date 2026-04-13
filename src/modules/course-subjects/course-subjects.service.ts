@@ -102,7 +102,7 @@ export const listCourseSubjects = async (
 ): Promise<ListResult> => {
   // Convert page_index/page_size → limit/offset
   const limit = q.pageSize;
-  const offset = q.pageIndex * q.pageSize;
+  const offset = (q.pageIndex - 1) * q.pageSize;
 
   const { rows, totalCount } = await db.callTableFunction<CourseSubjectRow>(
     'udf_get_course_subjects',
