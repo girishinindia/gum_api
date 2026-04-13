@@ -28,7 +28,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import {
   patchCountryFiles,
@@ -138,6 +138,7 @@ router.patch(
 
 router.delete(
   '/:id',
+  authorizeRole('super_admin'),
   authorize('country.delete'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
@@ -157,6 +158,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   authorize('country.restore'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {

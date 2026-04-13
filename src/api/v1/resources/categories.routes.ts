@@ -33,7 +33,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import {
   patchCategoryFiles,
@@ -190,6 +190,7 @@ router.patch(
 
 router.delete(
   '/:id',
+  authorizeRole('super_admin'),
   authorize('category.delete'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
@@ -201,6 +202,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   authorize('category.restore'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {

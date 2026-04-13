@@ -28,7 +28,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { uploadSocialMediaIcon } from '../../../core/middlewares/upload';
 import { AppError } from '../../../core/errors/app-error';
@@ -99,6 +99,7 @@ router.patch(
 
 router.delete(
   '/:id',
+  authorizeRole('super_admin'),
   authorize('social_media.delete'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
@@ -110,6 +111,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   authorize('social_media.restore'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {

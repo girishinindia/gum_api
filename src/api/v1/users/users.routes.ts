@@ -29,7 +29,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
@@ -113,6 +113,7 @@ router.patch(
 
 router.delete(
   '/:id',
+  authorizeRole('super_admin'),
   authorize('user.delete'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
@@ -126,6 +127,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   authorize('user.restore'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
