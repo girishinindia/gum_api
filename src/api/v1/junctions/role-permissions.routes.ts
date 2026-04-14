@@ -52,6 +52,7 @@ router.get(
 
 router.post(
   '/revoke',
+  authorizeRole('super_admin'),
   authorize('permission.assign'),
   validate({ body: revokeRolePermissionBodySchema }),
   asyncHandler(async (req, res) => {
@@ -83,6 +84,7 @@ router.get(
 
 router.post(
   '/',
+  authorizeRole('super_admin'),
   authorize('permission.assign'),
   validate({ body: assignRolePermissionBodySchema }),
   asyncHandler(async (req, res) => {

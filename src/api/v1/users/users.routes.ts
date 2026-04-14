@@ -145,6 +145,7 @@ router.post(
 
 router.post(
   '/:id/change-role',
+  authorizeRole('super_admin'),
   authorize('user.update'),
   validate({ params: idParamSchema, body: changeUserRoleBodySchema }),
   asyncHandler(async (req, res) => {
@@ -163,6 +164,7 @@ router.post(
 
 router.post(
   '/:id/deactivate',
+  authorizeRole('super_admin'),
   authorize('user.update'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {

@@ -244,6 +244,30 @@ export const createUser = async (
 
   const newUserId = Number(result.id);
 
+  // ── Auto-grant all permissions when a super_admin user is created ──
+  // Contract: when a super_admin creates another super_admin, the new
+  // user must end up with every active permission in the system. The
+  // super_admin *role* already carries full access via role_permissions,
+  // but we also materialise user-level grants so the user keeps full
+  // access even if their role is later changed or role_permissions is
+  // pruned. Best-effort: if this fails we log and continue — the user
+  // row itself is already created, and the role-based path still works.
+  try {
+    const created = await getUserById(newUserId);
+    if (created?.role.code === 'super_admin') {
+      const granted = await grantAllPermissionsToUser(newUserId, callerId);
+      logger.info(
+        { userId: newUserId, grantedCount: granted },
+        '[users.createUser] auto-granted all permissions to super_admin user'
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, userId: newUserId },
+      '[users.createUser] auto-grant-all-permissions failed for super_admin'
+    );
+  }
+
   // Best-effort welcome email for admin-created users. We re-load
   // the user so we have the canonical first_name + email even if
   // body.firstName / body.email were trimmed/normalised by the UDF.
@@ -429,6 +453,40 @@ export const deactivateUser = async (
       name: target.firstName
     });
   }
+};
+
+// ─── Auto-grant all active permissions to a user ───────────────
+//
+// Used when a super_admin is created so the new user gets every
+// permission as a user-level grant. Bulk INSERT skips permissions
+// that already have an active (non-deleted) user_permissions row
+// for this user via the partial unique index on (user_id,
+// permission_id) WHERE is_deleted=FALSE.
+//
+// Returns the number of rows newly inserted. Errors bubble up —
+// the caller in createUser wraps this in try/catch and logs.
+
+export const grantAllPermissionsToUser = async (
+  userId: number,
+  callerId: number | null
+): Promise<number> => {
+  const result = await db.query<{ id: number }>(
+    `INSERT INTO user_permissions (user_id, permission_id, grant_type, created_by, updated_by)
+     SELECT $1, p.id, 'grant', $2, $2
+       FROM permissions p
+      WHERE p.is_deleted = FALSE
+        AND p.is_active  = TRUE
+        AND NOT EXISTS (
+          SELECT 1
+            FROM user_permissions up
+           WHERE up.user_id = $1
+             AND up.permission_id = p.id
+             AND up.is_deleted = FALSE
+        )
+     RETURNING id`,
+    [userId, callerId]
+  );
+  return result.rowCount ?? 0;
 };
 
 // ─── Admin: set verification flags (admin / super-admin) ────────
