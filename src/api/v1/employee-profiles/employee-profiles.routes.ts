@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole } from '../../../core/middlewares/authorize';
 import { authorizeSelfOr } from '../../../core/middlewares/authorize-self-or';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
@@ -146,6 +146,7 @@ router.patch(
 // ── DELETE /:id  (soft delete — admin only) ────────────────────
 router.delete(
   '/:id',
+  authorizeRole('super_admin'),
   authorize('employee_profile.delete'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {
@@ -162,6 +163,7 @@ router.delete(
 // ── RESTORE /:id  (soft-delete undo — admin only) ───────────
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   authorize('employee_profile.restore'),
   validate({ params: idParamSchema }),
   asyncHandler(async (req, res) => {

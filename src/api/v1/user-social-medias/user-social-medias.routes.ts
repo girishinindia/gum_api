@@ -27,7 +27,7 @@ import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole } from '../../../core/middlewares/authorize';
 import { authorizeSelfOr } from '../../../core/middlewares/authorize-self-or';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
@@ -224,6 +224,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   validate({ params: idParamSchema }),
   authorize('user_social_media.restore'),
   asyncHandler(async (req, res) => {

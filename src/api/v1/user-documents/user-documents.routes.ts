@@ -33,7 +33,7 @@ import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
 import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
-import { authorize } from '../../../core/middlewares/authorize';
+import { authorize, authorizeRole } from '../../../core/middlewares/authorize';
 import { authorizeSelfOr } from '../../../core/middlewares/authorize-self-or';
 import { validate } from '../../../core/middlewares/validate';
 import { patchUserDocumentFiles, getSlotFile } from '../../../core/middlewares/upload';
@@ -295,6 +295,7 @@ router.delete(
 
 router.post(
   '/:id/restore',
+  authorizeRole('super_admin'),
   validate({ params: idParamSchema }),
   authorize('user_document.restore'),
   asyncHandler(async (req, res) => {
