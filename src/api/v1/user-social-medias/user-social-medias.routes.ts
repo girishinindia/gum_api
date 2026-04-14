@@ -33,6 +33,7 @@ import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as userSocialMediasService from '../../../modules/user-social-medias/user-social-medias.service';
 import {
@@ -188,14 +189,17 @@ router.get(
     ownPermission: 'user_social_media.read.own',
     resolveTargetUserId: async (req) => {
       const id = Number((req.params as unknown as { id: number }).id);
-      const row = await userSocialMediasService.getUserSocialMediaById(id);
+      // Include deleted rows so super_admin can resolve ownership
+      // on soft-deleted records; assertVisibleToCaller enforces the
+      // final "super_admin only can see deleted" rule below.
+      const row = await userSocialMediasService.getUserSocialMediaByIdIncludingDeleted(id);
       return row ? row.userId : null;
     }
   }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
-    const row = await userSocialMediasService.getUserSocialMediaById(id);
-    if (!row) throw AppError.notFound(`Social media record ${id} not found`);
+    const row = await userSocialMediasService.getUserSocialMediaByIdIncludingDeleted(id);
+    assertVisibleToCaller(row, req.user, 'Social media record', id);
     return ok(res, row, 'OK');
   })
 );

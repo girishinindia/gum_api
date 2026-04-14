@@ -33,6 +33,7 @@ import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as userLanguagesService from '../../../modules/user-languages/user-languages.service';
 import {
@@ -188,14 +189,17 @@ router.get(
     ownPermission: 'user_language.read.own',
     resolveTargetUserId: async (req) => {
       const id = Number((req.params as unknown as { id: number }).id);
-      const row = await userLanguagesService.getUserLanguageById(id);
+      // Include deleted rows so super_admin can resolve ownership
+      // on soft-deleted records; assertVisibleToCaller enforces the
+      // final "super_admin only can see deleted" rule below.
+      const row = await userLanguagesService.getUserLanguageByIdIncludingDeleted(id);
       return row ? row.userId : null;
     }
   }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
-    const row = await userLanguagesService.getUserLanguageById(id);
-    if (!row) throw AppError.notFound(`User language ${id} not found`);
+    const row = await userLanguagesService.getUserLanguageByIdIncludingDeleted(id);
+    assertVisibleToCaller(row, req.user, 'User language', id);
     return ok(res, row, 'OK');
   })
 );

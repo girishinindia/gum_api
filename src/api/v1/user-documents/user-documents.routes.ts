@@ -41,6 +41,7 @@ import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-co
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as userDocumentsService from '../../../modules/user-documents/user-documents.service';
 import {
@@ -239,14 +240,17 @@ router.get(
     ownPermission: 'user_document.read.own',
     resolveTargetUserId: async (req) => {
       const id = Number((req.params as unknown as { id: number }).id);
-      const row = await userDocumentsService.getUserDocumentById(id);
+      // Include deleted rows so super_admin can resolve ownership
+      // on soft-deleted records; assertVisibleToCaller enforces the
+      // final "super_admin only can see deleted" rule below.
+      const row = await userDocumentsService.getUserDocumentByIdIncludingDeleted(id);
       return row ? row.userId : null;
     }
   }),
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
-    const row = await userDocumentsService.getUserDocumentById(id);
-    if (!row) throw AppError.notFound(`User document ${id} not found`);
+    const row = await userDocumentsService.getUserDocumentByIdIncludingDeleted(id);
+    assertVisibleToCaller(row, req.user, 'User document', id);
     return ok(res, row, 'OK');
   })
 );
