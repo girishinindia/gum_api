@@ -293,15 +293,18 @@ export const createMyUserProfileBodySchema = z.object({
 export type CreateMyUserProfileBody = z.infer<typeof createMyUserProfileBodySchema>;
 
 // ─── Update body: admin (full) ───────────────────────────────────
+//
+// NOTE: The "at-least-one-field" check is intentionally NOT enforced
+// here. PATCH /:id and PATCH /me accept multipart/form-data with an
+// optional `profilePhoto` / `coverPhoto` file slot, so the body can
+// legitimately be empty when the caller is only uploading photos.
+// The route handler performs the combined check
+// `hasTextChange || hasFile` and throws 400 if both are missing.
 
-export const updateUserProfileBodySchema = z
-  .object({
-    ...profileCoreFields,
-    ...profileSensitiveFields
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+export const updateUserProfileBodySchema = z.object({
+  ...profileCoreFields,
+  ...profileSensitiveFields
+});
 export type UpdateUserProfileBody = z.infer<typeof updateUserProfileBodySchema>;
 
 // ─── Update body: self (safe subset) ─────────────────────────────
@@ -309,13 +312,14 @@ export type UpdateUserProfileBody = z.infer<typeof updateUserProfileBodySchema>;
 // Admin-only fields (KYC, bank, GST, completion flags) are blocked
 // at the schema level. If a student supplies them in the body, zod
 // rejects with 400 VALIDATION_ERROR — no silent drop.
+//
+// See the note above `updateUserProfileBodySchema` re: the
+// "at-least-one-field" refine — it lives in the route handler so
+// photo-only multipart updates don't fail validation.
 
 export const updateMyUserProfileBodySchema = z
   .object({
     ...profileCoreFields
   })
-  .strict()
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+  .strict();
 export type UpdateMyUserProfileBody = z.infer<typeof updateMyUserProfileBodySchema>;

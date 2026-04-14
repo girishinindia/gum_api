@@ -196,9 +196,11 @@ export const updateStudentProfileBodySchema = z.object({
   isOpenToInternship: z.boolean().optional(),
   isOpenToFreelance: z.boolean().optional(),
   isActive: z.boolean().optional(),
-}).refine(
-  (data) => Object.values(data).some((v) => v !== undefined),
-  { message: 'At least one field must be provided for update.' }
-);
+});
+// NOTE: No "at-least-one-field" refine here. PATCH /:id and PATCH /me
+// accept multipart/form-data with an optional `resume` file slot, so
+// the body can legitimately be empty when only a resume is uploaded.
+// The route handler performs the combined `hasTextChange || hasFile`
+// check and throws 400 if both are missing.
 
 export type UpdateStudentProfileBody = z.infer<typeof updateStudentProfileBodySchema>;
