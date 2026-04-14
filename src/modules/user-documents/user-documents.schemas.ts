@@ -185,28 +185,29 @@ export type CreateMyUserDocumentBody = z.infer<typeof createMyUserDocumentBodySc
 
 // ─── Update body — admin lane (all fields, partial) ────────────
 
-export const updateUserDocumentBodySchema = z
-  .object({
-    documentTypeId: bigintIdSchema.optional(),
-    documentId: bigintIdSchema.optional(),
-    documentNumber: shortText.optional(),
-    fileName: shortText.optional(),
-    fileSizeKb: z.number().int().min(0).max(100_000).optional(),
-    fileFormat: z.string().trim().min(1).max(32).optional(),
-    issueDate: dateSchema.optional(),
-    expiryDate: dateSchema.optional(),
-    issuingAuthority: shortText.optional(),
-    isActive: z.boolean().optional(),
-    // admin-only workflow fields
-    verificationStatus: verificationStatusSchema.optional(),
-    verifiedBy: bigintIdSchema.optional(),
-    verifiedAt: dateTimeSchema.optional(),
-    rejectionReason: longText.optional(),
-    adminNotes: longText.optional()
-  })
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+export const updateUserDocumentBodySchema = z.object({
+  documentTypeId: bigintIdSchema.optional(),
+  documentId: bigintIdSchema.optional(),
+  documentNumber: shortText.optional(),
+  fileName: shortText.optional(),
+  fileSizeKb: z.number().int().min(0).max(100_000).optional(),
+  fileFormat: z.string().trim().min(1).max(32).optional(),
+  issueDate: dateSchema.optional(),
+  expiryDate: dateSchema.optional(),
+  issuingAuthority: shortText.optional(),
+  isActive: z.boolean().optional(),
+  // admin-only workflow fields
+  verificationStatus: verificationStatusSchema.optional(),
+  verifiedBy: bigintIdSchema.optional(),
+  verifiedAt: dateTimeSchema.optional(),
+  rejectionReason: longText.optional(),
+  adminNotes: longText.optional()
+});
+// NOTE: No "at-least-one-field" refine here. PATCH /:id accepts
+// multipart/form-data with an optional `file` slot, so an empty body is
+// legitimate when the caller is only replacing the stored document file.
+// The route handler performs the combined `hasTextChange || hasFile`
+// check and throws 400 if both are missing.
 export type UpdateUserDocumentBody = z.infer<typeof updateUserDocumentBodySchema>;
 
 // ─── Update body — self /me lane (workflow fields blocked) ─────
@@ -227,8 +228,7 @@ export const updateMyUserDocumentBodySchema = z
     issuingAuthority: shortText.optional(),
     isActive: z.boolean().optional()
   })
-  .strict()
-  .refine((v) => Object.keys(v).length > 0, {
-    message: 'Provide at least one field to update'
-  });
+  .strict();
+// Same rationale as above — PATCH /me/:id accepts `file` slot; the
+// route handler enforces `hasTextChange || hasFile`.
 export type UpdateMyUserDocumentBody = z.infer<typeof updateMyUserDocumentBodySchema>;

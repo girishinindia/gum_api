@@ -93,14 +93,20 @@ router.post(
     const body = req.body as CreateMyUserDocumentBody;
     const file = getSlotFile(req, 'file');
 
-    const result = await userDocumentsService.createMyUserDocument(userId, body);
-    if (file) {
-      await userDocumentsService.processUserDocumentFileUpload(
-        result.id,
-        file as Express.Multer.File,
-        userId
+    // file_url is NOT NULL in user_documents, so the upload is mandatory.
+    // Upload to Bunny FIRST so we have a CDN URL to persist on insert.
+    // If the insert rejects (duplicate guard, inactive user, etc.), the
+    // service best-effort deletes the orphaned Bunny object.
+    if (!file) {
+      throw AppError.badRequest(
+        'A document file is required. Attach it under the `file` form-data field.'
       );
     }
+    const upload = await userDocumentsService.uploadUserDocumentFileForCreate(
+      userId,
+      file as Express.Multer.File
+    );
+    const result = await userDocumentsService.createMyUserDocument(userId, body, upload);
     const row = await userDocumentsService.getUserDocumentById(result.id);
     return created(res, row, 'User document created');
   })
@@ -216,17 +222,22 @@ router.post(
     const body = req.body as CreateUserDocumentBody;
     const file = getSlotFile(req, 'file');
 
-    const result = await userDocumentsService.createUserDocument(
-      body,
-      req.user?.id ?? null
-    );
-    if (file) {
-      await userDocumentsService.processUserDocumentFileUpload(
-        result.id,
-        file as Express.Multer.File,
-        req.user?.id ?? null
+    // file_url is NOT NULL. Admin-create must still carry a file —
+    // upload to Bunny first, then insert with the CDN URL in hand.
+    if (!file) {
+      throw AppError.badRequest(
+        'A document file is required. Attach it under the `file` form-data field.'
       );
     }
+    const upload = await userDocumentsService.uploadUserDocumentFileForCreate(
+      body.userId,
+      file as Express.Multer.File
+    );
+    const result = await userDocumentsService.createUserDocument(
+      body,
+      req.user?.id ?? null,
+      upload
+    );
     const row = await userDocumentsService.getUserDocumentById(result.id);
     return created(res, row, 'User document created');
   })

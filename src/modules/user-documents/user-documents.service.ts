@@ -292,24 +292,40 @@ export interface CreateUserDocumentResult {
   id: number;
 }
 
+// Metadata produced by the Bunny pre-upload used for POST /me and POST /.
+// user_documents.file_url is NOT NULL, so creation MUST carry a file — the
+// route rejects upload-less POSTs with 400 before reaching this layer.
+export interface UserDocumentUploadMeta {
+  fileUrl: string;
+  fileName: string;
+  fileSizeKb: number;
+  fileFormat: string;
+}
+
 // Note: udf_insert_user_document does NOT accept verified_by / verified_at /
 // rejection_reason / admin_notes — those are update-only workflow fields that
 // an admin sets AFTER a user submits a document. New documents always start
 // at verification_status='pending' (or under_review if the admin creates it
 // directly), so we only pass verification_status through here.
+//
+// `upload` carries the CDN URL + auto-derived filename/size/format from the
+// just-completed Bunny upload. The client body may still override any of
+// them (e.g. a human-friendly fileName); if the client doesn't, we fall back
+// to the upload-derived values so the row is consistent with the stored file.
 const buildInsertParams = (
   userId: number,
   body: Partial<CreateUserDocumentBody>,
-  callerId: number | null
+  callerId: number | null,
+  upload: UserDocumentUploadMeta
 ): Record<string, unknown> => ({
   p_user_id: userId,
   p_document_type_id: body.documentTypeId ?? null,
   p_document_id: body.documentId ?? null,
-  p_file_url: null,
+  p_file_url: upload.fileUrl,
   p_document_number: body.documentNumber ?? null,
-  p_file_name: body.fileName ?? null,
-  p_file_size_kb: body.fileSizeKb ?? null,
-  p_file_format: body.fileFormat ?? null,
+  p_file_name: body.fileName ?? upload.fileName,
+  p_file_size_kb: body.fileSizeKb ?? upload.fileSizeKb,
+  p_file_format: body.fileFormat ?? upload.fileFormat,
   p_issue_date: body.issueDate ?? null,
   p_expiry_date: body.expiryDate ?? null,
   p_issuing_authority: body.issuingAuthority ?? null,
@@ -318,26 +334,78 @@ const buildInsertParams = (
   p_actor_id: callerId
 });
 
+/**
+ * Upload a brand-new user_documents file to Bunny and return the CDN
+ * metadata needed by the insert UDF. Used ONLY on create — because the
+ * row doesn't exist yet, the path is timestamp+random suffixed rather
+ * than id-based. `processUserDocumentFileUpload` handles the replace
+ * path (PATCH) and can use the stable id-based key.
+ */
+export const uploadUserDocumentFileForCreate = async (
+  userId: number,
+  file: Express.Multer.File
+): Promise<UserDocumentUploadMeta> => {
+  const ext = getExtensionFromMimeType(file.mimetype);
+  const timestamp = Date.now();
+  const rand = Math.random().toString(36).slice(2, 10);
+  const targetPath = `user-documents/${userId}/new-${timestamp}-${rand}.${ext}`;
+
+  const { cdnUrl } = await bunnyStorageService.upload({
+    buffer: file.buffer,
+    targetPath,
+    contentType: file.mimetype
+  });
+
+  return {
+    fileUrl: cdnUrl,
+    fileName: file.originalname || `document.${ext}`,
+    fileSizeKb: Math.max(1, Math.round(file.size / 1024)),
+    fileFormat: ext
+  };
+};
+
+/**
+ * Insert with cleanup: if the DB rejects the row (e.g. duplicate guard,
+ * inactive user), we best-effort delete the orphaned Bunny object so we
+ * don't leak storage on a failed create. The DB error is re-thrown so
+ * the caller still sees the original failure reason.
+ */
+const insertWithBunnyCleanup = async (
+  params: Record<string, unknown>,
+  upload: UserDocumentUploadMeta
+): Promise<{ id: number }> => {
+  try {
+    const result = await db.callFunction('udf_insert_user_document', params);
+    return { id: Number(result.id) };
+  } catch (err) {
+    const priorPath = extractBunnyPath(upload.fileUrl);
+    if (priorPath) {
+      await safeDeleteFromBunny(priorPath, 0);
+    }
+    throw err;
+  }
+};
+
 export const createUserDocument = async (
   body: CreateUserDocumentBody,
-  callerId: number | null
+  callerId: number | null,
+  upload: UserDocumentUploadMeta
 ): Promise<CreateUserDocumentResult> => {
-  const result = await db.callFunction(
-    'udf_insert_user_document',
-    buildInsertParams(body.userId, body, callerId)
+  return insertWithBunnyCleanup(
+    buildInsertParams(body.userId, body, callerId, upload),
+    upload
   );
-  return { id: Number(result.id) };
 };
 
 export const createMyUserDocument = async (
   userId: number,
-  body: CreateMyUserDocumentBody
+  body: CreateMyUserDocumentBody,
+  upload: UserDocumentUploadMeta
 ): Promise<CreateUserDocumentResult> => {
-  const result = await db.callFunction(
-    'udf_insert_user_document',
-    buildInsertParams(userId, body, userId)
+  return insertWithBunnyCleanup(
+    buildInsertParams(userId, body, userId, upload),
+    upload
   );
-  return { id: Number(result.id) };
 };
 
 // ─── Update ─────────────────────────────────────────────────────
