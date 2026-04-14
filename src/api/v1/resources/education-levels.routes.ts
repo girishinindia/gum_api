@@ -8,11 +8,13 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as educationLevelsService from '../../../modules/resources/education-levels.service';
 import {
@@ -27,6 +29,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 router.get(
   '/',
@@ -46,7 +49,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const level = await educationLevelsService.getEducationLevelById(id);
-    if (!level) throw AppError.notFound(`Education level ${id} not found`);
+    assertVisibleToCaller(level, req.user, 'Education level', id);
     return ok(res, level, 'OK');
   })
 );

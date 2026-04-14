@@ -13,11 +13,13 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as branchesService from '../../../modules/resources/branches.service';
 import {
@@ -32,6 +34,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 // ─── GET /  list ─────────────────────────────────────────────────
 
@@ -55,7 +58,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const branch = await branchesService.getBranchById(id);
-    if (!branch) throw AppError.notFound(`Branch ${id} not found`);
+    assertVisibleToCaller(branch, req.user, 'Branch', id);
     return ok(res, branch, 'OK');
   })
 );

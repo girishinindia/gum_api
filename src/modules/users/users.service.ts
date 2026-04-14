@@ -16,6 +16,7 @@ import { buildPaginationMeta } from '../../core/utils/api-response';
 import { logger } from '../../core/logger/logger';
 import { mailer } from '../../integrations/email/mailer.service';
 import { env } from '../../config/env';
+import { revokeAllUserSessions } from '../../shared/session-revoker';
 
 import type {
   CreateUserBody,
@@ -363,6 +364,23 @@ export const changeUserRole = async (
     p_target_user_id: targetId,
     p_new_role_id: newRoleId
   });
+
+  // ── Force logout on role change ─────────────────────────────
+  // A super-admin changing the target's role materially changes
+  // the permission set baked into the target's access token.
+  // Tokens issued before the change still embed the old roles /
+  // permissions, so we revoke every active session (DB + Redis)
+  // to force re-login and a fresh token mint. Best-effort: a
+  // revoke failure must not mask the successful role change the
+  // caller already got a 2xx contract for, so we log + swallow.
+  try {
+    await revokeAllUserSessions(targetId, 'role_changed');
+  } catch (err) {
+    logger.warn(
+      { err, userId: targetId },
+      '[users.changeUserRole] session revocation failed after role change'
+    );
+  }
 
   if (before?.email) {
     void (async () => {

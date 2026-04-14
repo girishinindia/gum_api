@@ -29,11 +29,13 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as usersService from '../../../modules/users/users.service';
 import {
@@ -52,6 +54,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 // ─── GET /  list ─────────────────────────────────────────────────
 
@@ -75,7 +78,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const user = await usersService.getUserById(id);
-    if (!user) throw AppError.notFound(`User ${id} not found`);
+    assertVisibleToCaller(user, req.user, 'User', id);
     return ok(res, user, 'OK');
   })
 );

@@ -5,11 +5,13 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as documentsService from '../../../modules/resources/documents.service';
 import {
@@ -24,6 +26,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 router.get(
   '/',
@@ -43,7 +46,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const doc = await documentsService.getDocumentById(id);
-    if (!doc) throw AppError.notFound(`Document ${id} not found`);
+    assertVisibleToCaller(doc, req.user, 'Document', id);
     return ok(res, doc, 'OK');
   })
 );

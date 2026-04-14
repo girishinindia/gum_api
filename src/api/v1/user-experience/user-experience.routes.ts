@@ -34,6 +34,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize } from '../../../core/middlewares/authorize';
 import { authorizeSelfOr } from '../../../core/middlewares/authorize-self-or';
 import { validate } from '../../../core/middlewares/validate';
@@ -56,6 +57,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 // ═══════════════════════════════════════════════════════════════
 // /me routes — must come BEFORE /:id so Express doesn't treat

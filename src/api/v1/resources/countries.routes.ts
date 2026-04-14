@@ -28,6 +28,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize, authorizeRole} from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import {
@@ -38,6 +39,7 @@ import { coerceMultipartBody } from '../../../core/middlewares/multipart-body-co
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as countriesService from '../../../modules/resources/countries.service';
 import {
@@ -53,6 +55,7 @@ const router = Router();
 
 // Every route below requires authentication.
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 // ─── GET /  list ─────────────────────────────────────────────────
 
@@ -76,7 +79,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const country = await countriesService.getCountryById(id);
-    if (!country) throw AppError.notFound(`Country ${id} not found`);
+    assertVisibleToCaller(country, req.user, 'Country', id);
     return ok(res, country, 'OK');
   })
 );

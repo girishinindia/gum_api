@@ -12,11 +12,13 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../../core/middlewares/authenticate';
+import { gateSoftDeleteFilters } from '../../../core/middlewares/gate-soft-delete-filters';
 import { authorize } from '../../../core/middlewares/authorize';
 import { validate } from '../../../core/middlewares/validate';
 import { AppError } from '../../../core/errors/app-error';
 import { created, ok, paginated } from '../../../core/utils/api-response';
 import { asyncHandler } from '../../../core/utils/async-handler';
+import { assertVisibleToCaller } from '../../../core/utils/visibility';
 import { idParamSchema } from '../../../shared/validation/common';
 import * as userPermissionsService from '../../../modules/junctions/user-permissions.service';
 import {
@@ -31,6 +33,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(gateSoftDeleteFilters);
 
 // ─── GET /  list ─────────────────────────────────────────────────
 
@@ -71,7 +74,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = Number((req.params as unknown as { id: number }).id);
     const up = await userPermissionsService.getUserPermissionById(id);
-    if (!up) throw AppError.notFound(`User-permission ${id} not found`);
+    assertVisibleToCaller(up, req.user, 'User-permission', id);
     return ok(res, up, 'OK');
   })
 );
