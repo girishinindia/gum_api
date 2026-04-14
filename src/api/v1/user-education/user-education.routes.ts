@@ -101,6 +101,24 @@ router.post(
 
 // ─── PATCH /me/:id  (self-service update) ───────────────────────
 
+router.get(
+  '/me/:id',
+  authorize('user_education.read.own'),
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const id = Number((req.params as unknown as { id: number }).id);
+    const row = await userEducationService.getUserEducationById(id);
+
+    if (!row) throw AppError.notFound(`Education record ${id} not found`);
+    if (row.userId !== userId) {
+      throw AppError.notFound(`Education record ${id} not found`);
+    }
+
+    return ok(res, row, 'OK');
+  })
+);
+
 router.patch(
   '/me/:id',
   validate({ params: idParamSchema, body: updateUserEducationBodySchema }),

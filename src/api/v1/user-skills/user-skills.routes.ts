@@ -84,6 +84,24 @@ router.post(
   })
 );
 
+router.get(
+  '/me/:id',
+  authorize('user_skill.read.own'),
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const id = Number((req.params as unknown as { id: number }).id);
+    const row = await userSkillsService.getUserSkillById(id);
+
+    if (!row) throw AppError.notFound(`User skill ${id} not found`);
+    if (row.userId !== userId) {
+      throw AppError.notFound(`User skill ${id} not found`);
+    }
+
+    return ok(res, row, 'OK');
+  })
+);
+
 router.patch(
   '/me/:id',
   validate({ params: idParamSchema, body: updateUserSkillBodySchema }),

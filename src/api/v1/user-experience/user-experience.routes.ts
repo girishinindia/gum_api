@@ -98,6 +98,27 @@ router.post(
   })
 );
 
+// ─── GET /me/:id  (self-service read-one) ──────────────────────
+
+router.get(
+  '/me/:id',
+  authorize('user_experience.read.own'),
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
+    const id = Number((req.params as unknown as { id: number }).id);
+    const row = await userExperienceService.getUserExperienceById(id);
+
+    if (!row) throw AppError.notFound(`Experience record ${id} not found`);
+    if (row.userId !== userId) {
+      // Hide existence of other users' rows — 404 rather than 403.
+      throw AppError.notFound(`Experience record ${id} not found`);
+    }
+
+    return ok(res, row, 'OK');
+  })
+);
+
 // ─── PATCH /me/:id  (self-service update) ───────────────────────
 
 router.patch(
