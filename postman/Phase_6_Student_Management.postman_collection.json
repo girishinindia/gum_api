@@ -1,0 +1,470 @@
+{
+  "info": {
+    "name": "Grow Up More \u2014 Phase 6: Student Management",
+    "description": "Phase 6 endpoints: Student Profiles (with resume uploads).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "Student Profiles",
+      "description": "Student profile management with resume uploads",
+      "item": [
+        {
+          "name": "GET / (list student profiles)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all student profiles (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (get own student profile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "me"
+              ]
+            },
+            "description": "Get your own student profile"
+          }
+        },
+        {
+          "name": "PATCH /me (update student profile - JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "me"
+              ]
+            },
+            "description": "Update your student profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enrollmentDate\": \"2023-08-01\",\n  \"specialization\": \"Advanced Python Programming\",\n  \"cgpa\": 3.85\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /me (update profile with resume - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "enrollmentDate",
+                  "value": "2023-08-01",
+                  "type": "text"
+                },
+                {
+                  "key": "resume",
+                  "type": "file",
+                  "src": [],
+                  "description": "Resume file (PDF, DOCX, max 5 MB)"
+                }
+              ]
+            },
+            "description": "Update profile with resume upload"
+          }
+        },
+        {
+          "name": "POST / (create student profile - JSON)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles"
+              ]
+            },
+            "description": "Create student profile for a user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 7,\n  \"enrollmentDate\": \"2023-09-01\",\n  \"specialization\": \"Full Stack Development\",\n  \"cgpa\": 3.75\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('studentProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST / (create student profile with resume - multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "userId",
+                  "value": "7",
+                  "type": "text"
+                },
+                {
+                  "key": "enrollmentDate",
+                  "value": "2023-09-01",
+                  "type": "text"
+                },
+                {
+                  "key": "specialization",
+                  "value": "Data Science",
+                  "type": "text"
+                },
+                {
+                  "key": "cgpa",
+                  "value": "3.9",
+                  "type": "text"
+                },
+                {
+                  "key": "resume",
+                  "type": "file",
+                  "src": [],
+                  "description": "Resume file (PDF, DOCX, max 5 MB)"
+                }
+              ]
+            },
+            "description": "Create student profile with resume"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('studentProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get student profile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}"
+              ]
+            },
+            "description": "Get student profile by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update student profile - JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}"
+              ]
+            },
+            "description": "Update student profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cgpa\": 3.95\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /:id (update profile with resume - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "cgpa",
+                  "value": "3.95",
+                  "type": "text"
+                },
+                {
+                  "key": "resume",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace resume file"
+                }
+              ]
+            },
+            "description": "Update profile with new resume"
+          }
+        },
+        {
+          "name": "PATCH /:id (replace resume only - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "resume",
+                  "type": "file",
+                  "src": [],
+                  "description": "Resume file replacement"
+                }
+              ]
+            },
+            "description": "Replace resume file only"
+          }
+        },
+        {
+          "name": "DELETE /:id (soft-delete student profile)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}"
+              ]
+            },
+            "description": "Soft-delete student profile"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore student profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/student-profiles/{{studentProfileId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "student-profiles",
+                "{{studentProfileId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted student profile (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    }
+  ],
+  "_postman_id": "3a898325-f80a-4afe-9395-fef7a41df165"
+}

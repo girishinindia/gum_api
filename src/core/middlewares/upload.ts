@@ -164,6 +164,16 @@ const singleFileUpload = (opts: SingleFileUploadOptions): RequestHandler => {
 const PHASE2_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
 const PHASE2_IMAGE_MAX_BYTES = 100 * 1024; // 100 KB
 
+// Phase 4 — user profile photos / cover photos.
+// Larger cap (500 KB) since these are larger user-facing images.
+const PHASE4_PHOTO_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+const PHASE4_PHOTO_MAX_BYTES = 500 * 1024; // 500 KB
+
+// Phase 4 / 6 — user document file uploads (resumes, certificates, IDs).
+// Accepts PDF and common image formats.
+const PHASE4_DOC_MIMES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const;
+const PHASE4_DOC_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+
 // ─── Unified PATCH multi-slot upload ────────────────────────────
 //
 // Some PATCH routes (countries / categories / sub-categories /
@@ -518,6 +528,59 @@ export const patchSocialMediaFiles = multiSlotUpload({
       maxBytes: PHASE2_IMAGE_MAX_BYTES,
       mimeAllowlist: PHASE2_IMAGE_MIMES,
       label: 'Social media icon'
+    }
+  }
+});
+
+// ─── Phase 04 — user profile upload middlewares ────────────────
+
+/**
+ * `POST/PATCH /api/v1/user-profiles` and `/me` — accepts text fields
+ * plus optional `profilePhoto` and `coverPhoto` slots.
+ */
+export const patchUserProfileFiles = multiSlotUpload({
+  slots: {
+    profilePhoto: {
+      field: ['profilePhoto', 'profilePhotoImage', 'avatar'],
+      maxBytes: PHASE4_PHOTO_MAX_BYTES,
+      mimeAllowlist: PHASE4_PHOTO_MIMES,
+      label: 'Profile photo'
+    },
+    coverPhoto: {
+      field: ['coverPhoto', 'coverPhotoImage', 'cover'],
+      maxBytes: PHASE4_PHOTO_MAX_BYTES,
+      mimeAllowlist: PHASE4_PHOTO_MIMES,
+      label: 'Cover photo'
+    }
+  }
+});
+
+/**
+ * `POST/PATCH /api/v1/user-documents` — accepts text fields plus
+ * an optional `file` slot (PDF or image, up to 5 MB).
+ */
+export const patchUserDocumentFiles = multiSlotUpload({
+  slots: {
+    file: {
+      field: ['file', 'document', 'attachment'],
+      maxBytes: PHASE4_DOC_MAX_BYTES,
+      mimeAllowlist: PHASE4_DOC_MIMES,
+      label: 'Document file'
+    }
+  }
+});
+
+/**
+ * `POST/PATCH /api/v1/student-profiles` and `/me` — accepts text
+ * fields plus an optional `resume` slot (PDF or image, up to 5 MB).
+ */
+export const patchStudentProfileFiles = multiSlotUpload({
+  slots: {
+    resume: {
+      field: ['resume', 'resumeFile', 'file'],
+      maxBytes: PHASE4_DOC_MAX_BYTES,
+      mimeAllowlist: PHASE4_DOC_MIMES,
+      label: 'Resume file'
     }
   }
 });

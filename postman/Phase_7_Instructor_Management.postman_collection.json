@@ -1,0 +1,286 @@
+{
+  "info": {
+    "name": "Grow Up More \u2014 Phase 7: Instructor Management",
+    "description": "Phase 7 endpoints: Instructor Profiles.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "Instructor Profiles",
+      "description": "Instructor profile management",
+      "item": [
+        {
+          "name": "GET / (list instructor profiles)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all instructor profiles (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (get own instructor profile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "me"
+              ]
+            },
+            "description": "Get your own instructor profile"
+          }
+        },
+        {
+          "name": "PATCH /me (update own instructor profile)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "me"
+              ]
+            },
+            "description": "Update your own instructor profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"specializations\": \"Advanced Python, Machine Learning\",\n  \"qualifications\": \"M.Tech Computer Science\",\n  \"yearsOfTeachingExperience\": 8\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "POST / (create instructor profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles"
+              ]
+            },
+            "description": "Create instructor profile for a user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 8,\n  \"specializations\": \"Web Development, React\",\n  \"qualifications\": \"B.Tech CSE, Bootcamp Certified\",\n  \"yearsOfTeachingExperience\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('instructorProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get instructor profile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/{{instructorProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "{{instructorProfileId}}"
+              ]
+            },
+            "description": "Get instructor profile by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update instructor profile)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/{{instructorProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "{{instructorProfileId}}"
+              ]
+            },
+            "description": "Update instructor profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"yearsOfTeachingExperience\": 6\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (soft-delete instructor profile)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/{{instructorProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "{{instructorProfileId}}"
+              ]
+            },
+            "description": "Soft-delete instructor profile"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore instructor profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/instructor-profiles/{{instructorProfileId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "instructor-profiles",
+                "{{instructorProfileId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted instructor profile (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    }
+  ],
+  "_postman_id": "51d6828a-486f-4759-a028-523950602f94"
+}

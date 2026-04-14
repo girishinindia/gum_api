@@ -25,8 +25,27 @@ import statesRoutes from './resources/states.routes';
 import subCategoriesRoutes from './resources/sub-categories.routes';
 import usersRoutes from './users/users.routes';
 
+// Phase 04 — User profiles & sub-resources
+import userProfilesRoutes from './user-profiles/user-profiles.routes';
+import userEducationRoutes from './user-education/user-education.routes';
+import userExperienceRoutes from './user-experience/user-experience.routes';
+import userSocialMediasRoutes from './user-social-medias/user-social-medias.routes';
+import userSkillsRoutes from './user-skills/user-skills.routes';
+import userLanguagesRoutes from './user-languages/user-languages.routes';
+import userDocumentsRoutes from './user-documents/user-documents.routes';
+import userProjectsRoutes from './user-projects/user-projects.routes';
+
+// Phase 05 — Employee management
+import employeeProfilesRoutes from './employee-profiles/employee-profiles.routes';
+
+// Phase 06 — Student management
+import studentProfilesRoutes from './student-profiles/student-profiles.routes';
+
+// Phase 07 — Instructor management
+import instructorProfilesRoutes from './instructor-profiles/instructor-profiles.routes';
+
 // ═══════════════════════════════════════════════════════════════
-// v1 router aggregator — Phase 00 / 01 / 02 / 03.
+// v1 router aggregator — Phase 00 / 01 / 02 / 03 / 04 / 05 / 06 / 07.
 // ═══════════════════════════════════════════════════════════════
 
 const v1Router = Router();
@@ -62,5 +81,24 @@ v1Router.use('/sub-categories', subCategoriesRoutes);
 v1Router.use('/branches', branchesRoutes);
 v1Router.use('/departments', departmentsRoutes);
 v1Router.use('/branch-departments', branchDepartmentsRoutes);
+
+// ── Phase 04 — User profiles & sub-resources ─────────────────
+v1Router.use('/user-profiles', userProfilesRoutes);
+v1Router.use('/user-education', userEducationRoutes);
+v1Router.use('/user-experience', userExperienceRoutes);
+v1Router.use('/user-social-medias', userSocialMediasRoutes);
+v1Router.use('/user-skills', userSkillsRoutes);
+v1Router.use('/user-languages', userLanguagesRoutes);
+v1Router.use('/user-documents', userDocumentsRoutes);
+v1Router.use('/user-projects', userProjectsRoutes);
+
+// ── Phase 05 — Employee management ───────────────────────────
+v1Router.use('/employee-profiles', employeeProfilesRoutes);
+
+// ── Phase 06 — Student management ────────────────────────────
+v1Router.use('/student-profiles', studentProfilesRoutes);
+
+// ── Phase 07 — Instructor management ─────────────────────────
+v1Router.use('/instructor-profiles', instructorProfilesRoutes);
 
 export default v1Router;

@@ -1,0 +1,3341 @@
+{
+  "info": {
+    "name": "Grow Up More \u2014 Phase 4: User Profiles",
+    "description": "Phase 4 endpoints: User Profiles (with photo uploads), Education, Experience, Social Media, Skills, Languages, Documents (with file uploads), Projects.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "User Profiles",
+      "description": "User profile management with multipart photo uploads",
+      "item": [
+        {
+          "name": "GET / (list user profiles)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all user profiles (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (get own profile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "description": "Get your own user profile"
+          }
+        },
+        {
+          "name": "POST /me (create own profile - JSON)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "description": "Create your own user profile (self-service)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\",\n  \"bio\": \"Senior Software Engineer\",\n  \"phone\": \"+1-555-0123\",\n  \"dateOfBirth\": \"1990-05-15\",\n  \"gender\": \"female\",\n  \"address\": \"123 Main St\",\n  \"city\": \"San Francisco\",\n  \"state\": \"CA\",\n  \"postalCode\": \"94103\",\n  \"country\": \"United States\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /me (create profile with photos - multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "firstName",
+                  "value": "Jane",
+                  "type": "text"
+                },
+                {
+                  "key": "lastName",
+                  "value": "Smith",
+                  "type": "text"
+                },
+                {
+                  "key": "bio",
+                  "value": "Software Engineer",
+                  "type": "text"
+                },
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Profile photo (WebP, max 100 KB)"
+                },
+                {
+                  "key": "coverPhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Cover photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Create profile with photo uploads"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /me (update own profile - JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "description": "Update your own profile (safe fields only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Senior Software Engineer with 10 years experience\",\n  \"phone\": \"+1-555-0124\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /me (update profile with photo - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "bio",
+                  "value": "Updated bio",
+                  "type": "text"
+                },
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace profile photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Update profile with new photo"
+          }
+        },
+        {
+          "name": "PATCH /me (update photo only - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "coverPhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace cover photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Replace cover photo only"
+          }
+        },
+        {
+          "name": "POST / (create profile - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles"
+              ]
+            },
+            "description": "Create a user profile for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 5,\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"bio\": \"Product Manager\",\n  \"phone\": \"+1-555-0200\",\n  \"dateOfBirth\": \"1992-03-20\",\n  \"gender\": \"male\",\n  \"address\": \"456 Oak Ave\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postalCode\": \"10001\",\n  \"country\": \"United States\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST / (create profile with photos - admin multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "userId",
+                  "value": "5",
+                  "type": "text"
+                },
+                {
+                  "key": "firstName",
+                  "value": "John",
+                  "type": "text"
+                },
+                {
+                  "key": "lastName",
+                  "value": "Doe",
+                  "type": "text"
+                },
+                {
+                  "key": "bio",
+                  "value": "Product Manager",
+                  "type": "text"
+                },
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Profile photo (WebP, max 100 KB)"
+                },
+                {
+                  "key": "coverPhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Cover photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Admin create profile with photos"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProfileId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get profile by id)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/{{userProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "{{userProfileId}}"
+              ]
+            },
+            "description": "Get a user profile by ID (self or admin)"
+          }
+        },
+        {
+          "name": "PATCH /:id (update profile - JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/{{userProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "{{userProfileId}}"
+              ]
+            },
+            "description": "Update a profile by ID (self or admin)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bio\": \"Updated professional bio\",\n  \"phone\": \"+1-555-9999\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /:id (update profile with photo - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/{{userProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "{{userProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "phone",
+                  "value": "+1-555-9999",
+                  "type": "text"
+                },
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Profile photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Update profile with photo"
+          }
+        },
+        {
+          "name": "PATCH /:id (update photos only - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/{{userProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "{{userProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace profile photo (WebP, max 100 KB)"
+                },
+                {
+                  "key": "coverPhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace cover photo (WebP, max 100 KB)"
+                }
+              ]
+            },
+            "description": "Replace both photos"
+          }
+        },
+        {
+          "name": "DELETE /:id (hard delete - super admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-profiles/{{userProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-profiles",
+                "{{userProfileId}}"
+              ]
+            },
+            "description": "Hard delete a user profile (super-admin only)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Education",
+      "description": "User education history management",
+      "item": [
+        {
+          "name": "GET / (list education)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all education records (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own education)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "me"
+              ]
+            },
+            "description": "List your own education records"
+          }
+        },
+        {
+          "name": "POST /me (create education record)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "me"
+              ]
+            },
+            "description": "Create your own education record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"educationLevelId\": 5,\n  \"schoolName\": \"Stanford University\",\n  \"fieldOfStudy\": \"Computer Science\",\n  \"startDate\": \"2010-09-01\",\n  \"endDate\": \"2014-05-31\",\n  \"grade\": \"A\",\n  \"description\": \"Studied algorithms and systems\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userEducationId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own education by id)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/me/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "me",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Get your education record by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own education)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/me/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "me",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Update your education record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grade\": \"A+\",\n  \"description\": \"Focused on machine learning\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (delete own education)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/me/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "me",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Soft-delete your education record"
+          }
+        },
+        {
+          "name": "POST / (create education - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education"
+              ]
+            },
+            "description": "Create education record for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 3,\n  \"educationLevelId\": 6,\n  \"schoolName\": \"MIT\",\n  \"fieldOfStudy\": \"Physics\",\n  \"startDate\": \"2011-09-01\",\n  \"endDate\": \"2015-05-31\",\n  \"grade\": \"A\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userEducationId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get education record)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Get education record by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update education)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Update education record (self or admin)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grade\": \"A-\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (delete education)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/{{userEducationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "{{userEducationId}}"
+              ]
+            },
+            "description": "Soft-delete education record (self or admin)"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore education)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-education/{{userEducationId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-education",
+                "{{userEducationId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted education record (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Experience",
+      "description": "User work experience management",
+      "item": [
+        {
+          "name": "GET / (list experience)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all work experience records (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own experience)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "me"
+              ]
+            },
+            "description": "List your own work experience"
+          }
+        },
+        {
+          "name": "POST /me (create experience record)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "me"
+              ]
+            },
+            "description": "Create your own work experience record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyName\": \"Tech Corp\",\n  \"designationId\": 2,\n  \"startDate\": \"2015-06-01\",\n  \"endDate\": \"2020-12-31\",\n  \"isCurrent\": false,\n  \"description\": \"Led a team of 5 engineers\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userExperienceId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own experience)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/me/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "me",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Get your experience record by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own experience)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/me/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "me",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Update your experience record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isCurrent\": false,\n  \"endDate\": \"2020-12-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (delete own experience)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/me/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "me",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Soft-delete your experience record"
+          }
+        },
+        {
+          "name": "POST / (create experience - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience"
+              ]
+            },
+            "description": "Create experience record for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 4,\n  \"companyName\": \"Big Tech Inc\",\n  \"designationId\": 3,\n  \"startDate\": \"2016-01-15\",\n  \"endDate\": null,\n  \"isCurrent\": true,\n  \"description\": \"Senior developer\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userExperienceId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get experience record)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Get experience record by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update experience)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Update experience record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Managed product roadmap\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (delete experience)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/{{userExperienceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "{{userExperienceId}}"
+              ]
+            },
+            "description": "Soft-delete experience record"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore experience)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-experience/{{userExperienceId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-experience",
+                "{{userExperienceId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted experience record (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Social Media",
+      "description": "User social media profile links",
+      "item": [
+        {
+          "name": "GET / (list social media)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all social media links (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own social media)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "me"
+              ]
+            },
+            "description": "List your own social media links"
+          }
+        },
+        {
+          "name": "POST /me (add social media)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "me"
+              ]
+            },
+            "description": "Add your social media link",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"socialMediaId\": 1,\n  \"profileUrl\": \"https://linkedin.com/in/jane-smith\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userSocialMediaId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own social media)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/me/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "me",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Get your social media link by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own social media)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/me/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "me",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Update your social media link",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profileUrl\": \"https://linkedin.com/in/jane-smith-updated\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (remove social media)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/me/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "me",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Soft-delete your social media link"
+          }
+        },
+        {
+          "name": "POST / (add social media - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias"
+              ]
+            },
+            "description": "Add social media link for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 3,\n  \"socialMediaId\": 2,\n  \"profileUrl\": \"https://twitter.com/john_dev\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userSocialMediaId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get social media link)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Get social media link by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update social media)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Update social media link",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profileUrl\": \"https://twitter.com/john_dev_official\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (remove social media)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/{{userSocialMediaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "{{userSocialMediaId}}"
+              ]
+            },
+            "description": "Soft-delete social media link"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore social media)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-social-medias/{{userSocialMediaId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-social-medias",
+                "{{userSocialMediaId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted social media link (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Skills",
+      "description": "User skills and proficiency management",
+      "item": [
+        {
+          "name": "GET / (list skills)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all user skills (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own skills)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "me"
+              ]
+            },
+            "description": "List your own skills"
+          }
+        },
+        {
+          "name": "POST /me (add skill)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "me"
+              ]
+            },
+            "description": "Add a skill to your profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skillId\": 5,\n  \"proficiencyLevel\": \"expert\",\n  \"yearsOfExperience\": 8\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userSkillId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own skill)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/me/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "me",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Get your skill by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own skill)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/me/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "me",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Update your skill",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proficiencyLevel\": \"advanced\",\n  \"yearsOfExperience\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (remove skill)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/me/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "me",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Soft-delete your skill"
+          }
+        },
+        {
+          "name": "POST / (add skill - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills"
+              ]
+            },
+            "description": "Add skill for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 2,\n  \"skillId\": 3,\n  \"proficiencyLevel\": \"intermediate\",\n  \"yearsOfExperience\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userSkillId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get skill)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Get skill by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update skill)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Update skill",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proficiencyLevel\": \"intermediate\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (remove skill)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/{{userSkillId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "{{userSkillId}}"
+              ]
+            },
+            "description": "Soft-delete skill"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore skill)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-skills/{{userSkillId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-skills",
+                "{{userSkillId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted skill (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Languages",
+      "description": "User language proficiency management",
+      "item": [
+        {
+          "name": "GET / (list languages)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all user languages (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own languages)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "me"
+              ]
+            },
+            "description": "List your own languages"
+          }
+        },
+        {
+          "name": "POST /me (add language)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "me"
+              ]
+            },
+            "description": "Add a language to your profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"languageId\": 2,\n  \"proficiencyLevel\": \"fluent\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userLanguageId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own language)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/me/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "me",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Get your language by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own language)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/me/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "me",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Update your language proficiency",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proficiencyLevel\": \"native\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (remove language)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/me/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "me",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Soft-delete your language"
+          }
+        },
+        {
+          "name": "POST / (add language - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages"
+              ]
+            },
+            "description": "Add language for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 1,\n  \"languageId\": 3,\n  \"proficiencyLevel\": \"intermediate\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userLanguageId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get language)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Get language by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update language)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Update language proficiency",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proficiencyLevel\": \"fluent\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (remove language)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/{{userLanguageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "{{userLanguageId}}"
+              ]
+            },
+            "description": "Soft-delete language"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore language)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-languages/{{userLanguageId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-languages",
+                "{{userLanguageId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted language (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Documents",
+      "description": "User document management with file uploads",
+      "item": [
+        {
+          "name": "GET / (list documents)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all user documents (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own documents)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me"
+              ]
+            },
+            "description": "List your own documents"
+          }
+        },
+        {
+          "name": "POST /me (add document - JSON)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me"
+              ]
+            },
+            "description": "Add document record (without file)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentTypeId\": 1,\n  \"documentName\": \"Certificate of Completion\",\n  \"issuedDate\": \"2023-06-15\",\n  \"expiryDate\": null,\n  \"documentNumber\": \"CERT-2023-12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userDocumentId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /me (add document with file - multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "documentTypeId",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "documentName",
+                  "value": "Certificate of Completion",
+                  "type": "text"
+                },
+                {
+                  "key": "issuedDate",
+                  "value": "2023-06-15",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Document file (PDF, DOCX, PNG, JPG, max 5 MB)"
+                }
+              ]
+            },
+            "description": "Add document with file upload"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userDocumentId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own document)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Get your document by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update document - JSON)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Update document (without file)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentName\": \"Advanced Certificate\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update document with file - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me",
+                "{{userDocumentId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "documentName",
+                  "value": "Updated Certificate",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Replace document file"
+                }
+              ]
+            },
+            "description": "Update document with new file"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (replace file only - multipart)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me",
+                "{{userDocumentId}}"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Document file replacement"
+                }
+              ]
+            },
+            "description": "Replace document file only"
+          }
+        },
+        {
+          "name": "DELETE /me/:id (remove document)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/me/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "me",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Soft-delete your document"
+          }
+        },
+        {
+          "name": "POST / (add document - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents"
+              ]
+            },
+            "description": "Add document for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 5,\n  \"documentTypeId\": 2,\n  \"documentName\": \"Passport\",\n  \"issuedDate\": \"2020-01-01\",\n  \"expiryDate\": \"2030-01-01\",\n  \"documentNumber\": \"AB123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userDocumentId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get document)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Get document by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update document)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Update document",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentName\": \"Updated Document Name\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (remove document)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/{{userDocumentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "{{userDocumentId}}"
+              ]
+            },
+            "description": "Soft-delete document"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore document)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-documents/{{userDocumentId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-documents",
+                "{{userDocumentId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted document (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    },
+    {
+      "name": "User Projects",
+      "description": "User project portfolio management",
+      "item": [
+        {
+          "name": "GET / (list projects)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects?limit=10&offset=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List all user projects (admin+)"
+          }
+        },
+        {
+          "name": "GET /me (list own projects)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "me"
+              ]
+            },
+            "description": "List your own projects"
+          }
+        },
+        {
+          "name": "POST /me (create project)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "me"
+              ]
+            },
+            "description": "Create your own project record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectName\": \"E-Commerce Platform\",\n  \"description\": \"Built a scalable e-commerce system\",\n  \"startDate\": \"2022-01-15\",\n  \"endDate\": \"2022-12-31\",\n  \"projectUrl\": \"https://github.com/user/ecommerce\",\n  \"technologiesUsed\": \"React, Node.js, PostgreSQL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProjectId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /me/:id (get own project)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/me/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "me",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Get your project by ID"
+          }
+        },
+        {
+          "name": "PATCH /me/:id (update own project)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/me/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "me",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Update your project",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Built a highly scalable e-commerce platform for 10K+ users\",\n  \"technologiesUsed\": \"React, Node.js, PostgreSQL, Redis\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /me/:id (remove project)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/me/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "me",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Soft-delete your project"
+          }
+        },
+        {
+          "name": "POST / (create project - admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects"
+              ]
+            },
+            "description": "Create project for another user (admin+)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 4,\n  \"projectName\": \"Mobile App\",\n  \"description\": \"Cross-platform mobile application\",\n  \"startDate\": \"2021-06-01\",\n  \"endDate\": \"2021-12-31\",\n  \"projectUrl\": \"https://github.com/dev/mobileapp\",\n  \"technologiesUsed\": \"Flutter, Firebase\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('userProjectId', json.data.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /:id (get project)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Get project by ID"
+          }
+        },
+        {
+          "name": "PATCH /:id (update project)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Update project",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Expanded project scope\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /:id (remove project)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/{{userProjectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "{{userProjectId}}"
+              ]
+            },
+            "description": "Soft-delete project"
+          }
+        },
+        {
+          "name": "POST /:id/restore (restore project)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user-projects/{{userProjectId}}/restore",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user-projects",
+                "{{userProjectId}}",
+                "restore"
+              ]
+            },
+            "description": "Restore soft-deleted project (admin+)"
+          }
+        }
+      ],
+      "_postman_isSubFolder": true
+    }
+  ],
+  "_postman_id": "135ca41d-18e5-4218-93c7-95140fe34ab7"
+}
