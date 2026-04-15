@@ -369,21 +369,20 @@ export const listCourseModuleTranslations = async (
   moduleId: number,
   q: ListCourseModuleTranslationsQuery
 ): Promise<ListModuleTranslationsResult> => {
+  // Dedicated translation UDF — udf_get_course_modules returns flat module-shape
+  // columns and would leave every cm_trans_* mapper field NULL (see
+  // 08_fn_get_translations.sql for the rationale).
   const { rows, totalCount } = await db.callTableFunction<ModuleTranslationRow>(
-    'udf_get_course_modules',
+    'udf_get_course_module_translations',
     {
-      p_id: null,
       p_course_module_id: moduleId,
-      p_course_id: null,
       p_language_id: q.languageId ?? null,
-      p_filter_course_id: null,
       p_filter_is_active: q.isActive ?? null,
       // Tri-state for translations sub-resource.
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
       // See chapters.service for the rationale on the null hideDeleted.
       p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search: q.searchTerm ?? null,
-      p_sort_table: 'translation',
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_page_index: q.pageIndex,
