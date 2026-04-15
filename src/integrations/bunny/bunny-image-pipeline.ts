@@ -47,6 +47,7 @@ import sharp from 'sharp';
 
 import { env } from '../../config/env';
 import { logger } from '../../core/logger/logger';
+import { bunnyCacheService } from './bunny-cache.service';
 import { bunnyStorageService } from './bunny-storage.service';
 
 // ─── Locked constants ───────────────────────────────────────────
@@ -133,6 +134,33 @@ export const safeDeleteFromBunny = async (
 };
 
 /**
+ * Best-effort CDN edge-cache purge for a storage path. Never throws.
+ *
+ * Why this exists: the deterministic-key strategy means the public CDN
+ * URL is stable across re-uploads. Without an edge-purge after PUT,
+ * Bunny continues to serve the previously-cached WebP from its edge
+ * nodes even though the storage object has been replaced, so the user
+ * sees the OLD image at the same URL until the cache TTL expires.
+ *
+ * The purge is best-effort: storage was already updated successfully,
+ * so a transient purge failure should not fail the API call (worst case
+ * the user sees the stale image until natural cache expiry).
+ */
+export const safePurgeBunnyCache = async (
+  path: string,
+  logContext: Record<string, unknown>
+): Promise<void> => {
+  try {
+    await bunnyCacheService.purgeFile(path);
+  } catch (err) {
+    logger.warn(
+      { err, path, ...logContext },
+      'Bunny image pipeline: best-effort CDN cache purge failed; continuing'
+    );
+  }
+};
+
+/**
  * Validate that the input buffer is a readable image. Throws if
  * sharp chokes on the bytes. Callers should re-wrap as AppError.badRequest.
  */
@@ -212,6 +240,13 @@ export const replaceImage = async (
     contentType: 'image/webp'
   });
 
+  // 6. Purge the CDN edge cache for this URL so the next read serves
+  //    the freshly-uploaded WebP and not the stale cached copy.
+  //    Deterministic keys mean the URL never changes between re-uploads,
+  //    so without this step Bunny keeps returning the old image until
+  //    the natural TTL expires. Best-effort: storage already succeeded.
+  await safePurgeBunnyCache(targetPath, logContext);
+
   return { cdnUrl };
 };
 
@@ -232,4 +267,6 @@ export const clearImage = async (opts: {
   const { targetPath, currentUrl, logContext } = opts;
   const priorPath = extractBunnyPath(currentUrl) ?? targetPath;
   await safeDeleteFromBunny(priorPath, logContext);
+  // Purge the CDN edge so the now-deleted URL stops returning a cached body.
+  await safePurgeBunnyCache(priorPath, logContext);
 };
