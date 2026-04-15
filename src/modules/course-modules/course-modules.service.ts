@@ -380,7 +380,8 @@ export const listCourseModuleTranslations = async (
       p_filter_is_active: q.isActive ?? null,
       // Tri-state for translations sub-resource.
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
-      p_hide_deleted: q.isDeleted === 'all' ? false : true,
+      // See chapters.service for the rationale on the null hideDeleted.
+      p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search: q.searchTerm ?? null,
       p_sort_table: 'translation',
       p_sort_column: q.sortColumn,

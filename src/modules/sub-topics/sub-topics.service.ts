@@ -412,7 +412,8 @@ export const listSubTopicTranslations = async (
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
-      p_hide_deleted: q.isDeleted === 'all' ? false : true,
+      // See chapters.service for the rationale.
+      p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

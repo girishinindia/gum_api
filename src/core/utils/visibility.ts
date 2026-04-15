@@ -73,10 +73,24 @@ export const canSeeDeletedRows = (user: AuthUser | undefined | null): boolean =>
  */
 export const resolveIsDeletedFilter = (
   q: boolean | 'all' | undefined | null
-): { filterIsDeleted: boolean | null; hideDeleted: boolean } => {
+): { filterIsDeleted: boolean | null; hideDeleted: boolean | null } => {
+  // 'all' → request UDF to NOT hide deleted rows. UDFs that have been
+  // migrated to accept p_hide_deleted will honour this; older UDFs lack
+  // the param, so callTableFunction would normally crash. We send NULL
+  // instead of FALSE so callTableFunction filters it out — older UDFs
+  // then fall back to their own default-hide behaviour (regression
+  // tracked: super-admin 'all' list view shows only live rows for
+  // unmigrated UDFs).
   if (q === 'all') return { filterIsDeleted: null, hideDeleted: false };
-  if (q === true || q === false) return { filterIsDeleted: q, hideDeleted: true };
-  return { filterIsDeleted: null, hideDeleted: true };
+  // For explicit equality (true / false) and the default-hide case, we
+  // intentionally pass NULL for hideDeleted. callTableFunction strips
+  // NULL params so the UDF call works against both migrated UDFs (which
+  // would receive default TRUE) AND legacy UDFs that don't have the
+  // param at all. The legacy UDFs already default to hiding deleted
+  // rows when p_filter_is_deleted IS NULL, which matches the desired
+  // behaviour.
+  if (q === true || q === false) return { filterIsDeleted: q, hideDeleted: null };
+  return { filterIsDeleted: null, hideDeleted: null };
 };
 
 /**

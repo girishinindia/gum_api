@@ -260,6 +260,15 @@ export type CreateCourseBody = z.infer<typeof createCourseBodySchema>;
 
 // ─── Update course body ─────────────────────────────────────────
 
+// `.strict()` so callers learn about unknown fields immediately. Common
+// mistakes this catches:
+//   - title / shortIntro / etc. (these belong to course_translations —
+//     PATCH /courses/:id/translations/:tid)
+//   - instructorFullName (display-only field denormalised from the
+//     joined instructor profile; change `instructorId` to swap the
+//     instructor instead)
+//   - ratingAverage / enrollmentCount / totalLessons (auto-maintained
+//     aggregate columns — not user-settable)
 export const updateCourseBodySchema = z.object({
   instructorId: z.number().int().positive().optional(),
   courseLanguageId: z.number().int().positive().optional(),
@@ -289,7 +298,7 @@ export const updateCourseBodySchema = z.object({
   isActive: isActiveSchema,
   publishedAt: z.string().optional(),
   contentUpdatedAt: z.string().optional()
-});
+}).strict();
 export type UpdateCourseBody = z.infer<typeof updateCourseBodySchema>;
 
 // ─── List course translations query ─────────────────────────────

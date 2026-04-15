@@ -424,7 +424,9 @@ export const listTopicTranslations = async (
       p_filter_is_active: q.isActive ?? null,
       // 'all' → NULL; true/false → as-is. See chapters.service for context.
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
-      p_hide_deleted: q.isDeleted === 'all' ? false : true,
+      // See chapters.service for the rationale on why we send null instead
+      // of true for the default-hide case.
+      p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

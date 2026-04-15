@@ -127,6 +127,27 @@ interface CourseRow {
   total_count?: number | string;
 }
 
+// Row shape coming directly from `uv_courses` (no translation JOIN).
+// Used by listCourses and getCourseById so parent courses without any
+// translation row are still visible.
+interface CourseParentRow {
+  course_id: number | string;
+  course_code: string | null;
+  course_slug: string;
+  course_price: number | string;
+  course_currency: string;
+  course_is_free: boolean;
+  course_difficulty_level: string | null;
+  course_status: string;
+  course_is_active: boolean;
+  course_is_deleted: boolean;
+  course_rating_average: number | string;
+  course_enrollment_count: number | string;
+  course_total_lessons: number | string;
+  instructor_full_name: string | null;
+  total_count?: number | string;
+}
+
 interface CourseTranslationRow {
   course_trans_id: number | string;
   course_trans_course_id: number | string;
@@ -213,6 +234,29 @@ const mapCourse = (row: CourseRow): CourseDto => ({
   totalLessons: Number(row.course_total_lessons)
 });
 
+// Parent-only mapper: populates CourseDto from a uv_courses row. Since
+// translations are not joined, translation-specific fields (title,
+// translationId, languageCode) are null. Callers that need the default
+// translation should use the /courses/:id/translations sub-resource.
+const mapCourseFromUv = (row: CourseParentRow): CourseDto => ({
+  id: Number(row.course_id),
+  translationId: null,
+  code: row.course_code,
+  slug: row.course_slug,
+  title: null,
+  languageCode: null,
+  instructorFullName: row.instructor_full_name,
+  price: Number(row.course_price),
+  currency: row.course_currency,
+  isFree: row.course_is_free,
+  difficultyLevel: row.course_difficulty_level,
+  courseStatus: row.course_status,
+  isActive: row.course_is_active,
+  ratingAverage: Number(row.course_rating_average),
+  enrollmentCount: Number(row.course_enrollment_count),
+  totalLessons: Number(row.course_total_lessons)
+});
+
 const mapCourseTranslation = (row: CourseTranslationRow): CourseTranslationDto => ({
   id: Number(row.course_trans_id),
   courseId: Number(row.course_trans_course_id),
@@ -280,51 +324,92 @@ export interface ListCoursesResult {
   meta: PaginationMeta;
 }
 
+// Whitelisted sort-column → uv_courses column. Mirrors COURSE_SORT_COLUMNS.
+// Parent list queries uv_courses directly (no translation JOIN), so sort
+// columns come from the parent view, not from course_translations.
+const COURSE_LIST_SORT_MAP: Record<string, string> = {
+  id: 'course_id',
+  code: 'course_code',
+  slug: 'course_slug',
+  price: 'course_price',
+  rating_average: 'course_rating_average',
+  enrollment_count: 'course_enrollment_count',
+  created_at: 'course_created_at',
+  published_at: 'course_published_at',
+  updated_at: 'course_updated_at'
+};
+
+/**
+ * List courses at the parent level — queries `uv_courses` directly so
+ * courses without any translation row are still visible. The translation
+ * sub-resource (`/courses/:id/translations`) keeps using
+ * `udf_get_courses` which INNER JOINs translations.
+ */
 export const listCourses = async (
   q: ListCoursesQuery
 ): Promise<ListCoursesResult> => {
-  // Tri-state isDeleted → (filterIsDeleted, hideDeleted) tuple. The
-  // gateSoftDeleteFilters middleware injects 'all' for super-admin callers
-  // when no isDeleted query param was sent, so super-admin lists default
-  // to "show everything"; non-super-admin callers can never reach here
-  // with the param set.
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  const next = (v: unknown) => { params.push(v); return `$${i++}`; };
+
+  if (q.isActive != null) conditions.push(`course_is_active = ${next(q.isActive)}`);
+  if (q.difficultyLevel) conditions.push(`course_difficulty_level = ${next(q.difficultyLevel)}`);
+  if (q.courseStatus) conditions.push(`course_status = ${next(q.courseStatus)}`);
+  if (q.isFree != null) conditions.push(`course_is_free = ${next(q.isFree)}`);
+  if (q.currency) conditions.push(`course_currency = ${next(q.currency)}`);
+  if (q.isInstructorCourse != null) conditions.push(`is_instructor_course = ${next(q.isInstructorCourse)}`);
+
+  // Tri-state isDeleted (see resolveIsDeletedFilter):
+  //   filterIsDeleted === null && hideDeleted === false → no filter (super-admin "show all")
+  //   filterIsDeleted === null && hideDeleted === true  → AND course_is_deleted = FALSE
+  //   filterIsDeleted === true|false                    → AND course_is_deleted = <value>
   const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
-  const { rows, totalCount } = await db.callTableFunction<CourseRow>(
-    'udf_get_courses',
-    {
-      p_id: null,
-      p_course_id: null,
-      p_language_id: null,
-      p_is_active: q.isActive ?? null,
-      p_filter_difficulty_level: q.difficultyLevel ?? null,
-      p_filter_course_status: q.courseStatus ?? null,
-      p_filter_is_free: q.isFree ?? null,
-      p_filter_currency: q.currency ?? null,
-      p_filter_is_instructor_course: q.isInstructorCourse ?? null,
-      p_filter_is_deleted: filterIsDeleted,
-      p_hide_deleted: hideDeleted,
-      p_search_term: q.searchTerm ?? null,
-      p_sort_table: 'course',
-      p_sort_column: q.sortColumn,
-      p_sort_direction: q.sortDirection,
-      p_page_index: q.pageIndex,
-      p_page_size: q.pageSize
-    }
-  );
+  if (filterIsDeleted !== null) {
+    conditions.push(`course_is_deleted = ${next(filterIsDeleted)}`);
+  } else if (hideDeleted) {
+    conditions.push(`course_is_deleted = FALSE`);
+  }
+
+  if (q.searchTerm && q.searchTerm.trim() !== '') {
+    const term = `%${q.searchTerm.trim()}%`;
+    const p = next(term);
+    conditions.push(`(course_code::TEXT ILIKE ${p} OR course_slug::TEXT ILIKE ${p})`);
+  }
+
+  const sortCol = COURSE_LIST_SORT_MAP[q.sortColumn] ?? 'course_id';
+  const sortDir = q.sortDirection === 'DESC' ? 'DESC' : 'ASC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = q.pageSize;
+  const offset = (Math.max(q.pageIndex, 1) - 1) * q.pageSize;
+
+  const sql = `
+    SELECT *, COUNT(*) OVER()::INT AS total_count
+    FROM uv_courses
+    ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${next(limit)} OFFSET ${next(offset)}
+  `;
+
+  const result = await db.query<CourseParentRow & { total_count?: number | string }>(sql, params);
+  const totalCount = result.rows[0]?.total_count != null ? Number(result.rows[0].total_count) : 0;
 
   return {
-    rows: rows.map(mapCourse),
+    rows: result.rows.map(mapCourseFromUv),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
   };
 };
 
 export const getCourseById = async (id: number): Promise<CourseDto | null> => {
-  const { rows } = await db.callTableFunction<CourseRow>(
-    'udf_get_courses',
-    { p_course_id: id }
+  // Query uv_courses directly — udf_get_courses INNER JOINs translations,
+  // so a course without any translation row would return zero rows (the
+  // cause of POST /courses returning data:null after create).
+  const result = await db.query<CourseParentRow>(
+    'SELECT * FROM uv_courses WHERE course_id = $1 LIMIT 1',
+    [id]
   );
-  const row = rows[0];
-  return row ? mapCourse(row) : null;
+  const row = result.rows[0];
+  return row ? mapCourseFromUv(row) : null;
 };
 
 export interface CreateCourseResult {
@@ -501,7 +586,8 @@ export const listCourseTranslations = async (
       // Tri-state for translations sub-resource: 'all' → no filter (super-admin
       // show all), true/false → equality, undefined → UDF default (hide deleted).
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
-      p_hide_deleted: q.isDeleted === 'all' ? false : true,
+      // See chapters.service for the rationale on the null hideDeleted.
+      p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search_term: q.searchTerm ?? null,
       p_sort_table: 'translation',
       p_sort_column: q.sortColumn,

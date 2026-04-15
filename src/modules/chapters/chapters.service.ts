@@ -422,7 +422,11 @@ export const listChapterTranslations = async (
       // Non-super-admin callers can never reach here with anything other
       // than undefined because gateSoftDeleteFilters strips the param.
       p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
-      p_hide_deleted: q.isDeleted === 'all' ? false : true,
+      // null → callTableFunction strips it; UDF default-hides deleted rows.
+      // Only super-admin 'all' explicitly opts out by sending FALSE — UDFs
+      // migrated to accept p_hide_deleted honour it; older ones treat the
+      // unknown arg as missing and default-hide anyway (known regression).
+      p_hide_deleted: q.isDeleted === 'all' ? false : null,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize
@@ -568,6 +572,9 @@ const setChapterTranslationImageUrl = async (
     p_icon: slot === 'icon' ? url : null,
     p_image: slot === 'image' ? url : null,
     p_video_title: null,
+    p_video_description: null,
+    p_video_thumbnail: null,
+    p_video_duration_minutes: null,
     p_tags: null,
     p_meta_title: null,
     p_meta_description: null,
@@ -587,6 +594,7 @@ const setChapterTranslationImageUrl = async (
     p_robots_directive: null,
     p_focus_keyword: null,
     p_author_name: null,
+    p_author_bio: null,
     p_structured_data: null,
     p_is_active: null,
     p_actor_id: callerId
