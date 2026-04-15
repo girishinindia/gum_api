@@ -584,3 +584,60 @@ export const patchStudentProfileFiles = multiSlotUpload({
     }
   }
 });
+
+// ─── Phase 08 — material management translation images ─────────
+//
+// Subject / chapter / topic / sub-topic translations each carry four
+// image slots (icon, image, ogImage, twitterImage). Same allowlist as
+// phase-02 images; same 100 KB cap (IMAGE_MAX_BYTES in bunny-image-pipeline).
+// All four slots are optional — POST/PATCH bodies can omit any or all.
+
+const PHASE8_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+const PHASE8_IMAGE_MAX_BYTES = 200 * 1024; // 200 KB on the raw upload; sharp re-encodes to ≤100 KB
+
+const phase8TranslationSlots = (resourceLabel: string) => ({
+  icon: {
+    field: ['icon', 'iconImage'] as const,
+    maxBytes: PHASE8_IMAGE_MAX_BYTES,
+    mimeAllowlist: PHASE8_IMAGE_MIMES,
+    label: `${resourceLabel} translation icon`
+  },
+  image: {
+    field: ['image', 'heroImage'] as const,
+    maxBytes: PHASE8_IMAGE_MAX_BYTES,
+    mimeAllowlist: PHASE8_IMAGE_MIMES,
+    label: `${resourceLabel} translation image`
+  },
+  ogImage: {
+    field: ['ogImage', 'og_image'] as const,
+    maxBytes: PHASE8_IMAGE_MAX_BYTES,
+    mimeAllowlist: PHASE8_IMAGE_MIMES,
+    label: `${resourceLabel} translation OG image`
+  },
+  twitterImage: {
+    field: ['twitterImage', 'twitter_image'] as const,
+    maxBytes: PHASE8_IMAGE_MAX_BYTES,
+    mimeAllowlist: PHASE8_IMAGE_MIMES,
+    label: `${resourceLabel} translation Twitter image`
+  }
+});
+
+/** `POST/PATCH /api/v1/subjects/:id/translations[/:tid]` — 4 image slots. */
+export const patchSubjectTranslationFiles = multiSlotUpload({
+  slots: phase8TranslationSlots('Subject')
+});
+
+/** `POST/PATCH /api/v1/chapters/:id/translations[/:tid]` — 4 image slots. */
+export const patchChapterTranslationFiles = multiSlotUpload({
+  slots: phase8TranslationSlots('Chapter')
+});
+
+/** `POST/PATCH /api/v1/topics/:id/translations[/:tid]` — 4 image slots. */
+export const patchTopicTranslationFiles = multiSlotUpload({
+  slots: phase8TranslationSlots('Topic')
+});
+
+/** `POST/PATCH /api/v1/sub-topics/:id/translations[/:tid]` — 4 image slots. */
+export const patchSubTopicTranslationFiles = multiSlotUpload({
+  slots: phase8TranslationSlots('Sub-topic')
+});

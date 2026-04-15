@@ -44,8 +44,14 @@ import studentProfilesRoutes from './student-profiles/student-profiles.routes';
 // Phase 07 — Instructor management
 import instructorProfilesRoutes from './instructor-profiles/instructor-profiles.routes';
 
+// Phase 08 — Material management
+import subjectsRoutes from './subjects/subjects.routes';
+import chaptersRoutes from './chapters/chapters.routes';
+import topicsRoutes from './topics/topics.routes';
+import subTopicsRoutes from './sub-topics/sub-topics.routes';
+
 // ═══════════════════════════════════════════════════════════════
-// v1 router aggregator — Phase 00 / 01 / 02 / 03 / 04 / 05 / 06 / 07.
+// v1 router aggregator — Phase 00 / 01 / 02 / 03 / 04 / 05 / 06 / 07 / 08.
 // ═══════════════════════════════════════════════════════════════
 
 const v1Router = Router();
@@ -100,5 +106,11 @@ v1Router.use('/student-profiles', studentProfilesRoutes);
 
 // ── Phase 07 — Instructor management ─────────────────────────
 v1Router.use('/instructor-profiles', instructorProfilesRoutes);
+
+// ── Phase 08 — Material management ───────────────────────────
+v1Router.use('/subjects', subjectsRoutes);
+v1Router.use('/chapters', chaptersRoutes);
+v1Router.use('/topics', topicsRoutes);
+v1Router.use('/sub-topics', subTopicsRoutes);
 
 export default v1Router;
