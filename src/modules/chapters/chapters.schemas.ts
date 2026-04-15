@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   paginationSchema,
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -20,6 +21,12 @@ import {
 // estimated_minutes as INT
 
 const subjectIdSchema = z.number().int().positive();
+
+const slugSchema = z
+  .string()
+  .trim()
+  .min(1, 'slug is too short')
+  .max(100, 'slug is too long');
 
 const displayOrderSchema = z
   .number()
@@ -234,7 +241,7 @@ export const CHAPTER_TRANSLATION_SORT_COLUMNS = [
 export const listChaptersQuerySchema = paginationSchema.extend({
   subjectId: z.coerce.number().int().positive().optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   difficultyLevel: z.string().trim().optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(CHAPTER_SORT_COLUMNS).default('display_order'),
@@ -249,6 +256,7 @@ export type ListChaptersQuery = z.infer<typeof listChaptersQuerySchema>;
 
 export const createChapterBodySchema = z.object({
   subjectId: subjectIdSchema,
+  slug: slugSchema.optional(),
   displayOrder: displayOrderSchema,
   difficultyLevel: difficultyLevelSchema,
   estimatedMinutes: estimatedMinutesSchema,
@@ -294,6 +302,7 @@ export type CreateChapterBody = z.infer<typeof createChapterBodySchema>;
 // ─── Update chapter body ────────────────────────────────────────
 
 export const updateChapterBodySchema = z.object({
+  slug: slugSchema.optional(),
   displayOrder: displayOrderSchema,
   difficultyLevel: difficultyLevelSchema,
   estimatedMinutes: estimatedMinutesSchema,
@@ -306,7 +315,7 @@ export type UpdateChapterBody = z.infer<typeof updateChapterBodySchema>;
 
 export const listChapterTranslationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   languageId: z.coerce.number().int().positive().optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(CHAPTER_TRANSLATION_SORT_COLUMNS).default('created_at'),

@@ -174,6 +174,37 @@ export const queryBooleanSchema = z
     return z.NEVER;
   });
 
+/**
+ * Tri-state filter for the soft-delete `isDeleted` query param.
+ *
+ * Accepted inputs (case-insensitive):
+ *   true|1|yes   → only soft-deleted rows
+ *   false|0|no   → only live rows
+ *   all          → live + deleted (no is_deleted filter)
+ *
+ * Behaviour combined with `gateSoftDeleteFilters` middleware:
+ *   - non-super-admin callers never reach this schema with the param
+ *     present (it's stripped upstream)
+ *   - super-admin callers without an `isDeleted` query param have
+ *     `'all'` injected by the middleware so the default list view
+ *     surfaces both live and deleted rows
+ */
+export type IsDeletedFilter = boolean | 'all';
+export const isDeletedFilterSchema = z
+  .union([z.boolean(), z.string()])
+  .transform((v, ctx): IsDeletedFilter => {
+    if (typeof v === 'boolean') return v;
+    const s = v.trim().toLowerCase();
+    if (['true', '1', 'yes'].includes(s)) return true;
+    if (['false', '0', 'no'].includes(s)) return false;
+    if (s === 'all') return 'all';
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'must be true|false|all (or 1|0|yes|no)'
+    });
+    return z.NEVER;
+  });
+
 /** ISO-8601 datetime string, coerced to a JS Date. */
 export const dateIsoSchema = z
   .string()

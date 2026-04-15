@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -37,10 +38,10 @@ export const DOCUMENT_SORT_TABLES = ['document', 'document_type'] as const;
 
 export const listDocumentsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   documentTypeId: idSchema.optional(),
   documentTypeIsActive: queryBooleanSchema.optional(),
-  documentTypeIsDeleted: queryBooleanSchema.optional(),
+  documentTypeIsDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortTable: z.enum(DOCUMENT_SORT_TABLES).default('document'),
   sortColumn: z.enum(DOCUMENT_SORT_COLUMNS).default('id'),

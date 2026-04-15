@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -40,7 +41,7 @@ export const LEARNING_GOAL_SORT_COLUMNS = [
 
 export const listLearningGoalsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(LEARNING_GOAL_SORT_COLUMNS).default('id'),
   sortDirection: z

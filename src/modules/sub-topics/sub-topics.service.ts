@@ -10,6 +10,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   ICON_BOX_PX,
@@ -217,37 +218,82 @@ export interface ListSubTopicsResult {
   meta: PaginationMeta;
 }
 
+// Whitelisted sort-column → uv_sub_topics column. Mirrors SUB_TOPIC_SORT_COLUMNS in
+// sub-topics.schemas.ts; values come from a zod enum so this map is exhaustive.
+const SUB_TOPIC_LIST_SORT_MAP: Record<string, string> = {
+  id: 'sub_topic_id',
+  slug: 'sub_topic_slug',
+  display_order: 'sub_topic_display_order',
+  difficulty_level: 'sub_topic_difficulty_level',
+  estimated_minutes: 'sub_topic_estimated_minutes',
+  is_active: 'sub_topic_is_active',
+  is_deleted: 'sub_topic_is_deleted',
+  created_at: 'sub_topic_created_at',
+  updated_at: 'sub_topic_updated_at'
+};
+
+/**
+ * List sub-topics at the parent level — queries `uv_sub_topics` directly so
+ * sub-topics without any translation row are still visible. The translation
+ * sub-resource (`/sub-topics/:id/translations`) keeps using `udf_get_sub_topics`
+ * which INNER JOINs translations.
+ */
 export const listSubTopics = async (
   q: ListSubTopicsQuery
 ): Promise<ListSubTopicsResult> => {
-  const { rows, totalCount } = await db.callTableFunction<SubTopicRow>(
-    'udf_get_sub_topics',
-    {
-      p_id: null,
-      p_topic_id: q.topicId ?? null,
-      p_is_active: q.isActive ?? null,
-      p_sort_column: q.sortColumn,
-      p_sort_direction: q.sortDirection,
-      p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
-      p_search_term: q.searchTerm ?? null,
-      p_page_index: q.pageIndex,
-      p_page_size: q.pageSize
-    }
-  );
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  const next = (v: unknown) => { params.push(v); return `$${i++}`; };
+
+  if (q.topicId != null) conditions.push(`sub_topic_topic_id = ${next(q.topicId)}`);
+  if (q.isActive != null) conditions.push(`sub_topic_is_active = ${next(q.isActive)}`);
+  // Tri-state isDeleted filter (see resolveIsDeletedFilter docs in chapters.service).
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
+  if (filterIsDeleted !== null) {
+    conditions.push(`sub_topic_is_deleted = ${next(filterIsDeleted)}`);
+  } else if (hideDeleted) {
+    conditions.push(`sub_topic_is_deleted = FALSE`);
+  }
+  if (q.searchTerm && q.searchTerm.trim() !== '') {
+    const term = `%${q.searchTerm.trim()}%`;
+    conditions.push(`sub_topic_slug::TEXT ILIKE ${next(term)}`);
+  }
+
+  const sortCol = SUB_TOPIC_LIST_SORT_MAP[q.sortColumn] ?? 'sub_topic_display_order';
+  const sortDir = q.sortDirection === 'DESC' ? 'DESC' : 'ASC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = q.pageSize;
+  const offset = (Math.max(q.pageIndex, 1) - 1) * q.pageSize;
+
+  const sql = `
+    SELECT *, COUNT(*) OVER()::INT AS total_count
+    FROM uv_sub_topics
+    ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${next(limit)} OFFSET ${next(offset)}
+  `;
+
+  const result = await db.query<SubTopicRow & { total_count?: number | string }>(sql, params);
+  const totalCount = result.rows[0]?.total_count != null ? Number(result.rows[0].total_count) : 0;
 
   return {
-    rows: rows.map(mapSubTopic),
+    rows: result.rows.map(mapSubTopic),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
   };
 };
 
+/**
+ * Fetch a sub-topic by id from `uv_sub_topics` directly. Bypasses
+ * `udf_get_sub_topics` which INNER JOINs translations and would return
+ * null for a freshly-created sub-topic that has no translation yet.
+ */
 export const getSubTopicById = async (id: number): Promise<SubTopicDto | null> => {
-  const { rows } = await db.callTableFunction<SubTopicRow>(
-    'udf_get_sub_topics',
-    { p_sub_topic_id: id }
+  const result = await db.query<SubTopicRow>(
+    'SELECT * FROM uv_sub_topics WHERE sub_topic_id = $1 LIMIT 1',
+    [id]
   );
-  const row = rows[0];
+  const row = result.rows[0];
   return row ? mapSubTopic(row) : null;
 };
 
@@ -263,6 +309,7 @@ export const createSubTopic = async (
   // Step 1: Create base sub-topic
   const result = await db.callFunction('udf_insert_sub_topics', {
     p_topic_id: body.topicId,
+    p_slug: body.slug ?? null,
     p_difficulty_level: body.difficultyLevel ?? null,
     p_estimated_minutes: body.estimatedMinutes ?? null,
     p_display_order: body.displayOrder ?? null,
@@ -364,7 +411,8 @@ export const listSubTopicTranslations = async (
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

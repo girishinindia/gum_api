@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -193,7 +194,7 @@ export const CATEGORY_TRANSLATION_SORT_COLUMNS = [
 
 export const listCategoriesQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   isNew: queryBooleanSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(CATEGORY_SORT_COLUMNS).default('display_order'),
@@ -272,7 +273,7 @@ export type UpdateCategoryBody = z.infer<typeof updateCategoryBodySchema>;
 
 export const listCategoryTranslationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   // Query param arrives as a string — coerce so `?languageId=1` works.
   languageId: z.coerce.number().int().positive().optional(),
   searchTerm: searchTermSchema,

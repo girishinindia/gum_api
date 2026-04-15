@@ -6,6 +6,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   ICON_BOX_PX,
@@ -222,35 +223,88 @@ export interface ListTopicsResult {
   meta: PaginationMeta;
 }
 
+// Whitelisted sort-column → uv_topics column. Mirrors TOPIC_SORT_COLUMNS in
+// topics.schemas.ts; values come from a zod enum so this map is exhaustive.
+const TOPIC_LIST_SORT_MAP: Record<string, string> = {
+  id: 'topic_id',
+  slug: 'topic_slug',
+  display_order: 'topic_display_order',
+  difficulty_level: 'topic_difficulty_level',
+  estimated_minutes: 'topic_estimated_minutes',
+  view_count: 'topic_view_count',
+  is_active: 'topic_is_active',
+  is_deleted: 'topic_is_deleted',
+  created_at: 'topic_created_at',
+  updated_at: 'topic_updated_at'
+};
+
+/**
+ * List topics at the parent level — queries `uv_topics` directly so topics
+ * without any translation row are still visible. The translation sub-resource
+ * (`/topics/:id/translations`) keeps using `udf_get_topics` which INNER JOINs
+ * translations.
+ *
+ * Mirrors the chapters/subjects/sub-topics pattern documented in the
+ * "Phase-08 parent CRUD bypasses translation INNER JOIN" memory.
+ */
 export const listTopics = async (q: ListTopicsQuery): Promise<ListTopicsResult> => {
-  const { rows, totalCount } = await db.callTableFunction<TopicRow>(
-    'udf_get_topics',
-    {
-      p_id: null,
-      p_topic_id: null,
-      p_chapter_id: q.chapterId ?? null,
-      p_language_id: null,
-      p_is_active: q.isActive ?? null,
-      p_sort_table: 'topic',
-      p_sort_column: q.sortColumn,
-      p_sort_direction: q.sortDirection,
-      p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
-      p_search_term: q.searchTerm ?? null,
-      p_page_index: q.pageIndex,
-      p_page_size: q.pageSize
-    }
-  );
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  const next = (v: unknown) => { params.push(v); return `$${i++}`; };
+
+  if (q.chapterId != null) conditions.push(`topic_chapter_id = ${next(q.chapterId)}`);
+  if (q.isActive != null) conditions.push(`topic_is_active = ${next(q.isActive)}`);
+  // Tri-state isDeleted (see resolveIsDeletedFilter): super_admin's default
+  // becomes "show all" via the gateSoftDeleteFilters middleware injecting
+  // 'all'; non-super-admin callers can never reach here with the param set.
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
+  if (filterIsDeleted !== null) {
+    conditions.push(`topic_is_deleted = ${next(filterIsDeleted)}`);
+  } else if (hideDeleted) {
+    conditions.push(`topic_is_deleted = FALSE`);
+  }
+  if (q.searchTerm && q.searchTerm.trim() !== '') {
+    const term = `%${q.searchTerm.trim()}%`;
+    conditions.push(
+      `(topic_slug::TEXT ILIKE ${next(term)} OR chapter_slug::TEXT ILIKE $${i - 1} OR subject_code::TEXT ILIKE $${i - 1} OR subject_slug::TEXT ILIKE $${i - 1})`
+    );
+  }
+
+  const sortCol = TOPIC_LIST_SORT_MAP[q.sortColumn] ?? 'topic_display_order';
+  const sortDir = q.sortDirection === 'DESC' ? 'DESC' : 'ASC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = q.pageSize;
+  const offset = (Math.max(q.pageIndex, 1) - 1) * q.pageSize;
+
+  const sql = `
+    SELECT *, COUNT(*) OVER()::INT AS total_count
+    FROM uv_topics
+    ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${next(limit)} OFFSET ${next(offset)}
+  `;
+
+  const result = await db.query<TopicRow & { total_count?: number | string }>(sql, params);
+  const totalCount = result.rows[0]?.total_count != null ? Number(result.rows[0].total_count) : 0;
 
   return {
-    rows: rows.map(mapTopic),
+    rows: result.rows.map(mapTopic),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
   };
 };
 
+/**
+ * Fetch a topic by id from `uv_topics` directly. Bypasses `udf_get_topics`
+ * which INNER JOINs translations and would return null for a freshly-created
+ * topic that has no translation row yet.
+ */
 export const getTopicById = async (id: number): Promise<TopicDto | null> => {
-  const { rows } = await db.callTableFunction<TopicRow>('udf_get_topics', { p_topic_id: id });
-  const row = rows[0];
+  const result = await db.query<TopicRow>(
+    'SELECT * FROM uv_topics WHERE topic_id = $1 LIMIT 1',
+    [id]
+  );
+  const row = result.rows[0];
   return row ? mapTopic(row) : null;
 };
 
@@ -266,6 +320,7 @@ export const createTopic = async (
   // Step 1: Create base topic
   const result = await db.callFunction('udf_insert_topics', {
     p_chapter_id: body.chapterId ?? null,
+    p_slug: body.slug ?? null,
     p_difficulty_level: body.difficultyLevel ?? null,
     p_estimated_minutes: body.estimatedMinutes ?? null,
     p_display_order: body.displayOrder ?? null,
@@ -323,6 +378,7 @@ export const updateTopic = async (
 ): Promise<void> => {
   await db.callFunction('udf_update_topics', {
     p_id: id,
+    p_slug: body.slug ?? null,
     p_difficulty_level: body.difficultyLevel ?? null,
     p_estimated_minutes: body.estimatedMinutes ?? null,
     p_display_order: body.displayOrder ?? null,
@@ -366,7 +422,9 @@ export const listTopicTranslations = async (
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      // 'all' → NULL; true/false → as-is. See chapters.service for context.
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

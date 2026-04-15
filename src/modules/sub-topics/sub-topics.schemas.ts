@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   paginationSchema,
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -238,7 +239,7 @@ export const SUB_TOPIC_TRANSLATION_SORT_COLUMNS = [
 export const listSubTopicsQuerySchema = paginationSchema.extend({
   topicId: z.coerce.number().int().positive().optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(SUB_TOPIC_SORT_COLUMNS).default('display_order'),
   sortDirection: z
@@ -311,7 +312,7 @@ export type UpdateSubTopicBody = z.infer<typeof updateSubTopicBodySchema>;
 
 export const listSubTopicTranslationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   // Query param arrives as a string — coerce so `?languageId=1` works.
   languageId: z.coerce.number().int().positive().optional(),
   searchTerm: searchTermSchema,

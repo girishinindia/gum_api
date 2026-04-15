@@ -51,6 +51,35 @@ export const canSeeDeletedRows = (user: AuthUser | undefined | null): boolean =>
 };
 
 /**
+ * Resolve a tri-state `isDeleted` query value into the two parameters
+ * the list UDFs / raw-SQL list services need:
+ *
+ *   p_filter_is_deleted: BOOLEAN — strict equality filter (TRUE only,
+ *                         FALSE only). NULL means "no equality filter".
+ *   p_hide_deleted:      BOOLEAN — when TRUE and p_filter is NULL,
+ *                         enforce `is_deleted = FALSE`. When FALSE and
+ *                         p_filter is NULL, surface live + deleted rows.
+ *
+ * Caller contract:
+ *   undefined → behave as the legacy default (hide deleted)
+ *   true      → only deleted rows
+ *   false     → only live rows
+ *   'all'     → live + deleted rows
+ *
+ * The `gateSoftDeleteFilters` middleware injects `'all'` for super-admin
+ * callers when no `isDeleted` param was sent, so super-admin lists default
+ * to "show everything"; non-super-admin callers cannot reach this helper
+ * with anything other than `undefined` (the middleware strips the param).
+ */
+export const resolveIsDeletedFilter = (
+  q: boolean | 'all' | undefined | null
+): { filterIsDeleted: boolean | null; hideDeleted: boolean } => {
+  if (q === 'all') return { filterIsDeleted: null, hideDeleted: false };
+  if (q === true || q === false) return { filterIsDeleted: q, hideDeleted: true };
+  return { filterIsDeleted: null, hideDeleted: true };
+};
+
+/**
  * Shape the helper expects any "row" object to have. DTOs across
  * the codebase expose `isDeleted` on the top level (camelCase), so
  * this is the one contract we rely on.

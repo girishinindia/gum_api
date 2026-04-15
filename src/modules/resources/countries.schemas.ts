@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -72,7 +73,7 @@ const sortColumnSchema = z
 
 export const listCountriesQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   iso2: iso2Schema.optional(),
   iso3: iso3Schema.optional(),
   phoneCode: phoneCodeSchema.optional(),

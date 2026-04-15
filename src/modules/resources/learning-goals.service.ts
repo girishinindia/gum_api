@@ -9,6 +9,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import { AppError } from '../../core/errors/app-error';
 import { logger } from '../../core/logger/logger';
 import {
@@ -83,6 +84,7 @@ export interface ListLearningGoalsResult {
 export const listLearningGoals = async (
   q: ListLearningGoalsQuery
 ): Promise<ListLearningGoalsResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<LearningGoalRow>(
     'udf_get_learning_goals',
     {
@@ -91,7 +93,8 @@ export const listLearningGoals = async (
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

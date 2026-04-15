@@ -5,6 +5,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateCityBody,
@@ -154,7 +155,12 @@ export interface ListCitiesResult {
 
 export const listCities = async (q: ListCitiesQuery): Promise<ListCitiesResult> => {
   const cityActive = q.cityIsActive ?? q.isActive ?? null;
-  const cityDeleted = q.cityIsDeleted ?? q.isDeleted ?? null;
+  const { filterIsDeleted: countryDeleted, hideDeleted: hideCountryDeleted } =
+    resolveIsDeletedFilter(q.countryIsDeleted ?? q.isDeleted);
+  const { filterIsDeleted: stateDeleted, hideDeleted: hideStateDeleted } =
+    resolveIsDeletedFilter(q.stateIsDeleted ?? q.isDeleted);
+  const { filterIsDeleted: cityDeleted, hideDeleted: hideCityDeleted } =
+    resolveIsDeletedFilter(q.cityIsDeleted ?? q.isDeleted);
 
   const { rows, totalCount } = await db.callTableFunction<CityRow>(
     'udf_getcities',
@@ -168,13 +174,16 @@ export const listCities = async (q: ListCitiesQuery): Promise<ListCitiesResult> 
       p_filter_country_iso3: q.countryIso3 ?? null,
       p_filter_country_languages: q.countryLanguage ?? null,
       p_filter_country_is_active: q.countryIsActive ?? null,
-      p_filter_country_is_deleted: q.countryIsDeleted ?? null,
+      p_filter_country_is_deleted: countryDeleted,
+      p_hide_country_deleted: hideCountryDeleted,
       p_filter_state_languages: q.stateLanguage ?? null,
       p_filter_state_is_active: q.stateIsActive ?? null,
-      p_filter_state_is_deleted: q.stateIsDeleted ?? null,
+      p_filter_state_is_deleted: stateDeleted,
+      p_hide_state_deleted: hideStateDeleted,
       p_filter_city_timezone: q.cityTimezone ?? null,
       p_filter_city_is_active: cityActive,
       p_filter_city_is_deleted: cityDeleted,
+      p_hide_city_deleted: hideCityDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

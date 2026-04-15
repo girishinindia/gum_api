@@ -9,6 +9,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   ICON_BOX_PX,
@@ -247,10 +248,16 @@ export const listChapters = async (q: ListChaptersQuery): Promise<ListChaptersRe
   if (q.subjectId != null) conditions.push(`chapter_subject_id = ${next(q.subjectId)}`);
   if (q.isActive != null) conditions.push(`chapter_is_active = ${next(q.isActive)}`);
   if (q.difficultyLevel) conditions.push(`chapter_difficulty_level = ${next(q.difficultyLevel)}`);
-  if (q.isDeleted == null) {
+  // Tri-state isDeleted filter (see resolveIsDeletedFilter):
+  //   filterIsDeleted === null && hideDeleted === false  → no is_deleted filter (super-admin "show all")
+  //   filterIsDeleted === null && hideDeleted === true   → AND is_deleted = FALSE (legacy default for non-super-admin)
+  //   filterIsDeleted === true                           → AND is_deleted = TRUE
+  //   filterIsDeleted === false                          → AND is_deleted = FALSE
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
+  if (filterIsDeleted !== null) {
+    conditions.push(`chapter_is_deleted = ${next(filterIsDeleted)}`);
+  } else if (hideDeleted) {
     conditions.push(`chapter_is_deleted = FALSE`);
-  } else {
-    conditions.push(`chapter_is_deleted = ${next(q.isDeleted)}`);
   }
   if (q.searchTerm && q.searchTerm.trim() !== '') {
     const term = `%${q.searchTerm.trim()}%`;
@@ -306,6 +313,7 @@ export const createChapter = async (
   // Step 1: Create base chapter (UDF expects p_estimated_hours, converts internally)
   const result = await db.callFunction('udf_insert_chapters', {
     p_subject_id: body.subjectId,
+    p_slug: body.slug ?? null,
     p_difficulty_level: body.difficultyLevel ?? null,
     p_estimated_hours: body.estimatedMinutes != null ? body.estimatedMinutes / 60 : null,
     p_display_order: body.displayOrder ?? null,
@@ -365,6 +373,7 @@ export const updateChapter = async (
 ): Promise<void> => {
   await db.callFunction('udf_update_chapters', {
     p_id: id,
+    p_slug: body.slug ?? null,
     p_difficulty_level: body.difficultyLevel ?? null,
     p_estimated_hours: body.estimatedMinutes != null ? body.estimatedMinutes / 60 : null,
     p_display_order: body.displayOrder ?? null,
@@ -408,7 +417,12 @@ export const listChapterTranslations = async (
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      // 'all' → NULL (no equality filter); true/false → as-is; undefined →
+      // NULL (UDF's default which surfaces all rows including deleted).
+      // Non-super-admin callers can never reach here with anything other
+      // than undefined because gateSoftDeleteFilters strips the param.
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

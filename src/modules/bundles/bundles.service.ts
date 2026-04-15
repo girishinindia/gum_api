@@ -10,6 +10,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   IMAGE_BOX_PX,
@@ -81,6 +82,8 @@ export interface ListResult {
 }
 
 export const listBundles = async (q: ListBundlesQuery): Promise<ListResult> => {
+  // Tri-state isDeleted (super-admin's default 'all' is injected by middleware).
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<BundleListRow>(
     'udf_get_bundles',
     {
@@ -91,6 +94,8 @@ export const listBundles = async (q: ListBundlesQuery): Promise<ListResult> => {
       p_filter_bundle_owner: q.bundleOwner ?? null,
       p_filter_is_featured: q.isFeatured ?? null,
       p_filter_is_active: q.isActive ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_sort_table: q.sortTable,
       p_sort_column: q.sortColumn,

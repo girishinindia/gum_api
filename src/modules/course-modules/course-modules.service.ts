@@ -9,6 +9,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   ICON_BOX_PX,
@@ -234,6 +235,8 @@ export interface ListModulesResult {
 export const listCourseModules = async (
   q: ListCourseModulesQuery
 ): Promise<ListModulesResult> => {
+  // Tri-state isDeleted (super-admin's default 'all' is injected by middleware).
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<ModuleRow>(
     'udf_get_course_modules',
     {
@@ -243,7 +246,8 @@ export const listCourseModules = async (
       p_language_id: null,
       p_filter_course_id: q.courseId ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search: q.searchTerm ?? null,
       p_sort_table: 'module',
       p_sort_column: q.sortColumn,
@@ -374,7 +378,9 @@ export const listCourseModuleTranslations = async (
       p_language_id: q.languageId ?? null,
       p_filter_course_id: null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      // Tri-state for translations sub-resource.
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search: q.searchTerm ?? null,
       p_sort_table: 'translation',
       p_sort_column: q.sortColumn,

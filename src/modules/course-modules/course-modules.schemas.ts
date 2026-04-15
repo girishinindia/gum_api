@@ -8,6 +8,7 @@ import { z } from 'zod';
 import {
   paginationSchema,
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -43,7 +44,7 @@ export const MODULE_TRANSLATION_SORT_COLUMNS = [
 export const listCourseModulesQuerySchema = paginationSchema.extend({
   courseId: z.coerce.number().int().positive().optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(MODULE_SORT_COLUMNS).default('display_order'),
   sortDirection: z
@@ -113,7 +114,7 @@ export type UpdateCourseModuleBody = z.infer<typeof updateCourseModuleBodySchema
 export const listCourseModuleTranslationsQuerySchema = paginationSchema.extend({
   languageId: z.coerce.number().int().positive().optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(MODULE_TRANSLATION_SORT_COLUMNS).default('name'),
   sortDirection: z

@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import {
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -41,6 +42,7 @@ export const listBundlesQuerySchema = z.object({
   bundleOwner: z.enum(BUNDLE_OWNERS).optional(),
   isFeatured: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortTable: z.enum(['bundle', 'translation']).default('bundle'),
   sortColumn: z.string().default('id'),

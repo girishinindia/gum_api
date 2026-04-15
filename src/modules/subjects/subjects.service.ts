@@ -9,6 +9,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   ICON_BOX_PX,
@@ -243,30 +244,72 @@ export interface ListSubjectsResult {
   meta: PaginationMeta;
 }
 
+// Whitelisted sort-column → uv_subjects column. Mirrors SUBJECT_SORT_COLUMNS in
+// subjects.schemas.ts; values come from a zod enum so this map is exhaustive.
+const SUBJECT_LIST_SORT_MAP: Record<string, string> = {
+  id: 'subject_id',
+  code: 'subject_code',
+  slug: 'subject_slug',
+  difficulty_level: 'subject_difficulty_level',
+  estimated_hours: 'subject_estimated_hours',
+  display_order: 'subject_display_order',
+  view_count: 'subject_view_count',
+  is_active: 'subject_is_active',
+  is_deleted: 'subject_is_deleted',
+  created_at: 'subject_created_at',
+  updated_at: 'subject_updated_at'
+};
+
+/**
+ * List subjects at the parent level — queries `uv_subjects` directly so
+ * subjects without any translation row are still visible. The translation
+ * sub-resource (`/subjects/:id/translations`) keeps using `udf_get_subjects`
+ * which INNER JOINs translations.
+ */
 export const listSubjects = async (
   q: ListSubjectsQuery
 ): Promise<ListSubjectsResult> => {
-  const { rows, totalCount } = await db.callTableFunction<SubjectRow>(
-    'udf_get_subjects',
-    {
-      p_id: null,
-      p_subject_id: null,
-      p_language_id: null,
-      p_is_active: q.isActive ?? null,
-      p_filter_difficulty_level: q.difficultyLevel ?? null,
-      p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
-      p_search_term: q.searchTerm ?? null,
-      p_sort_table: 'subject',
-      p_sort_column: q.sortColumn,
-      p_sort_direction: q.sortDirection,
-      p_page_index: q.pageIndex,
-      p_page_size: q.pageSize
-    }
-  );
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  const next = (v: unknown) => { params.push(v); return `$${i++}`; };
+
+  if (q.isActive != null) conditions.push(`subject_is_active = ${next(q.isActive)}`);
+  if (q.difficultyLevel) conditions.push(`subject_difficulty_level = ${next(q.difficultyLevel)}`);
+  // Tri-state isDeleted filter (see resolveIsDeletedFilter):
+  //   filterIsDeleted === null && hideDeleted === false  → no is_deleted filter (super-admin "show all")
+  //   filterIsDeleted === null && hideDeleted === true   → AND is_deleted = FALSE (legacy default for non-super-admin)
+  //   filterIsDeleted === true|false                     → AND is_deleted = <value>
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
+  if (filterIsDeleted !== null) {
+    conditions.push(`subject_is_deleted = ${next(filterIsDeleted)}`);
+  } else if (hideDeleted) {
+    conditions.push(`subject_is_deleted = FALSE`);
+  }
+  if (q.searchTerm && q.searchTerm.trim() !== '') {
+    const term = `%${q.searchTerm.trim()}%`;
+    conditions.push(`(subject_code::TEXT ILIKE ${next(term)} OR subject_slug::TEXT ILIKE $${i - 1})`);
+  }
+
+  const sortCol = SUBJECT_LIST_SORT_MAP[q.sortColumn] ?? 'subject_display_order';
+  const sortDir = q.sortDirection === 'DESC' ? 'DESC' : 'ASC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = q.pageSize;
+  const offset = (Math.max(q.pageIndex, 1) - 1) * q.pageSize;
+
+  const sql = `
+    SELECT *, COUNT(*) OVER()::INT AS total_count
+    FROM uv_subjects
+    ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${next(limit)} OFFSET ${next(offset)}
+  `;
+
+  const result = await db.query<SubjectRow & { total_count?: number | string }>(sql, params);
+  const totalCount = result.rows[0]?.total_count != null ? Number(result.rows[0].total_count) : 0;
 
   return {
-    rows: rows.map(mapSubject),
+    rows: result.rows.map(mapSubject),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
   };
 };
@@ -354,7 +397,8 @@ export const listSubjectTranslations = async (
       p_is_active: q.isActive ?? null,
       p_filter_difficulty_level: null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search_term: q.searchTerm ?? null,
       p_sort_table: 'translation',
       p_sort_column: q.sortColumn,

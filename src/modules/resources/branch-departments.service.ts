@@ -13,6 +13,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateBranchDepartmentBody,
@@ -152,7 +153,7 @@ export const listBranchDepartments = async (
   q: ListBranchDepartmentsQuery
 ): Promise<ListBranchDepartmentsResult> => {
   const bdActive = q.isActive ?? null;
-  const bdDeleted = q.isDeleted ?? null;
+  const { filterIsDeleted: bdDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
 
   const { rows, totalCount } = await db.callTableFunction<BranchDepartmentRow>(
     'udf_get_branch_departments',
@@ -168,6 +169,7 @@ export const listBranchDepartments = async (
       p_filter_department_name: q.departmentName ?? null,
       p_filter_bd_is_active: bdActive,
       p_filter_bd_is_deleted: bdDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

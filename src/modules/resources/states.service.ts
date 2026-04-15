@@ -10,6 +10,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateStateBody,
@@ -132,7 +133,10 @@ export const listStates = async (q: ListStatesQuery): Promise<ListStatesResult> 
   // side of the JOIN; callers that need to target the country side
   // must use `countryIsActive` / `countryIsDeleted` explicitly.
   const stateActive = q.stateIsActive ?? q.isActive ?? null;
-  const stateDeleted = q.stateIsDeleted ?? q.isDeleted ?? null;
+  const { filterIsDeleted: countryDeleted, hideDeleted: hideCountryDeleted } =
+    resolveIsDeletedFilter(q.countryIsDeleted);
+  const { filterIsDeleted: stateDeleted, hideDeleted: hideStateDeleted } =
+    resolveIsDeletedFilter(q.stateIsDeleted ?? q.isDeleted);
 
   const { rows, totalCount } = await db.callTableFunction<StateRow>(
     'udf_getstates',
@@ -145,10 +149,12 @@ export const listStates = async (q: ListStatesQuery): Promise<ListStatesResult> 
       p_filter_country_iso3: q.countryIso3 ?? null,
       p_filter_country_languages: q.countryLanguage ?? null,
       p_filter_country_is_active: q.countryIsActive ?? null,
-      p_filter_country_is_deleted: q.countryIsDeleted ?? null,
+      p_filter_country_is_deleted: countryDeleted,
+      p_hide_country_deleted: hideCountryDeleted,
       p_filter_state_languages: q.stateLanguage ?? null,
       p_filter_state_is_active: stateActive,
       p_filter_state_is_deleted: stateDeleted,
+      p_hide_state_deleted: hideStateDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

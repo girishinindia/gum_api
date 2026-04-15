@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -56,7 +57,7 @@ export const DESIGNATION_SORT_COLUMNS = [
 
 export const listDesignationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   levelBand: levelBandSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(DESIGNATION_SORT_COLUMNS).default('level'),

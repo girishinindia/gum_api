@@ -8,6 +8,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import { AppError } from '../../core/errors/app-error';
 import { logger } from '../../core/logger/logger';
 import {
@@ -214,6 +215,7 @@ export interface ListCategoriesResult {
 export const listCategories = async (
   q: ListCategoriesQuery
 ): Promise<ListCategoriesResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<CategoryRow>(
     'udf_get_categories',
     {
@@ -223,7 +225,8 @@ export const listCategories = async (
       p_sort_direction: q.sortDirection,
       p_filter_is_new: q.isNew ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize
@@ -328,6 +331,7 @@ export const listCategoryTranslations = async (
   categoryId: number,
   q: ListCategoryTranslationsQuery
 ): Promise<ListCategoryTranslationsResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<CategoryTranslationRow>(
     'udf_get_category_translations',
     {
@@ -339,7 +343,8 @@ export const listCategoryTranslations = async (
       p_sort_direction: q.sortDirection,
       p_filter_category_is_active: null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

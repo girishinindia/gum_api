@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   paginationSchema,
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -257,7 +258,7 @@ export const SUBJECT_TRANSLATION_SORT_COLUMNS = [
 
 export const listSubjectsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   difficultyLevel: z.enum(['beginner', 'intermediate', 'advanced', 'expert', 'all_levels']).optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(SUBJECT_SORT_COLUMNS).default('display_order'),
@@ -332,7 +333,7 @@ export type UpdateSubjectBody = z.infer<typeof updateSubjectBodySchema>;
 
 export const listSubjectTranslationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   // Query param arrives as a string — coerce so `?languageId=1` works.
   languageId: z.coerce.number().int().positive().optional(),
   searchTerm: searchTermSchema,

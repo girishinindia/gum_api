@@ -5,6 +5,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateDocumentBody,
@@ -89,6 +90,10 @@ export interface ListDocumentsResult {
 }
 
 export const listDocuments = async (q: ListDocumentsQuery): Promise<ListDocumentsResult> => {
+  const { filterIsDeleted: docTypeDeleted, hideDeleted: hideDocTypeDeleted } =
+    resolveIsDeletedFilter(q.documentTypeIsDeleted);
+  const { filterIsDeleted: docDeleted, hideDeleted: hideDocDeleted } =
+    resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<DocumentRow>(
     'udf_get_documents',
     {
@@ -98,9 +103,11 @@ export const listDocuments = async (q: ListDocumentsQuery): Promise<ListDocument
       p_sort_direction: q.sortDirection,
       p_filter_document_type_id: q.documentTypeId ?? null,
       p_filter_document_type_is_active: q.documentTypeIsActive ?? null,
-      p_filter_document_type_is_deleted: q.documentTypeIsDeleted ?? null,
+      p_filter_document_type_is_deleted: docTypeDeleted,
+      p_hide_document_type_deleted: hideDocTypeDeleted,
       p_filter_document_is_active: q.isActive ?? null,
-      p_filter_document_is_deleted: q.isDeleted ?? null,
+      p_filter_document_is_deleted: docDeleted,
+      p_hide_document_deleted: hideDocDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

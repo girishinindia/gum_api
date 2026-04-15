@@ -5,6 +5,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateDocumentTypeBody,
@@ -65,6 +66,7 @@ export interface ListDocumentTypesResult {
 export const listDocumentTypes = async (
   q: ListDocumentTypesQuery
 ): Promise<ListDocumentTypesResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<DocumentTypeRow>(
     'udf_get_document_types',
     {
@@ -72,7 +74,8 @@ export const listDocumentTypes = async (
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

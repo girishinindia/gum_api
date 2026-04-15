@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   codeSchema,
   paginationSchema,
   queryBooleanSchema,
@@ -55,7 +56,7 @@ const sortColumnSchema = z.enum(PERMISSION_SORT_COLUMNS).default('display_order'
 
 export const listPermissionsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   resource: lowercaseIdentifier.optional(),
   action: lowercaseIdentifier.optional(),
   scope: lowercaseIdentifier.optional(),

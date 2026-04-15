@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -67,7 +68,7 @@ export const BD_SORT_COLUMNS = [
 export const listBranchDepartmentsQuerySchema = paginationSchema.extend({
   // Top-level convenience (maps to the bd layer).
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // Junction filters
   branchId: bigintIdSchema.optional(),

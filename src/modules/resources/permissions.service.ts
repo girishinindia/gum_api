@@ -5,6 +5,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreatePermissionBody,
@@ -78,6 +79,7 @@ export interface ListPermissionsResult {
 export const listPermissions = async (
   q: ListPermissionsQuery
 ): Promise<ListPermissionsResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<PermissionRow>(
     'udf_get_permissions',
     {
@@ -87,7 +89,8 @@ export const listPermissions = async (
       p_filter_action: q.action ?? null,
       p_filter_scope: q.scope ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,

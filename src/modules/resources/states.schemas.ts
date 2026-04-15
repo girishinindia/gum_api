@@ -15,6 +15,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   bigintIdSchema,
   paginationSchema,
   queryBooleanSchema,
@@ -70,14 +71,14 @@ export const STATE_SORT_COLUMNS = [
 export const listStatesQuerySchema = paginationSchema.extend({
   // State-level active flag (top-level convenience, matches countries).
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // Explicit parent-country flags (separate from `isActive` so callers
   // can independently filter on state.is_active vs country.is_active).
   countryIsActive: queryBooleanSchema.optional(),
-  countryIsDeleted: queryBooleanSchema.optional(),
+  countryIsDeleted: isDeletedFilterSchema.optional(),
   stateIsActive: queryBooleanSchema.optional(),
-  stateIsDeleted: queryBooleanSchema.optional(),
+  stateIsDeleted: isDeletedFilterSchema.optional(),
 
   // Parent-country filter by iso3 (exact match, upper-case normalized).
   countryIso3: iso3Schema.optional(),

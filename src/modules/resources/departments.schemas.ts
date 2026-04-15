@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema,
@@ -55,7 +56,7 @@ export const DEPARTMENT_SORT_COLUMNS = [
 export const listDepartmentsQuerySchema = paginationSchema.extend({
   // Top-level convenience (maps to the department layer).
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // Hierarchy filters
   parentDepartmentId: bigintIdSchema.optional(),

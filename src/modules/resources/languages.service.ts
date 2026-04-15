@@ -5,6 +5,7 @@
 import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateLanguageBody,
@@ -69,6 +70,7 @@ export interface ListLanguagesResult {
 export const listLanguages = async (
   q: ListLanguagesQuery
 ): Promise<ListLanguagesResult> => {
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<LanguageRow>(
     'udf_get_languages',
     {
@@ -78,7 +80,8 @@ export const listLanguages = async (
       p_filter_script: q.script ?? null,
       p_filter_iso_code: q.isoCode ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

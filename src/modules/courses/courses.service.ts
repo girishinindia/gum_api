@@ -9,6 +9,7 @@ import { db } from '../../database/db';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
 import { AppError } from '../../core/errors/app-error';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 import {
   replaceImage,
   IMAGE_BOX_PX,
@@ -282,6 +283,12 @@ export interface ListCoursesResult {
 export const listCourses = async (
   q: ListCoursesQuery
 ): Promise<ListCoursesResult> => {
+  // Tri-state isDeleted → (filterIsDeleted, hideDeleted) tuple. The
+  // gateSoftDeleteFilters middleware injects 'all' for super-admin callers
+  // when no isDeleted query param was sent, so super-admin lists default
+  // to "show everything"; non-super-admin callers can never reach here
+  // with the param set.
+  const { filterIsDeleted, hideDeleted } = resolveIsDeletedFilter(q.isDeleted);
   const { rows, totalCount } = await db.callTableFunction<CourseRow>(
     'udf_get_courses',
     {
@@ -294,7 +301,8 @@ export const listCourses = async (
       p_filter_is_free: q.isFree ?? null,
       p_filter_currency: q.currency ?? null,
       p_filter_is_instructor_course: q.isInstructorCourse ?? null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      p_filter_is_deleted: filterIsDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_sort_table: 'course',
       p_sort_column: q.sortColumn,
@@ -490,7 +498,10 @@ export const listCourseTranslations = async (
       p_filter_is_free: null,
       p_filter_currency: null,
       p_filter_is_instructor_course: null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      // Tri-state for translations sub-resource: 'all' → no filter (super-admin
+      // show all), true/false → equality, undefined → UDF default (hide deleted).
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
+      p_hide_deleted: q.isDeleted === 'all' ? false : true,
       p_search_term: q.searchTerm ?? null,
       p_sort_table: 'translation',
       p_sort_column: q.sortColumn,

@@ -13,6 +13,7 @@ import { db } from '../../database/db';
 import { AppError } from '../../core/errors/app-error';
 import type { PaginationMeta } from '../../core/types/common.types';
 import { buildPaginationMeta } from '../../core/utils/api-response';
+import { resolveIsDeletedFilter } from '../../core/utils/visibility';
 
 import type {
   CreateBranchBody,
@@ -236,7 +237,9 @@ export const listBranches = async (
   q: ListBranchesQuery
 ): Promise<ListBranchesResult> => {
   const branchActive = q.branchIsActive ?? q.isActive ?? null;
-  const branchDeleted = q.branchIsDeleted ?? q.isDeleted ?? null;
+  // Tri-state isDeleted: prefer layer-specific branchIsDeleted, fall back to top-level isDeleted.
+  const { filterIsDeleted: branchDeleted, hideDeleted } =
+    resolveIsDeletedFilter(q.branchIsDeleted ?? q.isDeleted);
 
   const { rows, totalCount } = await db.callTableFunction<BranchRow>(
     'udf_get_branches',
@@ -254,6 +257,7 @@ export const listBranches = async (
       p_filter_branch_type: q.branchType ?? null,
       p_filter_branch_is_active: branchActive,
       p_filter_branch_is_deleted: branchDeleted,
+      p_hide_deleted: hideDeleted,
       p_search_term: q.searchTerm ?? null,
       p_page_index: q.pageIndex,
       p_page_size: q.pageSize

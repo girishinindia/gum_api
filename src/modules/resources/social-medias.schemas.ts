@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -68,7 +69,7 @@ export const SOCIAL_MEDIA_SORT_COLUMNS = [
 
 export const listSocialMediasQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   platformType: platformTypeSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(SOCIAL_MEDIA_SORT_COLUMNS).default('id'),

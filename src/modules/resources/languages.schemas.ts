@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -47,7 +48,7 @@ export const LANGUAGE_SORT_COLUMNS = [
 
 export const listLanguagesQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   script: scriptSchema.optional(),
   isoCode: isoCodeSchema.optional(),
   searchTerm: searchTermSchema,

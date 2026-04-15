@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   paginationSchema,
   queryBooleanSchema,
+  isDeletedFilterSchema,
   searchTermSchema
 } from '../../shared/validation/common';
 
@@ -155,7 +156,7 @@ export const COURSE_TRANSLATION_SORT_COLUMNS = [
 
 export const listCoursesQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   difficultyLevel: z
     .enum(['absolute beginner', 'beginner', 'intermediate', 'advanced', 'expert', 'bootcamp', 'mega'])
     .optional(),
@@ -295,7 +296,7 @@ export type UpdateCourseBody = z.infer<typeof updateCourseBodySchema>;
 
 export const listCourseTranslationsQuerySchema = paginationSchema.extend({
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   languageId: z.coerce.number().int().positive().optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(COURSE_TRANSLATION_SORT_COLUMNS).default('created_at'),

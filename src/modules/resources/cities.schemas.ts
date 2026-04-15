@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -73,16 +74,16 @@ export const CITY_SORT_COLUMNS = [
 export const listCitiesQuerySchema = paginationSchema.extend({
   // Top-level convenience (maps to the city layer by default).
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // Layer-specific flags — can be used independently of the top-level
   // `isActive` / `isDeleted`.
   countryIsActive: queryBooleanSchema.optional(),
-  countryIsDeleted: queryBooleanSchema.optional(),
+  countryIsDeleted: isDeletedFilterSchema.optional(),
   stateIsActive: queryBooleanSchema.optional(),
-  stateIsDeleted: queryBooleanSchema.optional(),
+  stateIsDeleted: isDeletedFilterSchema.optional(),
   cityIsActive: queryBooleanSchema.optional(),
-  cityIsDeleted: queryBooleanSchema.optional(),
+  cityIsDeleted: isDeletedFilterSchema.optional(),
 
   // Country layer
   countryIso3: iso3Schema.optional(),

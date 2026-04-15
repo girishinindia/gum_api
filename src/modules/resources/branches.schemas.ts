@@ -16,6 +16,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema,
@@ -95,11 +96,11 @@ export const BRANCH_SORT_COLUMNS = [
 export const listBranchesQuerySchema = paginationSchema.extend({
   // Top-level convenience (maps to the branch layer by default).
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // Layer-specific flags
   branchIsActive: queryBooleanSchema.optional(),
-  branchIsDeleted: queryBooleanSchema.optional(),
+  branchIsDeleted: isDeletedFilterSchema.optional(),
   cityIsActive: queryBooleanSchema.optional(),
   stateIsActive: queryBooleanSchema.optional(),
   countryIsActive: queryBooleanSchema.optional(),
