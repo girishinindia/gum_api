@@ -5,6 +5,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -26,7 +27,7 @@ export const listCourseSubCategoriesQuerySchema = paginationSchema.extend({
   courseId: z.coerce.number().int().positive().optional(),
   subCategoryId: z.coerce.number().int().positive().optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   isPrimary: queryBooleanSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(COURSE_SUB_CATEGORY_SORT_COLUMNS).default('display_order'),

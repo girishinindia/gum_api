@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   queryBooleanSchema,
   searchTermSchema
 } from '../../shared/validation/common';
@@ -33,7 +34,7 @@ export const listCourseModuleTopicsQuerySchema = z.object({
   hasTopic: queryBooleanSchema.optional(),
   isPreview: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(CMT_SORT_COLUMNS).default('display_order'),
   sortDirection: z

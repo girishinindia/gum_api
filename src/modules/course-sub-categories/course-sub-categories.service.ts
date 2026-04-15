@@ -102,7 +102,9 @@ export const listCourseSubCategories = async (
       p_sub_category_id: q.subCategoryId ?? null,
       p_is_active: q.isActive ?? null,
       p_filter_is_primary: q.isPrimary ?? null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      // Tri-state: 'all' (super-admin default) → no equality filter; true/false → equality;
+      // undefined → default to false (old behavior preserved).
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? false),
       p_search: q.searchTerm ?? null,
       p_sort_table: 'csc',
       p_sort_column: q.sortColumn,

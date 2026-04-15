@@ -185,7 +185,9 @@ export const listUsers = async (q: ListUsersQuery): Promise<ListUsersResult> => 
     'udf_get_users',
     {
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      // Tri-state: 'all' (super-admin default) → no equality filter; true/false → equality;
+      // undefined → callTableFunction strips null and the UDF default-hides.
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
       p_filter_is_email_verified: q.isEmailVerified ?? null,
       p_filter_is_mobile_verified: q.isMobileVerified ?? null,
       p_filter_role_id: q.roleId ?? null,

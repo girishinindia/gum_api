@@ -21,6 +21,7 @@ import {
   bigintIdSchema,
   codeSchema,
   emailSchema,
+  isDeletedFilterSchema,
   mobileSchema,
   nameSchema,
   paginationSchema,
@@ -65,7 +66,7 @@ const sortDirectionSchema = z
 export const listUsersQuerySchema = paginationSchema.extend({
   // user filters
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   isEmailVerified: queryBooleanSchema.optional(),
   isMobileVerified: queryBooleanSchema.optional(),
 

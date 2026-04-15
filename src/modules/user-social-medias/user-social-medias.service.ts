@@ -176,7 +176,9 @@ export const listUserSocialMedias = async (
       p_filter_is_primary: q.isPrimary ?? null,
       p_filter_is_verified: q.isVerified ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
+      // Tri-state: 'all' (super-admin default) → no equality filter; true/false → equality;
+      // undefined → callTableFunction strips null and the UDF default-hides.
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? null),
       p_filter_user_role: q.userRole ?? null,
       p_filter_user_is_active: q.userIsActive ?? null,
       p_search_term: q.searchTerm ?? null,

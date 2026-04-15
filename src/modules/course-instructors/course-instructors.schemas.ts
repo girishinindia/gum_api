@@ -6,6 +6,7 @@
 import { z } from 'zod';
 
 import {
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -42,7 +43,7 @@ export const listCourseInstructorsQuerySchema = paginationSchema.extend({
   instructorRole: z.enum(INSTRUCTOR_ROLES).optional(),
   isVisible: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: z.enum(COURSE_INSTRUCTOR_SORT_COLUMNS).default('display_order'),
   sortDirection: z

@@ -10,6 +10,7 @@ import { z } from 'zod';
 import {
   bigintIdSchema,
   codeSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -53,7 +54,7 @@ export const listRolePermissionsQuerySchema = paginationSchema.extend({
   action: lowercaseIdentifier.optional(),
   scope: lowercaseIdentifier.optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   searchTerm: searchTermSchema,
   sortColumn: sortColumnSchema,
   sortDirection: z

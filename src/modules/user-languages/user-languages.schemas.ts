@@ -25,6 +25,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -95,7 +96,7 @@ export const listUserLanguagesQuerySchema = paginationSchema.extend({
   canWrite: queryBooleanSchema.optional(),
   canSpeak: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
 
   // User filters
   userRole: z.string().trim().min(2).max(64).optional(),

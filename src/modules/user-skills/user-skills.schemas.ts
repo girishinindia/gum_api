@@ -25,6 +25,7 @@ import { z } from 'zod';
 
 import {
   bigintIdSchema,
+  isDeletedFilterSchema,
   paginationSchema,
   queryBooleanSchema,
   searchTermSchema
@@ -112,7 +113,7 @@ export const listUserSkillsQuerySchema = paginationSchema.extend({
   skillCategory: skillCategorySchema.optional(),
   isPrimary: queryBooleanSchema.optional(),
   isActive: queryBooleanSchema.optional(),
-  isDeleted: queryBooleanSchema.optional(),
+  isDeleted: isDeletedFilterSchema.optional(),
   minExperience: yearsQuerySchema.optional(),
 
   // User filters

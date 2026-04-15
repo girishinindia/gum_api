@@ -111,7 +111,9 @@ export const listCourseSubjects = async (
       p_filter_course_id: q.courseId ?? null,
       p_filter_module_id: q.moduleId ?? null,
       p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? false,
+      // Tri-state: 'all' (super-admin default) → no equality filter; true/false → equality;
+      // undefined → default to false (old behavior preserved).
+      p_filter_is_deleted: q.isDeleted === 'all' ? null : (q.isDeleted ?? false),
       p_search: q.searchTerm ?? null,
       p_sort_table: 'cs',
       p_sort_column: q.sortColumn,
