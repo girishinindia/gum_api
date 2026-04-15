@@ -408,6 +408,10 @@ export const listSubTopicTranslations = async (
       p_sub_topic_id: subTopicId,
       p_language_id: q.languageId ?? null,
       p_is_active: q.isActive ?? null,
+      // Sort columns belong to the translation row (e.g. created_at → v.sub_topic_trans_created_at).
+      // Without p_sort_table='translation' the UDF picks the parent sub_topic branch and ORDER BY
+      // references v.sub_topic_created_at — which doesn't exist on uv_sub_topic_translations.
+      p_sort_table: 'translation',
       p_sort_column: q.sortColumn,
       p_sort_direction: q.sortDirection,
       p_filter_is_active: q.isActive ?? null,
@@ -431,7 +435,10 @@ export const getSubTopicTranslationById = async (
 ): Promise<SubTopicTranslationDto | null> => {
   const { rows } = await db.callTableFunction<SubTopicTranslationRow>(
     'udf_get_sub_topics',
-    { p_id: id }
+    // p_sort_table='translation' so the UDF's ORDER BY references columns that exist on
+    // uv_sub_topic_translations (the underlying view); without it, the default 'sub_topic'
+    // branch references v.sub_topic_created_at which doesn't exist on that view.
+    { p_id: id, p_sort_table: 'translation' }
   );
   const row = rows[0];
   return row ? mapSubTopicTranslation(row) : null;
