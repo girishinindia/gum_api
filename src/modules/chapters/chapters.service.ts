@@ -219,38 +219,78 @@ export interface ListChaptersResult {
   meta: PaginationMeta;
 }
 
+// Whitelisted sort-column → uv_chapters column. Mirrors CHAPTER_SORT_COLUMNS in
+// chapters.schemas.ts; values come from a zod enum so this map is exhaustive.
+const CHAPTER_LIST_SORT_MAP: Record<string, string> = {
+  id: 'chapter_id',
+  slug: 'chapter_slug',
+  display_order: 'chapter_display_order',
+  difficulty_level: 'chapter_difficulty_level',
+  is_active: 'chapter_is_active',
+  is_deleted: 'chapter_is_deleted',
+  created_at: 'chapter_created_at',
+  updated_at: 'chapter_updated_at'
+};
+
+/**
+ * List chapters at the parent level — queries `uv_chapters` directly so
+ * chapters without any translation row are still visible. The translation
+ * sub-resource (`/chapters/:id/translations`) keeps using `udf_get_chapters`
+ * which INNER JOINs translations.
+ */
 export const listChapters = async (q: ListChaptersQuery): Promise<ListChaptersResult> => {
-  const { rows, totalCount } = await db.callTableFunction<ChapterRow>(
-    'udf_get_chapters',
-    {
-      p_id: null,
-      p_chapter_id: null,
-      p_subject_id: q.subjectId ?? null,
-      p_language_id: null,
-      p_is_active: q.isActive ?? null,
-      p_sort_table: 'chapter',
-      p_sort_column: q.sortColumn,
-      p_sort_direction: q.sortDirection,
-      p_filter_difficulty_level: q.difficultyLevel ?? null,
-      p_filter_is_active: q.isActive ?? null,
-      p_filter_is_deleted: q.isDeleted ?? null,
-      p_search_term: q.searchTerm ?? null,
-      p_page_index: q.pageIndex,
-      p_page_size: q.pageSize
-    }
-  );
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  const next = (v: unknown) => { params.push(v); return `$${i++}`; };
+
+  if (q.subjectId != null) conditions.push(`chapter_subject_id = ${next(q.subjectId)}`);
+  if (q.isActive != null) conditions.push(`chapter_is_active = ${next(q.isActive)}`);
+  if (q.difficultyLevel) conditions.push(`chapter_difficulty_level = ${next(q.difficultyLevel)}`);
+  if (q.isDeleted == null) {
+    conditions.push(`chapter_is_deleted = FALSE`);
+  } else {
+    conditions.push(`chapter_is_deleted = ${next(q.isDeleted)}`);
+  }
+  if (q.searchTerm && q.searchTerm.trim() !== '') {
+    const term = `%${q.searchTerm.trim()}%`;
+    conditions.push(`(chapter_slug::TEXT ILIKE ${next(term)} OR subject_code::TEXT ILIKE $${i - 1} OR subject_slug::TEXT ILIKE $${i - 1})`);
+  }
+
+  const sortCol = CHAPTER_LIST_SORT_MAP[q.sortColumn] ?? 'chapter_display_order';
+  const sortDir = q.sortDirection === 'DESC' ? 'DESC' : 'ASC';
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = q.pageSize;
+  const offset = (Math.max(q.pageIndex, 1) - 1) * q.pageSize;
+
+  const sql = `
+    SELECT *, COUNT(*) OVER()::INT AS total_count
+    FROM uv_chapters
+    ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${next(limit)} OFFSET ${next(offset)}
+  `;
+
+  const result = await db.query<ChapterRow & { total_count?: number | string }>(sql, params);
+  const totalCount = result.rows[0]?.total_count != null ? Number(result.rows[0].total_count) : 0;
 
   return {
-    rows: rows.map(mapChapter),
+    rows: result.rows.map(mapChapter),
     meta: buildPaginationMeta(q.pageIndex, q.pageSize, totalCount)
   };
 };
 
+/**
+ * Fetch a chapter by id from `uv_chapters` directly. Bypasses
+ * `udf_get_chapters` which INNER JOINs translations and would return
+ * null for a freshly-created chapter that has no translation row yet.
+ */
 export const getChapterById = async (id: number): Promise<ChapterDto | null> => {
-  const { rows } = await db.callTableFunction<ChapterRow>('udf_get_chapters', {
-    p_chapter_id: id
-  });
-  const row = rows[0];
+  const result = await db.query<ChapterRow>(
+    'SELECT * FROM uv_chapters WHERE chapter_id = $1 LIMIT 1',
+    [id]
+  );
+  const row = result.rows[0];
   return row ? mapChapter(row) : null;
 };
 

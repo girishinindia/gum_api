@@ -641,3 +641,134 @@ export const patchTopicTranslationFiles = multiSlotUpload({
 export const patchSubTopicTranslationFiles = multiSlotUpload({
   slots: phase8TranslationSlots('Sub-topic')
 });
+
+// ─── Phase 09 — course management image slots ──────────────────
+//
+// Phase-09 mixes text-URL columns (videos, brochures) with multipart
+// image slots (thumbnails, banners, icons, og/twitter). The middlewares
+// below populate `req.slotFiles` ONLY for the image columns; videos and
+// PDFs continue to flow through as plain text URL fields in the JSON
+// or form-data body.
+
+const PHASE9_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+const PHASE9_IMAGE_MAX_BYTES = 200 * 1024; // 200 KB raw; sharp re-encodes to ≤100 KB
+
+/** `POST/PATCH /api/v1/courses[/:id]` — single optional `trailerThumbnail` slot. */
+export const patchCourseFiles = multiSlotUpload({
+  slots: {
+    trailerThumbnail: {
+      field: ['trailerThumbnail', 'trailerThumbnailImage', 'trailer_thumbnail'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course trailer thumbnail'
+    }
+  }
+});
+
+/** `POST/PATCH /api/v1/courses/:id/translations[/:tid]` — 7 image slots. */
+export const patchCourseTranslationFiles = multiSlotUpload({
+  slots: {
+    webThumbnail: {
+      field: ['webThumbnail', 'web_thumbnail'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation web thumbnail'
+    },
+    webBanner: {
+      field: ['webBanner', 'web_banner'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation web banner'
+    },
+    appThumbnail: {
+      field: ['appThumbnail', 'app_thumbnail'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation app thumbnail'
+    },
+    appBanner: {
+      field: ['appBanner', 'app_banner'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation app banner'
+    },
+    videoThumbnail: {
+      field: ['videoThumbnail', 'video_thumbnail'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation video thumbnail'
+    },
+    ogImage: {
+      field: ['ogImage', 'og_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation OG image'
+    },
+    twitterImage: {
+      field: ['twitterImage', 'twitter_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course translation Twitter image'
+    }
+  }
+});
+
+/** `POST/PATCH /api/v1/course-modules/:id/translations[/:tid]` — 4 image slots. */
+export const patchCourseModuleTranslationFiles = multiSlotUpload({
+  slots: {
+    icon: {
+      field: ['icon', 'iconImage'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course module translation icon'
+    },
+    image: {
+      field: ['image', 'heroImage'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course module translation image'
+    },
+    ogImage: {
+      field: ['ogImage', 'og_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course module translation OG image'
+    },
+    twitterImage: {
+      field: ['twitterImage', 'twitter_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Course module translation Twitter image'
+    }
+  }
+});
+
+/** `POST/PATCH /api/v1/bundles/:id/translations[/:tid]` — 4 image slots. */
+export const patchBundleTranslationFiles = multiSlotUpload({
+  slots: {
+    thumbnail: {
+      field: ['thumbnail', 'thumbnailUrl', 'thumbnail_url'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Bundle translation thumbnail'
+    },
+    banner: {
+      field: ['banner', 'bannerUrl', 'banner_url'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Bundle translation banner'
+    },
+    ogImage: {
+      field: ['ogImage', 'og_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Bundle translation OG image'
+    },
+    twitterImage: {
+      field: ['twitterImage', 'twitter_image'] as const,
+      maxBytes: PHASE9_IMAGE_MAX_BYTES,
+      mimeAllowlist: PHASE9_IMAGE_MIMES,
+      label: 'Bundle translation Twitter image'
+    }
+  }
+});

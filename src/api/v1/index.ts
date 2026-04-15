@@ -50,8 +50,19 @@ import chaptersRoutes from './chapters/chapters.routes';
 import topicsRoutes from './topics/topics.routes';
 import subTopicsRoutes from './sub-topics/sub-topics.routes';
 
+// Phase 09 — Course management
+import coursesRoutes from './courses/courses.routes';
+import courseSubCategoriesRoutes from './course-sub-categories/course-sub-categories.routes';
+import courseModulesRoutes from './course-modules/course-modules.routes';
+import courseSubjectsRoutes from './course-subjects/course-subjects.routes';
+import courseChaptersRoutes from './course-chapters/course-chapters.routes';
+import courseInstructorsRoutes from './course-instructors/course-instructors.routes';
+import courseModuleTopicsRoutes from './course-module-topics/course-module-topics.routes';
+import bundlesRoutes from './bundles/bundles.routes';
+import bundleCoursesRoutes from './bundle-courses/bundle-courses.routes';
+
 // ═══════════════════════════════════════════════════════════════
-// v1 router aggregator — Phase 00 / 01 / 02 / 03 / 04 / 05 / 06 / 07 / 08.
+// v1 router aggregator — Phase 00 / 01 / 02 / 03 / 04 / 05 / 06 / 07 / 08 / 09.
 // ═══════════════════════════════════════════════════════════════
 
 const v1Router = Router();
@@ -112,5 +123,16 @@ v1Router.use('/subjects', subjectsRoutes);
 v1Router.use('/chapters', chaptersRoutes);
 v1Router.use('/topics', topicsRoutes);
 v1Router.use('/sub-topics', subTopicsRoutes);
+
+// ── Phase 09 — Course management ─────────────────────────────
+v1Router.use('/courses', coursesRoutes);
+v1Router.use('/course-sub-categories', courseSubCategoriesRoutes);
+v1Router.use('/course-modules', courseModulesRoutes);
+v1Router.use('/course-subjects', courseSubjectsRoutes);
+v1Router.use('/course-chapters', courseChaptersRoutes);
+v1Router.use('/course-instructors', courseInstructorsRoutes);
+v1Router.use('/course-module-topics', courseModuleTopicsRoutes);
+v1Router.use('/bundles', bundlesRoutes);
+v1Router.use('/bundle-courses', bundleCoursesRoutes);
 
 export default v1Router;

@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Grow Up More — Phase 1: Auth & RBAC",
+    "name": "Grow Up More \u2014 Phase 1: Auth & RBAC",
     "description": "Phase 1 endpoints: Health, Auth (register/login/verify/password), Countries, Roles, Permissions, Role-Permissions, User-Permissions, Users.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -259,7 +259,7 @@
           }
         },
         {
-          "name": "Register — Verify Email",
+          "name": "Register \u2014 Verify Email",
           "request": {
             "method": "POST",
             "header": [
@@ -291,7 +291,7 @@
           }
         },
         {
-          "name": "Register — Verify Mobile",
+          "name": "Register \u2014 Verify Mobile",
           "request": {
             "method": "POST",
             "header": [
@@ -323,7 +323,7 @@
           }
         },
         {
-          "name": "Register — Resend Email OTP",
+          "name": "Register \u2014 Resend Email OTP",
           "request": {
             "method": "POST",
             "header": [
@@ -355,7 +355,7 @@
           }
         },
         {
-          "name": "Register — Resend Mobile OTP",
+          "name": "Register \u2014 Resend Mobile OTP",
           "request": {
             "method": "POST",
             "header": [
@@ -418,7 +418,7 @@
           }
         },
         {
-          "name": "Forgot Password — Verify",
+          "name": "Forgot Password \u2014 Verify",
           "request": {
             "method": "POST",
             "header": [
@@ -477,7 +477,7 @@
           }
         },
         {
-          "name": "Reset Password — Verify",
+          "name": "Reset Password \u2014 Verify",
           "request": {
             "method": "POST",
             "header": [
@@ -546,7 +546,7 @@
           }
         },
         {
-          "name": "Verify Email — Confirm",
+          "name": "Verify Email \u2014 Confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -588,7 +588,7 @@
           }
         },
         {
-          "name": "Verify Email — Resend",
+          "name": "Verify Email \u2014 Resend",
           "request": {
             "method": "POST",
             "header": [],
@@ -643,7 +643,7 @@
           }
         },
         {
-          "name": "Verify Mobile — Confirm",
+          "name": "Verify Mobile \u2014 Confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -685,7 +685,7 @@
           }
         },
         {
-          "name": "Verify Mobile — Resend",
+          "name": "Verify Mobile \u2014 Resend",
           "request": {
             "method": "POST",
             "header": [],
@@ -754,7 +754,7 @@
           }
         },
         {
-          "name": "Change Email — Confirm",
+          "name": "Change Email \u2014 Confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -837,7 +837,7 @@
           }
         },
         {
-          "name": "Change Mobile — Confirm",
+          "name": "Change Mobile \u2014 Confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -982,278 +982,341 @@
           }
         },
         {
-          "name": "Create Country — JSON",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/countries",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "countries"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{accessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Test Country\",\n  \"iso2\": \"TC\",\n  \"iso3\": \"TST\",\n  \"phoneCode\": \"+99\",\n  \"currency\": \"TST\",\n  \"currencyName\": \"Testium\",\n  \"currencySymbol\": \"₮\",\n  \"isActive\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "event": [
+          "name": "POST / (create)",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const json = pm.response.json();",
-                  "if (json.data && json.data.id) {",
-                  "  pm.environment.set('countryId', json.data.id);",
-                  "}"
+              "name": "1) JSON \u2014 text only (no image)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
                 ],
-                "type": "text/javascript"
+                "url": {
+                  "raw": "{{baseUrl}}/countries",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Test Country\",\n  \"iso2\": \"TC\",\n  \"iso3\": \"TST\",\n  \"phoneCode\": \"+99\",\n  \"currency\": \"TST\",\n  \"currencyName\": \"Testium\",\n  \"currencySymbol\": \"\u20ae\",\n  \"isActive\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "if (json.data && json.data.id) {",
+                      "  pm.environment.set('countryId', json.data.id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "2) multipart \u2014 text + image(s)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "multipart/form-data",
+                    "disabled": true,
+                    "description": "Auto-set by Postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/countries",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "name",
+                      "value": "Flag Country",
+                      "type": "text"
+                    },
+                    {
+                      "key": "iso2",
+                      "value": "FC",
+                      "type": "text"
+                    },
+                    {
+                      "key": "iso3",
+                      "value": "FLC",
+                      "type": "text"
+                    },
+                    {
+                      "key": "phoneCode",
+                      "value": "+88",
+                      "type": "text"
+                    },
+                    {
+                      "key": "isActive",
+                      "value": "true",
+                      "type": "text"
+                    },
+                    {
+                      "key": "flag",
+                      "type": "file",
+                      "src": "",
+                      "description": "90\u00d790 PNG/JPEG/WebP \u2264 25KB"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "if (json.data && json.data.id) {",
+                      "  pm.environment.set('countryId', json.data.id);",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "PATCH /:id (update)",
+          "item": [
+            {
+              "name": "3) JSON \u2014 text only (PATCH)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/countries/{{countryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries",
+                    "{{countryId}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Updated Country\",\n  \"isActive\": true\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "4) multipart \u2014 text + image(s) (PATCH)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "multipart/form-data",
+                    "disabled": true,
+                    "description": "Auto-set by Postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/countries/{{countryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries",
+                    "{{countryId}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "name",
+                      "value": "Updated Flag Country",
+                      "type": "text"
+                    },
+                    {
+                      "key": "flag",
+                      "type": "file",
+                      "src": "",
+                      "description": "90\u00d790 PNG/JPEG/WebP \u2264 25KB"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "5) multipart \u2014 image(s) only (PATCH)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "multipart/form-data",
+                    "disabled": true,
+                    "description": "Auto-set by Postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/countries/{{countryId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries",
+                    "{{countryId}}"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "flag",
+                      "type": "file",
+                      "src": "",
+                      "description": "90\u00d790 PNG/JPEG/WebP \u2264 25KB"
+                    }
+                  ]
+                }
               }
             }
           ]
         },
         {
-          "name": "Create Country — form-data + flag",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "multipart/form-data",
-                "disabled": true,
-                "description": "Auto-set by Postman"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/countries",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "countries"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{accessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "name",
-                  "value": "Flag Country",
-                  "type": "text"
-                },
-                {
-                  "key": "iso2",
-                  "value": "FC",
-                  "type": "text"
-                },
-                {
-                  "key": "iso3",
-                  "value": "FLC",
-                  "type": "text"
-                },
-                {
-                  "key": "phoneCode",
-                  "value": "+88",
-                  "type": "text"
-                },
-                {
-                  "key": "isActive",
-                  "value": "true",
-                  "type": "text"
-                },
-                {
-                  "key": "flag",
-                  "type": "file",
-                  "src": "",
-                  "description": "90×90 PNG/JPEG/WebP ≤ 25KB"
-                }
-              ]
-            }
-          },
-          "event": [
+          "name": "PATCH /:id/flag (upload flag-only)",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const json = pm.response.json();",
-                  "if (json.data && json.data.id) {",
-                  "  pm.environment.set('countryId', json.data.id);",
-                  "}"
+              "name": "1) multipart \u2014 image(s) only",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "multipart/form-data",
+                    "disabled": true,
+                    "description": "Auto-set by Postman"
+                  }
                 ],
-                "type": "text/javascript"
-              }
+                "url": {
+                  "raw": "{{baseUrl}}/countries/{{countryId}}/flag",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries",
+                    "{{countryId}}",
+                    "flag"
+                  ]
+                },
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{accessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "flag",
+                      "type": "file",
+                      "src": "",
+                      "description": "90\u00d790 PNG/JPEG/WebP \u2264 25KB"
+                    }
+                  ]
+                }
+              },
+              "event": []
             }
           ]
-        },
-        {
-          "name": "Update Country — JSON",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/countries/{{countryId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "countries",
-                "{{countryId}}"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{accessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Updated Country\",\n  \"isActive\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
-        },
-        {
-          "name": "Update Country — form-data + flag",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "multipart/form-data",
-                "disabled": true,
-                "description": "Auto-set by Postman"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/countries/{{countryId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "countries",
-                "{{countryId}}"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{accessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "name",
-                  "value": "Updated Flag Country",
-                  "type": "text"
-                },
-                {
-                  "key": "flag",
-                  "type": "file",
-                  "src": "",
-                  "description": "90×90 PNG/JPEG/WebP ≤ 25KB"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Upload Country Flag",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "multipart/form-data",
-                "disabled": true,
-                "description": "Auto-set by Postman"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/countries/{{countryId}}/flag",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "countries",
-                "{{countryId}}",
-                "flag"
-              ]
-            },
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{accessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "flag",
-                  "type": "file",
-                  "src": "",
-                  "description": "90×90 PNG/JPEG/WebP ≤ 25KB"
-                }
-              ]
-            }
-          }
         },
         {
           "name": "Delete Country",

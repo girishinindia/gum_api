@@ -295,12 +295,15 @@ This route accepts **two content types** and both hit the same handler:
 * **`application/json`** — all fields as JSON. The `flagImage` response field is set only by the file upload pipeline — it cannot be passed as a JSON body field.
 * **`multipart/form-data`** — text fields and an optional flag file. The optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`). When the flag part is present, the server runs the flag pipeline before returning the created row: decode via sharp, enforce exact 90 × 90 dimensions, re-encode to WebP (quality 90), then PUT the WebP under the deterministic key **`countries/flags/<iso3>.webp`**. The CDN URL is returned in the `flagImage` field of the 201 response.
 
-**Postman examples**
+**5-Variant Body Matrix**
 
-| # | Example name | Content-Type | Body |
+| # | Variant | Content-Type | Body |
 |---|---|---|---|
-| 1 | Create — JSON (no flag) | `application/json` | `{ "name": "Canada", "iso2": "CA", "iso3": "CAN", "phoneCode": "+1", "currency": "CAD", "currencySymbol": "$" }` |
-| 2 | Create — form-data + flag | `multipart/form-data` | `name` = `Canada`, `iso2` = `CA`, `iso3` = `CAN`, `phoneCode` = `+1`, `currency` = `CAD`, `currencySymbol` = `$`, `flag` = `canada-flag-90x90.png` (file) |
+| 1 | POST — text only (no flag) | `application/json` | `{ "name": "Canada", "iso2": "CA", "iso3": "CAN", "phoneCode": "+1", "currency": "CAD", "currencySymbol": "$" }` |
+| 2 | POST — text + flag | `multipart/form-data` | `name` = `Canada` (text), `iso2` = `CA` (text), `iso3` = `CAN` (text), `phoneCode` = `+1` (text), `currency` = `CAD` (text), `currencySymbol` = `$` (text), `flag` = `canada-flag-90x90.png` (file) |
+| 3 | PATCH — text only (no flag) | `application/json` | `{ "phoneCode": "+1-555" }` |
+| 4 | PATCH — text + flag | `multipart/form-data` | `phoneCode` = `+1-555` (text), `flag` = `canada-flag-updated-90x90.png` (file) |
+| 5 | PATCH — flag only (no text) | `multipart/form-data` | `flag` = `canada-flag-v3-90x90.png` (file) |
 
 **Required fields**: `name`, `iso2`, `iso3`.
 
@@ -497,13 +500,9 @@ This route accepts **two content types** and both hit the same handler:
 
 For `multipart/form-data`, the optional flag file goes under the form-data field name **`flag`** (aliases: `flagImage`, `file`).
 
-**Postman examples**
+**5-Variant Body Matrix**
 
-| # | Example name | Content-Type | Body |
-|---|---|---|---|
-| 1 | Update — JSON (no flag) | `application/json` | `{ "nationality": "Canadian", "nationalLanguage": "English" }` |
-| 2 | Update — form-data + text + flag | `multipart/form-data` | `nationality` = `Canadian`, `flag` = `canada-flag-v2.png` (file) |
-| 3 | Update — form-data flag only | `multipart/form-data` | `flag` = `new-flag-90x90.png` (file) |
+(See above in §5.3 POST — the 5 variants apply equally to PATCH, with the same field names and contract.)
 
 ### Hard limits on the flag file
 
