@@ -1,8 +1,11 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
+import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err } from '../../utils/response';
 import { getClientIp } from '../../utils/helpers';
+
+const ALLOWED_FIELDS = ['name', 'display_name', 'description', 'level'];
 
 export async function list(_req: Request, res: Response) {
   const { data, error: e } = await supabase.from('roles').select('*').order('level', { ascending: false });
@@ -18,23 +21,52 @@ export async function getById(req: Request, res: Response) {
 }
 
 export async function create(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('roles').insert(req.body).select().single();
+  const body: any = {};
+  for (const k of [...ALLOWED_FIELDS, 'is_active']) { if (req.body[k] !== undefined) body[k] = req.body[k]; }
+
+  // Creating inactive role → need :activate
+  if (body.is_active === false && !hasPermission(req, 'role', 'activate')) {
+    return err(res, 'Permission denied: role:activate required', 403);
+  }
+
+  const { data, error: e } = await supabase.from('roles').insert(body).select().single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'role_created', targetType: 'role', targetId: data.id, targetName: data.name, ip: getClientIp(req) });
   return ok(res, data, 'Role created', 201);
 }
 
+// PATCH /roles/:id — regular fields + optional is_active (requires :activate)
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('roles').select('*').eq('id', id).single();
   if (!old) return err(res, 'Role not found', 404);
-  if (old.is_system) return err(res, 'Cannot modify system roles', 403);
+  if (old.is_system && (req.body.name !== undefined || req.body.level !== undefined)) {
+    return err(res, 'Cannot change name or level of system roles', 403);
+  }
 
-  const { data, error: e } = await supabase.from('roles').update(req.body).eq('id', id).select().single();
+  const updates: any = {};
+  for (const k of ALLOWED_FIELDS) { if (req.body[k] !== undefined) updates[k] = req.body[k]; }
+
+  // is_active change → need :activate permission
+  if (req.body.is_active !== undefined && req.body.is_active !== old.is_active) {
+    if (old.is_system && req.body.is_active === false) {
+      return err(res, 'Cannot deactivate system roles', 403);
+    }
+    if (!hasPermission(req, 'role', 'activate')) {
+      return err(res, 'Permission denied: role:activate required', 403);
+    }
+    updates.is_active = req.body.is_active;
+  }
+
+  if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+
+  const { data, error: e } = await supabase.from('roles').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   const changes: any = {};
-  for (const k of Object.keys(req.body)) { if ((old as any)[k] !== req.body[k]) changes[k] = { old: (old as any)[k], new: req.body[k] }; }
+  for (const k of Object.keys(updates)) {
+    if ((old as any)[k] !== updates[k]) changes[k] = { old: (old as any)[k], new: updates[k] };
+  }
   logAdmin({ actorId: req.user!.id, action: 'role_updated', targetType: 'role', targetId: id, targetName: data.name, changes, ip: getClientIp(req) });
   return ok(res, data, 'Role updated');
 }
@@ -51,20 +83,7 @@ export async function remove(req: Request, res: Response) {
   return ok(res, null, 'Role deleted');
 }
 
-export async function toggleActive(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('roles').select('name, is_active, is_system').eq('id', id).single();
-  if (!old) return err(res, 'Role not found', 404);
-  if (old.is_system) return err(res, 'Cannot deactivate system roles', 403);
-
-  const newVal = !old.is_active;
-  await supabase.from('roles').update({ is_active: newVal }).eq('id', id);
-
-  logAdmin({ actorId: req.user!.id, action: 'role_updated', targetType: 'role', targetId: id, targetName: old.name, changes: { is_active: { old: old.is_active, new: newVal } }, ip: getClientIp(req) });
-  return ok(res, { is_active: newVal }, `Role ${newVal ? 'activated' : 'deactivated'}`);
-}
-
-// ── Role-Permission Management (Dynamic assignment by super_admin) ──
+// Role-Permission Management
 
 export async function listPermissions(req: Request, res: Response) {
   const roleId = parseInt(req.params.id);
@@ -74,8 +93,7 @@ export async function listPermissions(req: Request, res: Response) {
   const { data, error: e } = await supabase
     .from('role_permissions')
     .select('id, permission_id, conditions, created_at, permissions(id, resource, action, display_name, is_active)')
-    .eq('role_id', roleId)
-    .order('created_at');
+    .eq('role_id', roleId).order('created_at');
   if (e) return err(res, e.message, 500);
   return ok(res, { role: role.name, permissions: data });
 }
@@ -86,30 +104,26 @@ export async function assignPermission(req: Request, res: Response) {
 
   const { data: role } = await supabase.from('roles').select('name').eq('id', roleId).single();
   if (!role) return err(res, 'Role not found', 404);
-
   const { data: perm } = await supabase.from('permissions').select('resource, action, display_name').eq('id', permission_id).single();
   if (!perm) return err(res, 'Permission not found', 404);
 
   const { error: e } = await supabase.from('role_permissions').insert({ role_id: roleId, permission_id, conditions, granted_by: req.user!.id });
-  if (e) { if (e.code === '23505') return err(res, 'Permission already assigned to this role', 409); return err(res, e.message, 500); }
+  if (e) { if (e.code === '23505') return err(res, 'Permission already assigned', 409); return err(res, e.message, 500); }
 
-  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, changes: { permission: { old: null, new: `${perm.resource}:${perm.action}` } }, ip: getClientIp(req), metadata: { permission_id, conditions } });
+  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, changes: { permission: { old: null, new: `${perm.resource}:${perm.action}` } }, ip: getClientIp(req) });
   return ok(res, null, `${perm.display_name} assigned to ${role.name}`, 201);
 }
 
 export async function assignBulkPermissions(req: Request, res: Response) {
   const roleId = parseInt(req.params.id);
   const { permission_ids } = req.body;
-
-  if (!Array.isArray(permission_ids) || permission_ids.length === 0) {
-    return err(res, 'permission_ids must be a non-empty array', 400);
-  }
+  if (!Array.isArray(permission_ids) || permission_ids.length === 0) return err(res, 'permission_ids must be a non-empty array', 400);
 
   const { data: role } = await supabase.from('roles').select('name').eq('id', roleId).single();
   if (!role) return err(res, 'Role not found', 404);
 
   const rows = permission_ids.map((pid: number) => ({ role_id: roleId, permission_id: pid, granted_by: req.user!.id }));
-  const { error: e, count } = await supabase.from('role_permissions').upsert(rows, { onConflict: 'role_id,permission_id', ignoreDuplicates: true });
+  const { error: e } = await supabase.from('role_permissions').upsert(rows, { onConflict: 'role_id,permission_id', ignoreDuplicates: true });
   if (e) return err(res, e.message, 500);
 
   logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { permission_ids, bulk: true } });
@@ -127,19 +141,17 @@ export async function revokePermission(req: Request, res: Response) {
   const { data: perm } = await supabase.from('permissions').select('resource, action').eq('id', permissionId).single();
 
   await supabase.from('role_permissions').delete().eq('id', rp.id);
-
   logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role?.name, changes: { permission: { old: perm ? `${perm.resource}:${perm.action}` : null, new: null } }, ip: getClientIp(req) });
-  return ok(res, null, 'Permission revoked from role');
+  return ok(res, null, 'Permission revoked');
 }
 
 export async function revokeAllPermissions(req: Request, res: Response) {
   const roleId = parseInt(req.params.id);
-  const { data: role } = await supabase.from('roles').select('name, is_system').eq('id', roleId).single();
+  const { data: role } = await supabase.from('roles').select('name').eq('id', roleId).single();
   if (!role) return err(res, 'Role not found', 404);
   if (role.name === 'super_admin') return err(res, 'Cannot revoke super_admin permissions', 403);
 
   const { count } = await supabase.from('role_permissions').delete().eq('role_id', roleId);
-
   logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { revoked_all: true, count } });
   return ok(res, { revoked: count }, `All permissions revoked from ${role.name}`);
 }

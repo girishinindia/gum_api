@@ -12,9 +12,8 @@ r.get('/:id',  ctrl.getById);
 
 // Protected
 r.use(authMiddleware, attachPermissions());
-r.post('/',    requirePermission('country', 'create'), upload.single('flag_image'), ctrl.create);
-r.patch('/:id', requirePermission('country', 'update'), upload.single('flag_image'), ctrl.update);
+r.post('/',      requirePermission('country', 'create'), upload.single('flag_image'), ctrl.create);
+r.patch('/:id',  requirePermission('country', 'update'), upload.single('flag_image'), ctrl.update);
 r.delete('/:id', requirePermission('country', 'delete'), ctrl.remove);
-r.patch('/:id/toggle-active', requirePermission('country', 'activate'), ctrl.toggleActive);
 
 export default r;

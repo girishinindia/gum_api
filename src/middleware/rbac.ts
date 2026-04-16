@@ -19,11 +19,9 @@ async function loadPermissions(userId: number) {
 
   let permissions: any[] = [];
   if (!isSuperAdmin) {
-    // Normal users: load assigned permissions only
     const { data: perms } = await supabase.rpc('get_user_permissions', { p_user_id: userId });
     permissions = perms || [];
   }
-  // Super admin: permissions array stays empty — isSuperAdmin flag bypasses all checks
 
   const result = { permissions, roleLevel, isSuperAdmin };
   await redis.set(ck, JSON.stringify(result), 'EX', config.redis.cacheTtl);
@@ -38,18 +36,19 @@ export const attachPermissions = () => async (req: Request, res: Response, next:
 
 export const requirePermission = (resource: string, action: string) => (req: Request, res: Response, next: NextFunction) => {
   if (!req.userPerms) return err(res, 'Permissions not loaded', 500);
-
-  // Super admin bypasses ALL permission checks
-  if (req.userPerms.isSuperAdmin) {
-    req.permConditions = null;
-    return next();
-  }
-
+  if (req.userPerms.isSuperAdmin) { req.permConditions = null; return next(); }
   const p = req.userPerms.permissions.find((p: any) => p.resource === resource && p.action === action);
   if (!p) return err(res, `Permission denied: ${resource}:${action}`, 403);
   req.permConditions = p.conditions || null;
   next();
 };
+
+// Controller-level permission check (for conditional checks inside PATCH handlers)
+export function hasPermission(req: Request, resource: string, action: string): boolean {
+  if (!req.userPerms) return false;
+  if (req.userPerms.isSuperAdmin) return true;
+  return req.userPerms.permissions.some((p: any) => p.resource === resource && p.action === action);
+}
 
 export const requireRole = (minLevel: number) => (req: Request, res: Response, next: NextFunction) => {
   if (!req.userPerms) return err(res, 'Permissions not loaded', 500);

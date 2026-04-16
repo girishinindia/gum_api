@@ -5,7 +5,9 @@ import * as ctrl from './permission.controller';
 
 const r = Router();
 r.use(authMiddleware, attachPermissions());
-r.get('/',        requirePermission('permission', 'read'), ctrl.list);
-r.get('/grouped', requirePermission('permission', 'read'), ctrl.listGrouped);
-r.patch('/:id/toggle-active', requirePermission('permission', 'activate'), ctrl.toggleActive);
+
+r.get('/',         requirePermission('permission', 'read'), ctrl.list);
+r.get('/grouped',  requirePermission('permission', 'read'), ctrl.listGrouped);
+r.patch('/:id',    requirePermission('permission', 'read'), ctrl.update);  // activate check inside controller
+
 export default r;

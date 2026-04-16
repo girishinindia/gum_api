@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { config } from '../../config';
-import { clearPermissionCache } from '../../middleware/rbac';
+import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logAuth, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
@@ -12,6 +12,7 @@ function extractBunnyPath(cdnUrl: string): string {
 }
 
 const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'preferences'];
+const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 
 export async function list(req: Request, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
@@ -37,20 +38,23 @@ export async function getMe(req: Request, res: Response) {
   return ok(res, data);
 }
 
-// PATCH /users/me — update own profile + optional avatar
+// PATCH /users/me — self-update (no status changes allowed via self)
 export async function updateMe(req: Request, res: Response) {
   req.params.id = String(req.user!.id);
+  // Strip status field from self-update
+  delete req.body.status;
   return update(req, res);
 }
 
-// PATCH /users/:id — update profile + optional avatar (old avatar auto-deleted)
+// PATCH /users/:id — update profile + optional avatar + optional status
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('users').select('*').eq('id', id).single();
   if (!old) return err(res, 'User not found', 404);
 
-  // Extract allowed text fields
   const updates: any = {};
+
+  // Regular fields (requires user:update)
   for (const k of ALLOWED_FIELDS) {
     const val = req.body[k];
     if (val !== undefined && val !== '') {
@@ -58,9 +62,15 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  // Handle avatar if uploaded
+  // Status change (requires user:activate)
+  if (req.body.status !== undefined) {
+    if (!VALID_STATUSES.includes(req.body.status)) return err(res, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
+    if (!hasPermission(req, 'user', 'activate')) return err(res, 'Permission denied: user:activate required to change status', 403);
+    updates.status = req.body.status;
+  }
+
+  // Avatar upload (requires user:update which route already enforced)
   if (req.file) {
-    // Delete old avatar from Bunny CDN
     if (old.avatar_url) {
       try { await deleteImage(extractBunnyPath(old.avatar_url)); } catch {}
     }
@@ -68,8 +78,8 @@ export async function update(req: Request, res: Response) {
     updates.avatar_url = await processAndUploadImage(req.file.buffer, path, { width: 300, height: 300, quality: 80 });
   }
 
-  // Handle explicit avatar removal: avatar_url = "null" or avatar_url = ""
-  if (!req.file && (req.body.avatar_url === 'null' || req.body.avatar_url === '')) {
+  // Explicit avatar removal via avatar_url=null
+  if (!req.file && (req.body.avatar_url === 'null' || req.body.avatar_url === null)) {
     if (old.avatar_url) {
       try { await deleteImage(extractBunnyPath(old.avatar_url)); } catch {}
     }
@@ -91,33 +101,27 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  logAdmin({ actorId: req.user!.id, action: 'user_updated', targetType: 'user', targetId: id, targetName: data.email, changes, ip: getClientIp(req) });
+  // Determine primary action for admin log
+  let action = 'user_updated';
+  if (updates.status === 'suspended' && old.status !== 'suspended') action = 'user_suspended';
+  else if (updates.status === 'active' && old.status === 'suspended') action = 'user_reactivated';
+
+  logAdmin({ actorId: req.user!.id, action, targetType: 'user', targetId: id, targetName: data.email, changes, ip: getClientIp(req) });
+
+  // Auth log for status changes
+  if (updates.status === 'suspended' && old.status !== 'suspended') {
+    logAuth({ userId: id, action: 'account_suspended', ip: getClientIp(req) });
+  } else if (updates.status === 'active' && old.status === 'suspended') {
+    logAuth({ userId: id, action: 'account_reactivated', ip: getClientIp(req) });
+  }
+
   if (req.file) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'user', resourceId: id, resourceName: data.email, ip: getClientIp(req), metadata: { type: 'avatar', old_url: old.avatar_url } });
   if (updates.avatar_url === null && old.avatar_url) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'user', resourceId: id, resourceName: data.email, ip: getClientIp(req), metadata: { type: 'avatar' } });
 
   return ok(res, data, 'User updated');
 }
 
-// PATCH /users/:id/status
-export async function updateStatus(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
-  const { status } = req.body;
-  if (!['active', 'inactive', 'suspended'].includes(status)) return err(res, 'Invalid status', 400);
-
-  const { data: old } = await supabase.from('users').select('email, status').eq('id', id).single();
-  if (!old) return err(res, 'User not found', 404);
-
-  await supabase.from('users').update({ status }).eq('id', id);
-
-  const action = status === 'suspended' ? 'user_suspended' : status === 'active' ? 'user_reactivated' : 'user_updated';
-  logAdmin({ actorId: req.user!.id, action, targetType: 'user', targetId: id, targetName: old.email, changes: { status: { old: old.status, new: status } }, ip: getClientIp(req) });
-  if (status === 'suspended') logAuth({ userId: id, action: 'account_suspended', ip: getClientIp(req) });
-  if (status === 'active' && old.status === 'suspended') logAuth({ userId: id, action: 'account_reactivated', ip: getClientIp(req) });
-
-  return ok(res, { status }, `User ${action.replace('user_', '')}`);
-}
-
-// POST /users/:id/roles
+// Role Management
 export async function assignRole(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { role_id, scope = 'global', scope_id = null } = req.body;
@@ -135,7 +139,6 @@ export async function assignRole(req: Request, res: Response) {
   return ok(res, null, `Role '${role.display_name}' assigned`, 201);
 }
 
-// DELETE /users/:id/roles/:roleId
 export async function revokeRole(req: Request, res: Response) {
   const userId = parseInt(req.params.id);
   const roleId = parseInt(req.params.roleId);
@@ -152,15 +155,119 @@ export async function revokeRole(req: Request, res: Response) {
   return ok(res, null, 'Role revoked');
 }
 
-// GET /users/:id/sessions
 export async function getSessions(req: Request, res: Response) {
   const { data } = await supabase.from('v_user_sessions').select('*').eq('user_id', req.params.id);
   return ok(res, data || []);
 }
 
-// POST /users/:id/revoke-sessions
 export async function revokeAllSessions(req: Request, res: Response) {
   const { data: count } = await supabase.rpc('revoke_all_sessions', { p_user_id: parseInt(req.params.id), p_reason: 'admin' });
   logAdmin({ actorId: req.user!.id, action: 'all_sessions_revoked', targetType: 'user', targetId: parseInt(req.params.id), ip: getClientIp(req), metadata: { count } });
   return ok(res, { revoked: count }, `${count} sessions revoked`);
+}
+
+
+// POST /users — admin creates a user directly (no OTP). Requires user:create.
+// Accepts multipart/form-data with optional avatar file.
+export async function create(req: Request, res: Response) {
+  const bcrypt = require('bcrypt');
+  const { first_name, last_name, email, mobile, password, locale, role_id, status } = req.body;
+
+  if (!first_name || !last_name || !email || !mobile || !password) {
+    return err(res, 'Missing required fields: first_name, last_name, email, mobile, password', 400);
+  }
+  if (password.length < 8) return err(res, 'Password must be at least 8 characters', 400);
+
+  const cleanEmail = email.trim().toLowerCase();
+  let cleanMobile = mobile.trim().replace(/\s+/g, '');
+  if (/^\d{10}$/.test(cleanMobile)) cleanMobile = '+91' + cleanMobile;
+
+  // Check duplicates
+  const { data: existing } = await supabase.from('users').select('id, email, mobile').or(`email.eq.${cleanEmail},mobile.eq.${cleanMobile}`).limit(1);
+  if (existing && existing.length > 0) {
+    if (existing[0].email === cleanEmail) return err(res, 'Email already registered', 409);
+    if (existing[0].mobile === cleanMobile) return err(res, 'Mobile already registered', 409);
+  }
+
+  const passwordHash = await bcrypt.hash(password, config.bcrypt.saltRounds);
+
+  // Step 1: Create user (avatar gets added in step 2 since we need the user ID)
+  const { data: user, error: e } = await supabase.from('users').insert({
+    first_name: first_name.trim(),
+    last_name: last_name.trim(),
+    email: cleanEmail,
+    mobile: cleanMobile,
+    password_hash: passwordHash,
+    locale: locale || 'en',
+    status: status || 'active',
+  }).select().single();
+
+  if (e) return err(res, e.message, 500);
+
+  // Step 2: Process avatar if provided (non-blocking — user is already created)
+  let finalUser = user;
+  if (req.file) {
+    try {
+      const path = `avatars/user-${user.id}.webp`;
+      const avatarUrl = await processAndUploadImage(req.file.buffer, path, {
+        width: 300, height: 300, quality: 80,
+      });
+      const { data: withAvatar } = await supabase
+        .from('users')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', user.id)
+        .select()
+        .single();
+      if (withAvatar) finalUser = withAvatar;
+
+      logData({
+        actorId: req.user!.id,
+        action: 'media_uploaded',
+        resourceType: 'user',
+        resourceId: user.id,
+        resourceName: user.email,
+        ip: getClientIp(req),
+        metadata: { type: 'avatar', on_create: true },
+      });
+    } catch (uploadErr) {
+      // User created successfully, but avatar upload failed — log warning, don't fail request
+      console.error('Avatar upload failed for user', user.id, uploadErr);
+    }
+  }
+
+  // Step 3: Assign role
+  const assignedRoleId = role_id ? parseInt(role_id) : null;
+  if (assignedRoleId) {
+    await supabase.from('user_roles').insert({
+      user_id: user.id, role_id: assignedRoleId, scope: 'global', is_active: true, granted_by: req.user!.id,
+    });
+    await clearPermissionCache(user.id);
+  } else {
+    // Default: assign student role
+    const { data: studentRole } = await supabase.from('roles').select('id').eq('name', 'student').single();
+    if (studentRole) {
+      await supabase.from('user_roles').insert({
+        user_id: user.id, role_id: studentRole.id, scope: 'global', is_active: true, granted_by: req.user!.id,
+      });
+    }
+  }
+
+  logAdmin({
+    actorId: req.user!.id,
+    action: 'user_created',
+    targetType: 'user',
+    targetId: user.id,
+    targetName: user.email,
+    ip: getClientIp(req),
+    metadata: { role_id: assignedRoleId, has_avatar: !!req.file, by_admin: true },
+  });
+  logAuth({
+    userId: user.id,
+    action: 'register_completed',
+    identifier: cleanEmail,
+    ip: getClientIp(req),
+    metadata: { created_by_admin: req.user!.id },
+  });
+
+  return ok(res, finalUser, 'User created', 201);
 }

@@ -11,7 +11,6 @@ r.get('/:id',   requirePermission('role', 'read'), ctrl.getById);
 r.post('/',      requirePermission('role', 'create'), ctrl.create);
 r.patch('/:id', requirePermission('role', 'update'), ctrl.update);
 r.delete('/:id', requirePermission('role', 'delete'), ctrl.remove);
-r.patch('/:id/toggle-active', requirePermission('role', 'activate'), ctrl.toggleActive);
 
 // Role-Permission management
 r.get('/:id/permissions',                  requirePermission('role', 'update'), ctrl.listPermissions);
