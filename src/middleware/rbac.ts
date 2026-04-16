@@ -13,14 +13,43 @@ async function loadPermissions(userId: number) {
   const cached = await redis.get(ck);
   if (cached) return JSON.parse(cached);
 
-  const { data: level } = await supabase.rpc('get_user_role_level', { p_user_id: userId });
-  const roleLevel = level || 0;
+  // Step 1: Get user's active roles with levels
+  const { data: userRoles } = await supabase
+    .from('user_roles')
+    .select('role_id, roles!inner(level, is_active)')
+    .eq('user_id', userId)
+    .eq('is_active', true);
+
+  const activeRoles = (userRoles || []).filter((ur: any) => ur.roles?.is_active);
+  const roleIds = activeRoles.map((ur: any) => ur.role_id);
+  const roleLevel = activeRoles.length > 0
+    ? Math.max(...activeRoles.map((ur: any) => ur.roles?.level || 0))
+    : 0;
   const isSuperAdmin = roleLevel >= SUPER_ADMIN_LEVEL;
 
+  // Step 2: Get permissions via roles only (no user_permissions — roles are the single source of truth)
   let permissions: any[] = [];
-  if (!isSuperAdmin) {
-    const { data: perms } = await supabase.rpc('get_user_permissions', { p_user_id: userId });
-    permissions = perms || [];
+  if (!isSuperAdmin && roleIds.length > 0) {
+    const { data: rolePerms } = await supabase
+      .from('role_permissions')
+      .select('conditions, permissions!inner(id, resource, action, display_name, is_active)')
+      .in('role_id', roleIds)
+      .eq('permissions.is_active', true);
+
+    // Dedupe (same permission may come from multiple roles)
+    const seen = new Set<number>();
+    for (const rp of (rolePerms || [])) {
+      const p: any = rp.permissions;
+      if (!p || seen.has(p.id)) continue;
+      seen.add(p.id);
+      permissions.push({
+        id: p.id,
+        resource: p.resource,
+        action: p.action,
+        display_name: p.display_name,
+        conditions: rp.conditions || null,
+      });
+    }
   }
 
   const result = { permissions, roleLevel, isSuperAdmin };
@@ -63,3 +92,15 @@ export const requireSuperAdmin = () => (req: Request, res: Response, next: NextF
 };
 
 export const clearPermissionCache = async (userId: number) => { await redis.del(`perms:${userId}`); };
+
+// Clear cache for every user currently holding this role — critical when role's permissions change
+export const clearPermissionCacheForRole = async (roleId: number) => {
+  const { data: users } = await supabase
+    .from('user_roles')
+    .select('user_id')
+    .eq('role_id', roleId)
+    .eq('is_active', true);
+  if (users && users.length > 0) {
+    await Promise.all(users.map((u: any) => redis.del(`perms:${u.user_id}`)));
+  }
+};

@@ -63,10 +63,19 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  // Status change (requires user:activate)
+  // Status change (requires user:activate) + super admin protection
   if (req.body.status !== undefined) {
     if (!VALID_STATUSES.includes(req.body.status)) return err(res, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
     if (!hasPermission(req, 'user', 'activate')) return err(res, 'Permission denied: user:activate required to change status', 403);
+
+    // Prevent suspending/deactivating another super admin
+    if (req.body.status !== 'active' && id !== req.user!.id) {
+      const targetIsSuperAdmin = await isUserSuperAdmin(id);
+      if (targetIsSuperAdmin) {
+        return err(res, 'Cannot suspend or deactivate another super admin', 403);
+      }
+    }
+
     updates.status = req.body.status;
   }
 
@@ -123,17 +132,54 @@ export async function update(req: Request, res: Response) {
 }
 
 // Role Management
+// Helper: check if a user has super admin role
+async function isUserSuperAdmin(userId: number): Promise<boolean> {
+  const { data } = await supabase
+    .from('user_roles')
+    .select('roles!inner(level)')
+    .eq('user_id', userId)
+    .eq('is_active', true);
+  return (data || []).some((ur: any) => (ur.roles?.level || 0) >= 100);
+}
+
 export async function assignRole(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { role_id, scope = 'global', scope_id = null } = req.body;
 
   const { data: user } = await supabase.from('users').select('email').eq('id', id).single();
   if (!user) return err(res, 'User not found', 404);
-  const { data: role } = await supabase.from('roles').select('name, display_name').eq('id', role_id).single();
+  const { data: role } = await supabase.from('roles').select('name, display_name, level').eq('id', role_id).single();
   if (!role) return err(res, 'Role not found', 404);
 
-  const { error: e } = await supabase.from('user_roles').insert({ user_id: id, role_id, scope, scope_id, is_active: true, granted_by: req.user!.id });
-  if (e) { if (e.code === '23505') return err(res, 'Role already assigned', 409); return err(res, e.message, 500); }
+  // Check for existing row (may be inactive from a previous revoke)
+  const { data: existing } = await supabase
+    .from('user_roles')
+    .select('id, is_active')
+    .eq('user_id', id)
+    .eq('role_id', role_id)
+    .eq('scope', scope)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.is_active) {
+      return err(res, 'Role already assigned', 409);
+    }
+    // Reactivate the previously revoked assignment — fixes "cannot re-assign after revoke" bug
+    const { error: upErr } = await supabase
+      .from('user_roles')
+      .update({ is_active: true, granted_by: req.user!.id, scope_id })
+      .eq('id', existing.id);
+    if (upErr) return err(res, upErr.message, 500);
+  } else {
+    // Fresh assignment
+    const { error: e } = await supabase
+      .from('user_roles')
+      .insert({ user_id: id, role_id, scope, scope_id, is_active: true, granted_by: req.user!.id });
+    if (e) {
+      if (e.code === '23505') return err(res, 'Role already assigned', 409);
+      return err(res, e.message, 500);
+    }
+  }
 
   await clearPermissionCache(id);
   logAdmin({ actorId: req.user!.id, action: 'role_assigned', targetType: 'user', targetId: id, targetName: user.email, changes: { role: { old: null, new: role.name } }, ip: getClientIp(req) });
@@ -144,13 +190,21 @@ export async function revokeRole(req: Request, res: Response) {
   const userId = parseInt(req.params.id);
   const roleId = parseInt(req.params.roleId);
 
+  const { data: role } = await supabase.from('roles').select('name, level').eq('id', roleId).single();
+  if (!role) return err(res, 'Role not found', 404);
+
+  // ── Super admin protection ──
+  // Nobody can revoke the super_admin role from another super admin (self-revoke is fine)
+  if ((role.level || 0) >= 100 && userId !== req.user!.id) {
+    return err(res, 'Cannot revoke super admin role from another super admin', 403);
+  }
+
   const { data: ur } = await supabase.from('user_roles').select('id').eq('user_id', userId).eq('role_id', roleId).eq('is_active', true).single();
   if (!ur) return err(res, 'Active role not found', 404);
 
   await supabase.from('user_roles').update({ is_active: false }).eq('id', ur.id);
   await clearPermissionCache(userId);
 
-  const { data: role } = await supabase.from('roles').select('name').eq('id', roleId).single();
   const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
   logAdmin({ actorId: req.user!.id, action: 'role_revoked', targetType: 'user', targetId: userId, targetName: user?.email, changes: { role: { old: role?.name, new: null } }, ip: getClientIp(req) });
   return ok(res, null, 'Role revoked');
