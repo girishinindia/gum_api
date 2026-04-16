@@ -271,3 +271,62 @@ export async function create(req: Request, res: Response) {
 
   return ok(res, finalUser, 'User created', 201);
 }
+
+
+// GET /users/me/permissions — anyone can see their own roles and effective permissions
+export async function getMyPermissions(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const isSuperAdmin = req.userPerms?.isSuperAdmin || false;
+  const roleLevel = req.userPerms?.roleLevel || 0;
+
+  // Get user's assigned roles
+  const { data: userRoles } = await supabase
+    .from('user_roles')
+    .select('role_id, scope, scope_id, created_at, roles(id, name, display_name, description, level, is_system)')
+    .eq('user_id', userId)
+    .eq('is_active', true);
+
+  const roles = (userRoles || []).map((ur: any) => ({
+    id: ur.roles?.id,
+    name: ur.roles?.name,
+    display_name: ur.roles?.display_name,
+    description: ur.roles?.description,
+    level: ur.roles?.level,
+    is_system: ur.roles?.is_system,
+    scope: ur.scope,
+    scope_id: ur.scope_id,
+    assigned_at: ur.created_at,
+  }));
+
+  // Get effective permissions
+  let permissions: any[] = [];
+  if (isSuperAdmin) {
+    // Super admin: return all active permissions from the registry
+    const { data } = await supabase
+      .from('permissions')
+      .select('id, resource, action, display_name, description')
+      .eq('is_active', true)
+      .order('resource')
+      .order('action');
+    permissions = data || [];
+  } else {
+    // Regular user: use the cached permissions from req.userPerms
+    permissions = req.userPerms?.permissions || [];
+  }
+
+  // Group permissions by resource
+  const grouped = permissions.reduce((acc: any, p: any) => {
+    (acc[p.resource] = acc[p.resource] || []).push(p);
+    return acc;
+  }, {});
+
+  return ok(res, {
+    is_super_admin: isSuperAdmin,
+    max_role_level: roleLevel,
+    roles,
+    permissions,
+    permissions_grouped: grouped,
+    total_permissions: permissions.length,
+    total_resources: Object.keys(grouped).length,
+  });
+}

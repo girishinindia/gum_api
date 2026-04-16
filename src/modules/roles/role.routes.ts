@@ -1,22 +1,23 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
-import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { attachPermissions, requireSuperAdmin } from '../../middleware/rbac';
 import * as ctrl from './role.controller';
 
 const r = Router();
-r.use(authMiddleware, attachPermissions());
+r.use(authMiddleware, attachPermissions(), requireSuperAdmin());
 
-r.get('/',       requirePermission('role', 'read'), ctrl.list);
-r.get('/:id',   requirePermission('role', 'read'), ctrl.getById);
-r.post('/',      requirePermission('role', 'create'), ctrl.create);
-r.patch('/:id', requirePermission('role', 'update'), ctrl.update);
-r.delete('/:id', requirePermission('role', 'delete'), ctrl.remove);
+// Roles CRUD — super_admin only
+r.get('/',       ctrl.list);
+r.get('/:id',    ctrl.getById);
+r.post('/',      ctrl.create);
+r.patch('/:id',  ctrl.update);
+r.delete('/:id', ctrl.remove);
 
-// Role-Permission management
-r.get('/:id/permissions',                  requirePermission('role', 'update'), ctrl.listPermissions);
-r.post('/:id/permissions',                 requirePermission('role', 'update'), ctrl.assignPermission);
-r.post('/:id/permissions/bulk',            requirePermission('role', 'update'), ctrl.assignBulkPermissions);
-r.delete('/:id/permissions/:permissionId', requirePermission('role', 'update'), ctrl.revokePermission);
-r.delete('/:id/permissions',               requirePermission('role', 'update'), ctrl.revokeAllPermissions);
+// Role-Permission management — super_admin only
+r.get('/:id/permissions',                  ctrl.listPermissions);
+r.post('/:id/permissions',                 ctrl.assignPermission);
+r.post('/:id/permissions/bulk',            ctrl.assignBulkPermissions);
+r.delete('/:id/permissions/:permissionId', ctrl.revokePermission);
+r.delete('/:id/permissions',               ctrl.revokeAllPermissions);
 
 export default r;

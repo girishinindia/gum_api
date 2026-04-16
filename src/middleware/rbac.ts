@@ -56,4 +56,10 @@ export const requireRole = (minLevel: number) => (req: Request, res: Response, n
   next();
 };
 
+export const requireSuperAdmin = () => (req: Request, res: Response, next: NextFunction) => {
+  if (!req.userPerms) return err(res, 'Permissions not loaded', 500);
+  if (!req.userPerms.isSuperAdmin) return err(res, 'Super admin access required', 403);
+  next();
+};
+
 export const clearPermissionCache = async (userId: number) => { await redis.del(`perms:${userId}`); };
