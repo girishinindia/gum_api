@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { supabase } from '../../config/supabase';
 import { config } from '../../config';
 import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
@@ -170,7 +171,6 @@ export async function revokeAllSessions(req: Request, res: Response) {
 // POST /users — admin creates a user directly (no OTP). Requires user:create.
 // Accepts multipart/form-data with optional avatar file.
 export async function create(req: Request, res: Response) {
-  const bcrypt = require('bcrypt');
   const { first_name, last_name, email, mobile, password, locale, role_id, status } = req.body;
 
   if (!first_name || !last_name || !email || !mobile || !password) {
