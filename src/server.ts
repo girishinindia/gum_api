@@ -1,64 +1,17 @@
-import { buildApp } from './app';
-import { env } from './config/env';
-import { logger } from './core/logger/logger';
-import { closePool, getPool } from './database/pg-pool';
-import { getRedisClient } from './database/redis';
+import app from './app';
+import { config } from './config';
+import { logger } from './utils/logger';
 
-// ═══════════════════════════════════════════════════════════════
-// Server bootstrap.
-//   1. Build the app
-//   2. Start listening
-//   3. Register graceful shutdown hooks
-// ═══════════════════════════════════════════════════════════════
+const start = async () => {
+  // Validate critical env vars
+  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'UPSTASH_REDIS_URL', 'BREVO_API_KEY', 'SMS_API_KEY'];
+  const missing = required.filter(k => !process.env[k]);
+  if (missing.length) { logger.fatal(`Missing env vars: ${missing.join(', ')}`); process.exit(1); }
 
-async function main(): Promise<void> {
-  const app = buildApp();
-
-  const server = app.listen(env.PORT, () => {
-    logger.info(
-      { port: env.PORT, env: env.NODE_ENV, app: env.APP_NAME },
-      `${env.APP_NAME} listening on :${env.PORT}`
-    );
+  app.listen(config.port, () => {
+    logger.info(`${config.appName} running on port ${config.port} [${config.env}]`);
+    logger.info(`API base: http://localhost:${config.port}/api/${config.apiVersion}`);
   });
+};
 
-  // ─── Graceful shutdown ────────────────────────────────
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'Shutting down');
-    server.close(() => logger.info('HTTP server closed'));
-
-    try {
-      await closePool();
-    } catch (error) {
-      logger.error({ error }, 'Error closing pg pool');
-    }
-
-    try {
-      const redis = getRedisClient();
-      await redis.quit();
-    } catch (error) {
-      logger.error({ error }, 'Error closing redis client');
-    }
-
-    process.exit(0);
-  };
-
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-
-  process.on('unhandledRejection', (reason) => {
-    logger.error({ reason }, 'Unhandled promise rejection');
-  });
-
-  process.on('uncaughtException', (error) => {
-    logger.fatal({ error }, 'Uncaught exception');
-    process.exit(1);
-  });
-
-  // Touch pg pool so startup logs announce creation immediately.
-  void getPool();
-}
-
-main().catch((error) => {
-  logger.fatal({ error }, 'Fatal startup error');
-  process.exit(1);
-});
+start().catch((err) => { logger.fatal(err, 'Failed to start'); process.exit(1); });
