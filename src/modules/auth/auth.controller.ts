@@ -4,7 +4,7 @@ import { config } from '../../config';
 import { supabase } from '../../config/supabase';
 import * as otpSvc from '../../services/otp.service';
 import { sendOtpEmail } from '../../services/email.service';
-import { sendOtpSms } from '../../services/sms.service';
+import { sendOtpSms, sendSms } from '../../services/sms.service';
 import { generateTokens, verifyRefresh } from '../../services/token.service';
 import { logAuth, logAdmin } from '../../services/activityLog.service';
 import { ok, err } from '../../utils/response';
@@ -219,8 +219,8 @@ export async function forgotPassword(req: Request, res: Response) {
   await otpSvc.setCooldown(cleanEmail);
   await otpSvc.setCooldown(cleanMobile);
 
-  await sendOtpEmail(cleanEmail, user.first_name, emailOtp);
-  await sendOtpSms(cleanMobile, user.first_name, mobileOtp);
+  await sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'forgot_password');
+  await sendSms(cleanMobile, user.first_name, mobileOtp, 'forgot_password');
 
   logAuth({ userId: user.id, action: 'password_reset_requested', identifier: cleanEmail, ip, userAgent: req.headers['user-agent'] || null, metadata: { reset_pending_id: resetPendingId } });
   logAuth({ userId: user.id, action: 'otp_sent_email', identifier: cleanEmail, ip, metadata: { flow: 'password_reset' } });
@@ -289,8 +289,8 @@ export async function resendResetOtp(req: Request, res: Response) {
   const newOtp = await otpSvc.storeAndGetResetOTP(reset_pending_id, otpChannel);
   await otpSvc.setCooldown(dest);
 
-  if (channel === 'email') await sendOtpEmail(reset.email, reset.first_name, newOtp);
-  else await sendOtpSms(reset.mobile, reset.first_name, newOtp);
+  if (channel === 'email') await sendOtpEmail(reset.email, reset.first_name, newOtp, 'forgot_password');
+  else await sendSms(reset.mobile, reset.first_name, newOtp, 'forgot_password');
 
   logAuth({ userId: reset.user_id, action: 'otp_resent', identifier: dest, ip, metadata: { channel, flow: 'password_reset' } });
 

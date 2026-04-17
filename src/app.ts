@@ -15,6 +15,7 @@ import roleRoutes from './modules/roles/role.routes';
 import permissionRoutes from './modules/permissions/permission.routes';
 import countryRoutes from './modules/countries/country.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
+import profileRoutes from './modules/profile/profile.routes';
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', app: config.appName, 
 const api = `/api/${config.apiVersion}`;
 app.use(`${api}/auth`,         authRoutes);
 app.use(`${api}/users`,        userRoutes);
+app.use(`${api}/profile`,      profileRoutes);
 app.use(`${api}/roles`,        roleRoutes);
 app.use(`${api}/permissions`,  permissionRoutes);
 app.use(`${api}/countries`,    countryRoutes);

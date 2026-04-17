@@ -77,6 +77,26 @@ export async function update(req: Request, res: Response) {
     }
 
     updates.status = req.body.status;
+
+    // If moving to inactive/suspended, force-revoke all active sessions so the user can't keep
+    // using the app on their stale JWT (JWTs are valid for 15min otherwise).
+    if (req.body.status !== 'active' && req.body.status !== old.status) {
+      await supabase
+        .from('login_sessions')
+        .update({
+          is_active: false,
+          revoked_at: new Date().toISOString(),
+          revoked_reason: req.body.status === 'suspended' ? 'account_suspended' : 'account_deactivated',
+        })
+        .eq('user_id', id)
+        .eq('is_active', true);
+      // Clear caches — perms and the has_session hint so next request detects revocation instantly
+      const { redis } = await import('../../config/redis');
+      await Promise.all([
+        redis.del(`perms:${id}`),
+        redis.del(`has_session:${id}`),
+      ]);
+    }
   }
 
   // Avatar upload (requires user:update which route already enforced)

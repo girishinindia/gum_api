@@ -117,3 +117,40 @@ async function verifyOtpKey(key: string, otpInput: string): Promise<{ valid: boo
   await redis.del(key);
   return { valid: true };
 }
+
+// ══════════════════════════════════════════════════
+// PROFILE UPDATE flows (change password, update email, update mobile)
+// Uses a generic "profile" namespace with a purpose tag
+// ══════════════════════════════════════════════════
+
+const profileKey = (pendingId: string) => `profile:${pendingId}`;
+const profileOtpKey = (pendingId: string, channel: 'email' | 'sms') => `otp:profile:${channel}:${pendingId}`;
+
+export async function storeProfileAction(pendingId: string, data: any): Promise<void> {
+  await redis.set(profileKey(pendingId), JSON.stringify(data), 'EX', config.redis.otpTtl);
+}
+
+export async function getProfileAction(pendingId: string): Promise<any | null> {
+  const d = await redis.get(profileKey(pendingId));
+  return d ? JSON.parse(d) : null;
+}
+
+export async function updateProfileAction(pendingId: string, data: any): Promise<void> {
+  const ttl = await redis.ttl(profileKey(pendingId));
+  await redis.set(profileKey(pendingId), JSON.stringify(data), 'EX', Math.max(ttl, 1));
+}
+
+export async function storeAndGetProfileOTP(pendingId: string, channel: 'email' | 'sms'): Promise<string> {
+  const otp = generateOTP(config.otp.length);
+  const key = profileOtpKey(pendingId, channel);
+  await redis.set(key, JSON.stringify({ hash: hashSha256(otp), attempts: 0 }), 'EX', config.otp.expirySeconds);
+  return otp;
+}
+
+export async function verifyProfileOTP(pendingId: string, channel: 'email' | 'sms', otpInput: string): Promise<{ valid: boolean; reason?: string; remaining?: number }> {
+  return verifyOtpKey(profileOtpKey(pendingId, channel), otpInput);
+}
+
+export async function cleanupProfile(pendingId: string): Promise<void> {
+  await redis.del(profileKey(pendingId), profileOtpKey(pendingId, 'email'), profileOtpKey(pendingId, 'sms'));
+}

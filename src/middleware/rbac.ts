@@ -59,8 +59,71 @@ async function loadPermissions(userId: number) {
 
 export const attachPermissions = () => async (req: Request, res: Response, next: NextFunction) => {
   if (!req.user?.id) return err(res, 'Auth required', 401);
-  try { req.userPerms = await loadPermissions(req.user.id); next(); }
-  catch (e) { return err(res, 'Permission load failed', 500); }
+  try {
+    // Step 1: Verify user still exists AND is active (handles suspend/deactivate without waiting for token expiry)
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, status, locked_until')
+      .eq('id', req.user.id)
+      .single();
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Account no longer exists', code: 'ACCOUNT_NOT_FOUND' });
+    }
+    if (user.status === 'suspended') {
+      await supabase
+        .from('login_sessions')
+        .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'account_suspended' })
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+      return res.status(403).json({ success: false, error: 'Account suspended. Contact support.', code: 'ACCOUNT_SUSPENDED' });
+    }
+    if (user.status === 'inactive') {
+      await supabase
+        .from('login_sessions')
+        .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'account_inactive' })
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+      return res.status(403).json({ success: false, error: 'Account deactivated. Contact support.', code: 'ACCOUNT_INACTIVE' });
+    }
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      return res.status(429).json({ success: false, error: 'Account temporarily locked', code: 'ACCOUNT_LOCKED' });
+    }
+
+    // Step 2: Check user has at least one active session. If admin force-revoked all sessions
+    // (role/permission change, suspension), this detects stale access tokens INSTANTLY
+    // instead of waiting for 15-min JWT expiry. Uses a Redis cache hint (5s TTL) to avoid DB hit on every request.
+    const sessionCheckKey = `has_session:${user.id}`;
+    const cachedFlag = await redis.get(sessionCheckKey);
+
+    if (cachedFlag === '0') {
+      // Fast path: we already know all sessions are revoked
+      return res.status(401).json({ success: false, error: 'Session no longer valid. Please sign in again.', code: 'SESSION_REVOKED' });
+    }
+
+    if (cachedFlag === null) {
+      // Need to check DB
+      const { count } = await supabase
+        .from('login_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+
+      if ((count || 0) === 0) {
+        // No active sessions — cache the "0" for 30s so we don't keep re-hitting DB
+        await redis.set(sessionCheckKey, '0', 'EX', 30);
+        return res.status(401).json({ success: false, error: 'Session no longer valid. Please sign in again.', code: 'SESSION_REVOKED' });
+      }
+      // Has active sessions — cache "1" for 5s (short TTL so revocations propagate quickly)
+      await redis.set(sessionCheckKey, '1', 'EX', 5);
+    }
+
+    // Step 3: Load permissions (cached)
+    req.userPerms = await loadPermissions(req.user.id);
+    next();
+  } catch (e) {
+    return err(res, 'Permission load failed', 500);
+  }
 };
 
 export const requirePermission = (resource: string, action: string) => (req: Request, res: Response, next: NextFunction) => {
@@ -103,4 +166,43 @@ export const clearPermissionCacheForRole = async (roleId: number) => {
   if (users && users.length > 0) {
     await Promise.all(users.map((u: any) => redis.del(`perms:${u.user_id}`)));
   }
+};
+
+// Force logout: revoke all active sessions for every user holding this role.
+// Called when a role's permissions change — ensures users get fresh tokens with fresh permissions.
+export const revokeSessionsForRole = async (roleId: number, reason: string) => {
+  const { data: users } = await supabase
+    .from('user_roles')
+    .select('user_id')
+    .eq('role_id', roleId)
+    .eq('is_active', true);
+
+  if (!users || users.length === 0) return 0;
+
+  const userIds = users.map((u: any) => u.user_id);
+
+  // Revoke all active sessions for these users
+  const { count } = await supabase
+    .from('login_sessions')
+    .update({
+      is_active: false,
+      revoked_at: new Date().toISOString(),
+      revoked_reason: reason,
+    })
+    .in('user_id', userIds)
+    .eq('is_active', true);
+
+  // Invalidate session-check cache so next request detects revocation immediately
+  await Promise.all(userIds.map((uid: number) => redis.del(`has_session:${uid}`)));
+
+  return count || 0;
+};
+
+// Clear permission cache globally — when a permission is activated/deactivated,
+// every user in the system could be affected (since the permission registry changed).
+export const clearAllPermissionCache = async () => {
+  // Find all cached permission keys and delete them in one go
+  const keys = await redis.keys('perms:*');
+  if (keys.length > 0) await redis.del(...keys);
+  return keys.length;
 };

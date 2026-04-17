@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
-import { hasPermission, clearPermissionCacheForRole } from '../../middleware/rbac';
+import { hasPermission, clearPermissionCacheForRole, revokeSessionsForRole } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err } from '../../utils/response';
 import { getClientIp } from '../../utils/helpers';
@@ -112,9 +112,11 @@ export async function assignPermission(req: Request, res: Response) {
 
   // Critical: clear cache for every user with this role so new permission takes effect immediately
   await clearPermissionCacheForRole(roleId);
+  // Force all users with this role to re-login (their JWTs have stale perms)
+  const revoked = await revokeSessionsForRole(roleId, 'role_permissions_changed');
 
-  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, changes: { permission: { old: null, new: `${perm.resource}:${perm.action}` } }, ip: getClientIp(req) });
-  return ok(res, null, `${perm.display_name} assigned to ${role.name}`, 201);
+  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, changes: { permission: { old: null, new: `${perm.resource}:${perm.action}` } }, ip: getClientIp(req), metadata: { sessions_revoked: revoked } });
+  return ok(res, { sessions_revoked: revoked }, `${perm.display_name} assigned to ${role.name}`, 201);
 }
 
 export async function assignBulkPermissions(req: Request, res: Response) {
@@ -130,9 +132,10 @@ export async function assignBulkPermissions(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearPermissionCacheForRole(roleId);
+  const revoked = await revokeSessionsForRole(roleId, 'role_permissions_changed');
 
-  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { permission_ids, bulk: true } });
-  return ok(res, { assigned: permission_ids.length }, `${permission_ids.length} permissions assigned to ${role.name}`, 201);
+  logAdmin({ actorId: req.user!.id, action: 'permission_granted', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { permission_ids, bulk: true, sessions_revoked: revoked } });
+  return ok(res, { assigned: permission_ids.length, sessions_revoked: revoked }, `${permission_ids.length} permissions assigned to ${role.name}`, 201);
 }
 
 export async function revokePermission(req: Request, res: Response) {
@@ -147,8 +150,9 @@ export async function revokePermission(req: Request, res: Response) {
 
   await supabase.from('role_permissions').delete().eq('id', rp.id);
   await clearPermissionCacheForRole(roleId);
-  logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role?.name, changes: { permission: { old: perm ? `${perm.resource}:${perm.action}` : null, new: null } }, ip: getClientIp(req) });
-  return ok(res, null, 'Permission revoked');
+  const revoked = await revokeSessionsForRole(roleId, 'role_permissions_changed');
+  logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role?.name, changes: { permission: { old: perm ? `${perm.resource}:${perm.action}` : null, new: null } }, ip: getClientIp(req), metadata: { sessions_revoked: revoked } });
+  return ok(res, { sessions_revoked: revoked }, 'Permission revoked');
 }
 
 export async function revokeAllPermissions(req: Request, res: Response) {
@@ -159,6 +163,7 @@ export async function revokeAllPermissions(req: Request, res: Response) {
 
   const { count } = await supabase.from('role_permissions').delete().eq('role_id', roleId);
   await clearPermissionCacheForRole(roleId);
-  logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { revoked_all: true, count } });
-  return ok(res, { revoked: count }, `All permissions revoked from ${role.name}`);
+  const revoked = await revokeSessionsForRole(roleId, 'role_permissions_changed');
+  logAdmin({ actorId: req.user!.id, action: 'permission_revoked', targetType: 'role', targetId: roleId, targetName: role.name, ip: getClientIp(req), metadata: { revoked_all: true, count, sessions_revoked: revoked } });
+  return ok(res, { revoked: count, sessions_revoked: revoked }, `All permissions revoked from ${role.name}`);
 }
