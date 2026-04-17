@@ -64,17 +64,14 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  // Status change (requires user:activate) + super admin protection
+  // Status change (requires user:activate)
   if (req.body.status !== undefined) {
     if (!VALID_STATUSES.includes(req.body.status)) return err(res, `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`, 400);
     if (!hasPermission(req, 'user', 'activate')) return err(res, 'Permission denied: user:activate required to change status', 403);
 
-    // Prevent suspending/deactivating another super admin
-    if (req.body.status !== 'active' && id !== req.user!.id) {
-      const targetIsSuperAdmin = await isUserSuperAdmin(id);
-      if (targetIsSuperAdmin) {
-        return err(res, 'Cannot suspend or deactivate another super admin', 403);
-      }
+    // No user can suspend or deactivate themselves (another super admin can restore them)
+    if (req.body.status !== 'active' && id === req.user!.id) {
+      return err(res, 'Cannot suspend or deactivate your own account. Ask another super admin.', 403);
     }
 
     updates.status = req.body.status;
