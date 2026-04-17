@@ -16,6 +16,8 @@ import permissionRoutes from './modules/permissions/permission.routes';
 import countryRoutes from './modules/countries/country.routes';
 import stateRoutes from './modules/states/state.routes';
 import cityRoutes from './modules/cities/city.routes';
+import skillRoutes from './modules/skills/skill.routes';
+import languageRoutes from './modules/languages/language.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import profileRoutes from './modules/profile/profile.routes';
 
@@ -56,6 +58,8 @@ app.use(`${api}/permissions`,  permissionRoutes);
 app.use(`${api}/countries`,    countryRoutes);
 app.use(`${api}/states`,       stateRoutes);
 app.use(`${api}/cities`,       cityRoutes);
+app.use(`${api}/skills`,       skillRoutes);
+app.use(`${api}/languages`,    languageRoutes);
 app.use(`${api}/activity-logs`, activityLogRoutes);
 
 // ── 404 ──
