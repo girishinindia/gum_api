@@ -21,6 +21,12 @@ import languageRoutes from './modules/languages/language.routes';
 import educationLevelRoutes from './modules/education-levels/educationLevel.routes';
 import documentTypeRoutes from './modules/document-types/documentType.routes';
 import documentRoutes from './modules/documents/document.routes';
+import designationRoutes from './modules/designations/designation.routes';
+import specializationRoutes from './modules/specializations/specialization.routes';
+import learningGoalRoutes from './modules/learning-goals/learningGoal.routes';
+import socialMediaRoutes from './modules/social-medias/socialMedia.routes';
+import categoryRoutes from './modules/categories/category.routes';
+import subCategoryRoutes from './modules/sub-categories/subCategory.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import profileRoutes from './modules/profile/profile.routes';
 
@@ -66,6 +72,12 @@ app.use(`${api}/languages`,         languageRoutes);
 app.use(`${api}/education-levels`,  educationLevelRoutes);
 app.use(`${api}/document-types`,    documentTypeRoutes);
 app.use(`${api}/documents`,         documentRoutes);
+app.use(`${api}/designations`,      designationRoutes);
+app.use(`${api}/specializations`,   specializationRoutes);
+app.use(`${api}/learning-goals`,    learningGoalRoutes);
+app.use(`${api}/social-medias`,     socialMediaRoutes);
+app.use(`${api}/categories`,        categoryRoutes);
+app.use(`${api}/sub-categories`,    subCategoryRoutes);
 app.use(`${api}/activity-logs`,     activityLogRoutes);
 
 // ── 404 ──
