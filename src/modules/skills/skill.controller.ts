@@ -5,7 +5,8 @@ import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logData } from '../../services/activityLog.service';
-import { ok, err } from '../../utils/response';
+import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 const CACHE_KEY = 'skills:all';
@@ -25,20 +26,22 @@ function parseMultipartBody(req: Request): any {
 
 // GET /skills?category=technical
 export async function list(req: Request, res: Response) {
-  const category = req.query.category as string | undefined;
-  const cacheKey = category ? `skills:cat:${category}` : CACHE_KEY;
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  const cached = await redis.get(cacheKey);
-  if (cached) return ok(res, JSON.parse(cached));
+  let q = supabase.from('skills').select('*', { count: 'exact' });
 
-  let query = supabase.from('skills').select('*').order('sort_order').order('name');
-  if (category) query = query.eq('category', category);
+  // Search
+  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
 
-  const { data, error: e } = await query;
+  // Filters
+  if (req.query.category) q = q.eq('category', req.query.category);
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-
-  await redis.set(cacheKey, JSON.stringify(data), 'EX', config.redis.cacheTtl);
-  return ok(res, data);
+  return paginated(res, data || [], count || 0, page, limit);
 }
 
 // GET /skills/:id

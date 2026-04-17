@@ -5,7 +5,8 @@ import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logData } from '../../services/activityLog.service';
-import { ok, err } from '../../utils/response';
+import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 const CACHE_KEY = 'sub_categories:all';
@@ -30,20 +31,22 @@ function parseMultipartBody(req: Request): any {
 }
 
 export async function list(req: Request, res: Response) {
-  const categoryId = req.query.category_id ? parseInt(req.query.category_id as string) : null;
-  const cacheKey = categoryId ? `sub_categories:category:${categoryId}` : CACHE_KEY;
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  const cached = await redis.get(cacheKey);
-  if (cached) return ok(res, JSON.parse(cached));
+  let q = supabase.from('sub_categories').select('*, categories(name, code)', { count: 'exact' });
 
-  let query = supabase.from('sub_categories').select('*, categories(name, code)').order('display_order').order('sort_order').order('name');
-  if (categoryId) query = query.eq('category_id', categoryId);
+  // Search
+  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
 
-  const { data, error: e } = await query;
+  // Filters
+  if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-
-  await redis.set(cacheKey, JSON.stringify(data), 'EX', config.redis.cacheTtl);
-  return ok(res, data);
+  return paginated(res, data || [], count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

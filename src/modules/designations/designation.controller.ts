@@ -4,7 +4,8 @@ import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
-import { ok, err } from '../../utils/response';
+import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 const CACHE_KEY = 'designations:all';
@@ -22,22 +23,24 @@ function parseBody(req: Request): any {
   return body;
 }
 
-// GET /designations?level_band=senior
+// GET /designations?level_band=senior&page=1&limit=20&search=foo&sort=level&order=asc
 export async function list(req: Request, res: Response) {
-  const band = req.query.level_band as string | undefined;
-  const cacheKey = band ? `designations:band:${band}` : CACHE_KEY;
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'level' });
 
-  const cached = await redis.get(cacheKey);
-  if (cached) return ok(res, JSON.parse(cached));
+  let q = supabase.from('designations').select('*', { count: 'exact' });
 
-  let query = supabase.from('designations').select('*').order('level').order('sort_order').order('name');
-  if (band) query = query.eq('level_band', band);
+  // Search
+  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
 
-  const { data, error: e } = await query;
+  // Filters
+  if (req.query.level_band) q = q.eq('level_band', req.query.level_band);
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-
-  await redis.set(cacheKey, JSON.stringify(data), 'EX', config.redis.cacheTtl);
-  return ok(res, data);
+  return paginated(res, data || [], count || 0, page, limit);
 }
 
 // GET /designations/:id

@@ -4,7 +4,8 @@ import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
-import { ok, err } from '../../utils/response';
+import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 const CACHE_KEY = 'document_types:all';
@@ -20,14 +21,19 @@ function parseBody(req: Request): any {
 
 // GET /document-types
 export async function list(req: Request, res: Response) {
-  const cached = await redis.get(CACHE_KEY);
-  if (cached) return ok(res, JSON.parse(cached));
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  const { data, error: e } = await supabase.from('document_types').select('*').order('sort_order').order('name');
+  let q = supabase.from('document_types').select('*', { count: 'exact' });
+
+  // Search
+  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-
-  await redis.set(CACHE_KEY, JSON.stringify(data), 'EX', config.redis.cacheTtl);
-  return ok(res, data);
+  return paginated(res, data || [], count || 0, page, limit);
 }
 
 // GET /document-types/:id

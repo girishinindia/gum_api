@@ -5,7 +5,8 @@ import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logData } from '../../services/activityLog.service';
-import { ok, err } from '../../utils/response';
+import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 const CACHE_KEY = 'categories:all';
@@ -26,14 +27,19 @@ function parseMultipartBody(req: Request): any {
 }
 
 export async function list(req: Request, res: Response) {
-  const cached = await redis.get(CACHE_KEY);
-  if (cached) return ok(res, JSON.parse(cached));
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  const { data, error: e } = await supabase.from('categories').select('*').order('display_order').order('sort_order').order('name');
+  let q = supabase.from('categories').select('*', { count: 'exact' });
+
+  // Search
+  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-
-  await redis.set(CACHE_KEY, JSON.stringify(data), 'EX', config.redis.cacheTtl);
-  return ok(res, data);
+  return paginated(res, data || [], count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {
