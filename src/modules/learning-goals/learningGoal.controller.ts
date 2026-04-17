@@ -15,7 +15,9 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   if (typeof body.display_order === 'string') body.display_order = parseInt(body.display_order) || 0;
-  for (const k of Object.keys(body)) { if (body[k] === '') delete body[k]; }
+  for (const k of Object.keys(body)) {
+    if (body[k] === '') { if (k === 'description') body[k] = null; else delete body[k]; }
+  }
   return body;
 }
 
