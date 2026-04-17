@@ -18,6 +18,9 @@ import stateRoutes from './modules/states/state.routes';
 import cityRoutes from './modules/cities/city.routes';
 import skillRoutes from './modules/skills/skill.routes';
 import languageRoutes from './modules/languages/language.routes';
+import educationLevelRoutes from './modules/education-levels/educationLevel.routes';
+import documentTypeRoutes from './modules/document-types/documentType.routes';
+import documentRoutes from './modules/documents/document.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import profileRoutes from './modules/profile/profile.routes';
 
@@ -59,8 +62,11 @@ app.use(`${api}/countries`,    countryRoutes);
 app.use(`${api}/states`,       stateRoutes);
 app.use(`${api}/cities`,       cityRoutes);
 app.use(`${api}/skills`,       skillRoutes);
-app.use(`${api}/languages`,    languageRoutes);
-app.use(`${api}/activity-logs`, activityLogRoutes);
+app.use(`${api}/languages`,         languageRoutes);
+app.use(`${api}/education-levels`,  educationLevelRoutes);
+app.use(`${api}/document-types`,    documentTypeRoutes);
+app.use(`${api}/documents`,         documentRoutes);
+app.use(`${api}/activity-logs`,     activityLogRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
