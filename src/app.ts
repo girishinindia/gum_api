@@ -27,6 +27,11 @@ import learningGoalRoutes from './modules/learning-goals/learningGoal.routes';
 import socialMediaRoutes from './modules/social-medias/socialMedia.routes';
 import categoryRoutes from './modules/categories/category.routes';
 import subCategoryRoutes from './modules/sub-categories/subCategory.routes';
+import categoryTranslationRoutes from './modules/category-translations/categoryTranslation.routes';
+import subCategoryTranslationRoutes from './modules/sub-category-translations/subCategoryTranslation.routes';
+import branchRoutes from './modules/branches/branch.routes';
+import departmentRoutes from './modules/departments/department.routes';
+import branchDepartmentRoutes from './modules/branch-departments/branchDepartment.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import profileRoutes from './modules/profile/profile.routes';
 
@@ -77,8 +82,13 @@ app.use(`${api}/specializations`,   specializationRoutes);
 app.use(`${api}/learning-goals`,    learningGoalRoutes);
 app.use(`${api}/social-medias`,     socialMediaRoutes);
 app.use(`${api}/categories`,        categoryRoutes);
-app.use(`${api}/sub-categories`,    subCategoryRoutes);
-app.use(`${api}/activity-logs`,     activityLogRoutes);
+app.use(`${api}/sub-categories`,              subCategoryRoutes);
+app.use(`${api}/category-translations`,       categoryTranslationRoutes);
+app.use(`${api}/sub-category-translations`,   subCategoryTranslationRoutes);
+app.use(`${api}/branches`,                    branchRoutes);
+app.use(`${api}/departments`,                 departmentRoutes);
+app.use(`${api}/branch-departments`,          branchDepartmentRoutes);
+app.use(`${api}/activity-logs`,               activityLogRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
