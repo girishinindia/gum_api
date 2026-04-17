@@ -22,7 +22,7 @@ export const config = {
 
   recaptcha: { enabled: process.env.RECAPTCHA_ENABLED === 'true', secretKey: process.env.RECAPTCHA_SECRET_KEY || '', minScore: parseFloat(process.env.RECAPTCHA_MIN_SCORE || '0.5') },
 
-  bunny: { storageZone: process.env.BUNNY_STORAGE_ZONE!, storageKey: process.env.BUNNY_STORAGE_KEY!, storageUrl: process.env.BUNNY_STORAGE_URL!, cdnUrl: process.env.BUNNY_CDN_URL! },
+  bunny: { storageZone: process.env.BUNNY_STORAGE_ZONE!, storageKey: process.env.BUNNY_STORAGE_KEY!, storageUrl: process.env.BUNNY_STORAGE_URL!, cdnUrl: process.env.BUNNY_CDN_URL!, accountApiKey: process.env.BUNNY_ACCOUNT_API_KEY || '' },
 
   rateLimit: { windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), max: parseInt(process.env.RATE_LIMIT_MAX || '100') },
 

@@ -50,14 +50,14 @@ export async function create(req: Request, res: Response) {
 
   let flagUrl: string | null = null;
   if (req.file) {
-    const path = `flags/${(body.iso2 || 'xx').toLowerCase()}.webp`;
+    const path = `flags/${(body.iso2 || 'xx').toLowerCase()}-${Date.now()}.webp`;
     flagUrl = await processAndUploadImage(req.file.buffer, path, { width: 200, height: 150, quality: 85 });
     body.flag_image = flagUrl;
   }
 
   const { data, error: e } = await supabase.from('countries').insert(body).select().single();
   if (e) {
-    if (flagUrl) { try { await deleteImage(extractBunnyPath(flagUrl)); } catch {} }
+    if (flagUrl) { try { await deleteImage(extractBunnyPath(flagUrl), flagUrl); } catch {} }
     if (e.code === '23505') return err(res, 'Country ISO code already exists', 409);
     return err(res, e.message, 500);
   }
@@ -83,14 +83,13 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  // Flag image upload
-  console.log(`[Country PATCH ${id}] req.file:`, req.file ? `${req.file.originalname} (${req.file.size}b, ${req.file.mimetype})` : 'undefined', '| body keys:', Object.keys(req.body));
+  // Flag image upload — use unique path (timestamp) so CDN edge cache never serves stale images
   if (req.file) {
-    if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image)); } catch {} }
     const iso = updates.iso2 || old.iso2;
-    const path = `flags/${iso.toLowerCase()}.webp`;
+    const path = `flags/${iso.toLowerCase()}-${Date.now()}.webp`;
     updates.flag_image = await processAndUploadImage(req.file.buffer, path, { width: 200, height: 150, quality: 85 });
-    console.log(`[Country PATCH ${id}] Flag uploaded:`, updates.flag_image);
+    // Delete old file AFTER new one is uploaded (so there's no gap where no image exists)
+    if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image), old.flag_image); } catch {} }
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
@@ -120,7 +119,7 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from('countries').select('name, flag_image').eq('id', id).single();
   if (!old) return err(res, 'Country not found', 404);
 
-  if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image)); } catch {} }
+  if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image), old.flag_image); } catch {} }
 
   const { error: e } = await supabase.from('countries').delete().eq('id', id);
   if (e) return err(res, e.message, 500);

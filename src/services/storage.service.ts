@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { uploadToBunny, deleteFromBunny } from '../config/bunny';
+import { uploadToBunny, deleteFromBunny, purgeBunnyCdn } from '../config/bunny';
 
 export async function processAndUploadImage(buffer: Buffer, path: string, options?: { width?: number; height?: number; quality?: number }): Promise<string> {
   let pipeline = sharp(buffer);
@@ -7,10 +7,11 @@ export async function processAndUploadImage(buffer: Buffer, path: string, option
   const webpBuffer = await pipeline.webp({ quality: options?.quality ?? 80 }).toBuffer();
   const webpPath = path.replace(/\.[^.]+$/, '.webp');
   const cdnUrl = await uploadToBunny(webpPath, webpBuffer);
-  // Append cache-bust param so browser/CDN always fetches the new version after re-upload
-  return `${cdnUrl}?v=${Date.now()}`;
+  return cdnUrl;
 }
 
-export async function deleteImage(path: string): Promise<void> {
+export async function deleteImage(path: string, fullCdnUrl?: string): Promise<void> {
+  // Purge CDN edge cache first (best-effort), then delete from storage
+  if (fullCdnUrl) await purgeBunnyCdn(fullCdnUrl);
   await deleteFromBunny(path);
 }
