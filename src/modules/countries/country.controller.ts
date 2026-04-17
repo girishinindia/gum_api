@@ -84,11 +84,13 @@ export async function update(req: Request, res: Response) {
   }
 
   // Flag image upload
+  console.log(`[Country PATCH ${id}] req.file:`, req.file ? `${req.file.originalname} (${req.file.size}b, ${req.file.mimetype})` : 'undefined', '| body keys:', Object.keys(req.body));
   if (req.file) {
     if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image)); } catch {} }
     const iso = updates.iso2 || old.iso2;
     const path = `flags/${iso.toLowerCase()}.webp`;
     updates.flag_image = await processAndUploadImage(req.file.buffer, path, { width: 200, height: 150, quality: 85 });
+    console.log(`[Country PATCH ${id}] Flag uploaded:`, updates.flag_image);
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

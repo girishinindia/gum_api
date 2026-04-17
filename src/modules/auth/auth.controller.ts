@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { config } from '../../config';
 import { supabase } from '../../config/supabase';
+import { redis } from '../../config/redis';
 import * as otpSvc from '../../services/otp.service';
 import { sendOtpEmail } from '../../services/email.service';
 import { sendOtpSms, sendSms } from '../../services/sms.service';
@@ -76,6 +77,7 @@ export async function verifyOtp(req: Request, res: Response) {
 
     const tokens = generateTokens(userId);
     await supabase.rpc('create_session', { p_user_id: userId, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) });
+    await redis.del(`has_session:${userId}`);
     await otpSvc.cleanup(pending_id);
 
     logAuth({ userId, action: 'register_completed', identifier: reg.email, ip, userAgent: req.headers['user-agent'] || null, deviceType: getDeviceType(req.headers['user-agent']) });
@@ -135,6 +137,9 @@ export async function login(req: Request, res: Response) {
   await supabase.rpc('update_login_success', { p_user_id: u.user_id, p_method: 'email_password' });
   await supabase.rpc('create_session', { p_user_id: u.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: ua, p_device_type: getDeviceType(ua || undefined) });
 
+  // Clear stale session/permission cache so first authenticated request works immediately
+  await Promise.all([redis.del(`has_session:${u.user_id}`), redis.del(`perms:${u.user_id}`)]);
+
   logAuth({ userId: u.user_id, action: 'login_success', identifier, ip, userAgent: ua, deviceType: getDeviceType(ua || undefined), metadata: { method: 'email_password' } });
 
   return ok(res, { user: { id: u.user_id, first_name: u.first_name, last_name: u.last_name, email: u.email, mobile: u.mobile }, ...tokens });
@@ -151,6 +156,9 @@ export async function refresh(req: Request, res: Response) {
   const tokens = generateTokens(s.user_id);
   await supabase.rpc('revoke_session', { p_session_id: s.session_id, p_reason: 'token_refresh' });
   await supabase.rpc('create_session', { p_user_id: s.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: getClientIp(req), p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) });
+
+  // Clear stale cache so next request sees the fresh session
+  await Promise.all([redis.del(`has_session:${s.user_id}`), redis.del(`perms:${s.user_id}`)]);
 
   logAuth({ userId: s.user_id, action: 'token_refreshed', ip: getClientIp(req) });
   return ok(res, { user: { id: s.user_id, first_name: s.first_name, last_name: s.last_name, email: s.email, mobile: s.mobile }, ...tokens });
