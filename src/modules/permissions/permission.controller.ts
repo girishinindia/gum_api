@@ -48,6 +48,8 @@ export async function update(req: Request, res: Response) {
     .eq('permission_id', id);
   const affectedRoleIds = (rolePerms || []).map((rp: any) => rp.role_id);
 
+  // Exclude the acting super admin from logout so they can toggle multiple permissions without disruption
+  const actorId = req.user!.id;
   let sessionsRevoked = 0;
   if (affectedRoleIds.length > 0) {
     const { data: affectedUsers } = await supabase
@@ -56,10 +58,11 @@ export async function update(req: Request, res: Response) {
       .in('role_id', affectedRoleIds)
       .eq('is_active', true);
 
-    const userIds = [...new Set((affectedUsers || []).map((u: any) => u.user_id))];
+    // Filter out the acting super admin
+    const userIds = [...new Set((affectedUsers || []).map((u: any) => u.user_id))]
+      .filter((uid: number) => uid !== actorId);
 
     if (userIds.length > 0) {
-      // Revoke their active sessions
       const { count } = await supabase
         .from('login_sessions')
         .update({
@@ -71,8 +74,11 @@ export async function update(req: Request, res: Response) {
         .eq('is_active', true);
       sessionsRevoked = count || 0;
 
-      // Invalidate session-check cache so revocation is detected instantly
-      await Promise.all(userIds.map((uid: number) => redis.del(`has_session:${uid}`)));
+      // Invalidate session-check + perm cache so revocation is detected instantly
+      await Promise.all(userIds.flatMap((uid: number) => [
+        redis.del(`has_session:${uid}`),
+        redis.del(`perms:${uid}`),
+      ]));
     }
   }
 

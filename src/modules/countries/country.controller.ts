@@ -12,7 +12,7 @@ const CACHE_KEY = 'countries:all';
 const clearCache = () => redis.del(CACHE_KEY);
 
 function extractBunnyPath(cdnUrl: string): string {
-  return cdnUrl.replace(config.bunny.cdnUrl + '/', '');
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }
 
 function parseMultipartBody(req: Request): any {

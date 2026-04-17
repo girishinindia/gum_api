@@ -169,8 +169,8 @@ export const clearPermissionCacheForRole = async (roleId: number) => {
 };
 
 // Force logout: revoke all active sessions for every user holding this role.
-// Called when a role's permissions change — ensures users get fresh tokens with fresh permissions.
-export const revokeSessionsForRole = async (roleId: number, reason: string) => {
+// excludeUserId: the acting admin — they should NOT be logged out by their own action.
+export const revokeSessionsForRole = async (roleId: number, reason: string, excludeUserId?: number) => {
   const { data: users } = await supabase
     .from('user_roles')
     .select('user_id')
@@ -179,7 +179,12 @@ export const revokeSessionsForRole = async (roleId: number, reason: string) => {
 
   if (!users || users.length === 0) return 0;
 
-  const userIds = users.map((u: any) => u.user_id);
+  // Exclude the acting super admin so they don't get logged out by their own changes
+  const userIds = users
+    .map((u: any) => u.user_id)
+    .filter((uid: number) => uid !== excludeUserId);
+
+  if (userIds.length === 0) return 0;
 
   // Revoke all active sessions for these users
   const { count } = await supabase
@@ -193,7 +198,11 @@ export const revokeSessionsForRole = async (roleId: number, reason: string) => {
     .eq('is_active', true);
 
   // Invalidate session-check cache so next request detects revocation immediately
-  await Promise.all(userIds.map((uid: number) => redis.del(`has_session:${uid}`)));
+  // Also clear permission cache so they get fresh perms on re-login
+  await Promise.all(userIds.flatMap((uid: number) => [
+    redis.del(`has_session:${uid}`),
+    redis.del(`perms:${uid}`),
+  ]));
 
   return count || 0;
 };

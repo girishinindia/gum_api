@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../config/supabase';
+import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
@@ -9,7 +10,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { getClientIp } from '../../utils/helpers';
 
 function extractBunnyPath(cdnUrl: string): string {
-  return cdnUrl.replace(config.bunny.cdnUrl + '/', '');
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }
 
 const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'preferences'];
@@ -91,7 +92,6 @@ export async function update(req: Request, res: Response) {
         .eq('user_id', id)
         .eq('is_active', true);
       // Clear caches — perms and the has_session hint so next request detects revocation instantly
-      const { redis } = await import('../../config/redis');
       await Promise.all([
         redis.del(`perms:${id}`),
         redis.del(`has_session:${id}`),
@@ -164,7 +164,11 @@ async function isUserSuperAdmin(userId: number): Promise<boolean> {
 
 export async function assignRole(req: Request, res: Response) {
   const id = parseInt(req.params.id);
+  const actorId = req.user!.id;
   const { role_id, scope = 'global', scope_id = null } = req.body;
+
+  // No user can change their own role
+  if (id === actorId) return err(res, 'Cannot change your own role. Ask another super admin.', 403);
 
   const { data: user } = await supabase.from('users').select('email').eq('id', id).single();
   if (!user) return err(res, 'User not found', 404);
@@ -184,50 +188,66 @@ export async function assignRole(req: Request, res: Response) {
     if (existing.is_active) {
       return err(res, 'Role already assigned', 409);
     }
-    // Reactivate the previously revoked assignment — fixes "cannot re-assign after revoke" bug
+    // Reactivate the previously revoked assignment
     const { error: upErr } = await supabase
       .from('user_roles')
-      .update({ is_active: true, granted_by: req.user!.id, scope_id })
+      .update({ is_active: true, granted_by: actorId, scope_id })
       .eq('id', existing.id);
     if (upErr) return err(res, upErr.message, 500);
   } else {
-    // Fresh assignment
     const { error: e } = await supabase
       .from('user_roles')
-      .insert({ user_id: id, role_id, scope, scope_id, is_active: true, granted_by: req.user!.id });
+      .insert({ user_id: id, role_id, scope, scope_id, is_active: true, granted_by: actorId });
     if (e) {
       if (e.code === '23505') return err(res, 'Role already assigned', 409);
       return err(res, e.message, 500);
     }
   }
 
-  await clearPermissionCache(id);
-  logAdmin({ actorId: req.user!.id, action: 'role_assigned', targetType: 'user', targetId: id, targetName: user.email, changes: { role: { old: null, new: role.name } }, ip: getClientIp(req) });
-  return ok(res, null, `Role '${role.display_name}' assigned`, 201);
+  // Force-logout the target user so they get fresh permissions on re-login
+  await supabase
+    .from('login_sessions')
+    .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'role_changed' })
+    .eq('user_id', id)
+    .eq('is_active', true);
+  await Promise.all([redis.del(`perms:${id}`), redis.del(`has_session:${id}`)]);
+
+  logAdmin({ actorId, action: 'role_assigned', targetType: 'user', targetId: id, targetName: user.email, changes: { role: { old: null, new: role.name } }, ip: getClientIp(req) });
+  return ok(res, null, `Role '${role.display_name}' assigned. User has been logged out.`, 201);
 }
 
 export async function revokeRole(req: Request, res: Response) {
   const userId = parseInt(req.params.id);
   const roleId = parseInt(req.params.roleId);
+  const actorId = req.user!.id;
+
+  // No user can change their own role
+  if (userId === actorId) return err(res, 'Cannot change your own role. Ask another super admin.', 403);
 
   const { data: role } = await supabase.from('roles').select('name, level').eq('id', roleId).single();
   if (!role) return err(res, 'Role not found', 404);
 
-  // ── Super admin protection ──
-  // Nobody can revoke the super_admin role from another super admin (self-revoke is fine)
-  if ((role.level || 0) >= 100 && userId !== req.user!.id) {
-    return err(res, 'Cannot revoke super admin role from another super admin', 403);
+  // Prevent revoking super_admin role from another super admin
+  if ((role.level || 0) >= 100) {
+    return err(res, 'Cannot revoke super admin role', 403);
   }
 
   const { data: ur } = await supabase.from('user_roles').select('id').eq('user_id', userId).eq('role_id', roleId).eq('is_active', true).single();
   if (!ur) return err(res, 'Active role not found', 404);
 
   await supabase.from('user_roles').update({ is_active: false }).eq('id', ur.id);
-  await clearPermissionCache(userId);
+
+  // Force-logout the target user
+  await supabase
+    .from('login_sessions')
+    .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'role_changed' })
+    .eq('user_id', userId)
+    .eq('is_active', true);
+  await Promise.all([redis.del(`perms:${userId}`), redis.del(`has_session:${userId}`)]);
 
   const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
-  logAdmin({ actorId: req.user!.id, action: 'role_revoked', targetType: 'user', targetId: userId, targetName: user?.email, changes: { role: { old: role?.name, new: null } }, ip: getClientIp(req) });
-  return ok(res, null, 'Role revoked');
+  logAdmin({ actorId, action: 'role_revoked', targetType: 'user', targetId: userId, targetName: user?.email, changes: { role: { old: role?.name, new: null } }, ip: getClientIp(req) });
+  return ok(res, null, 'Role revoked. User has been logged out.');
 }
 
 export async function getSessions(req: Request, res: Response) {
