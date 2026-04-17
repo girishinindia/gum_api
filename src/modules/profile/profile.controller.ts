@@ -33,11 +33,20 @@ export async function changePasswordInitiate(req: Request, res: Response) {
 
   const emailOtp = await otpSvc.storeAndGetProfileOTP(pendingId, 'email');
   const mobileOtp = await otpSvc.storeAndGetProfileOTP(pendingId, 'sms');
-  await otpSvc.setCooldown(user.email);
-  await otpSvc.setCooldown(user.mobile);
+  await Promise.all([otpSvc.setCooldown(user.email), otpSvc.setCooldown(user.mobile)]);
 
-  await sendOtpEmail(user.email, user.first_name, emailOtp, 'change_password');
-  await sendSms(user.mobile, user.first_name, mobileOtp, 'reset_password');
+  // Send both OTPs concurrently — don't let one failure block the other
+  const [emailResult, smsResult] = await Promise.allSettled([
+    sendOtpEmail(user.email, user.first_name, emailOtp, 'change_password'),
+    sendSms(user.mobile, user.first_name, mobileOtp, 'reset_password'),
+  ]);
+
+  if (emailResult.status === 'rejected') console.error('[ChangePassword] Email OTP send failed:', emailResult.reason);
+  if (smsResult.status === 'rejected') console.error('[ChangePassword] SMS OTP send failed:', smsResult.reason);
+
+  if (emailResult.status === 'rejected' && smsResult.status === 'rejected') {
+    return err(res, 'Failed to send OTPs. Please try again.', 500);
+  }
 
   logAuth({ userId, action: 'change_password_initiated', identifier: user.email, ip: getClientIp(req) });
 
@@ -143,8 +152,18 @@ export async function updateEmailInitiate(req: Request, res: Response) {
   const emailOtp = await otpSvc.storeAndGetProfileOTP(pendingId, 'email');
   await otpSvc.setCooldown(cleanEmail);
 
-  await sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'update_email');
-  await sendSms(user.mobile, user.first_name, emailOtp, 'update_email');
+  // Send both notifications concurrently
+  const [emailRes, smsRes] = await Promise.allSettled([
+    sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'update_email'),
+    sendSms(user.mobile, user.first_name, emailOtp, 'update_email'),
+  ]);
+
+  if (emailRes.status === 'rejected') console.error('[UpdateEmail] Email OTP send failed:', emailRes.reason);
+  if (smsRes.status === 'rejected') console.error('[UpdateEmail] SMS notification send failed:', smsRes.reason);
+
+  if (emailRes.status === 'rejected' && smsRes.status === 'rejected') {
+    return err(res, 'Failed to send OTPs. Please try again.', 500);
+  }
 
   logAuth({ userId, action: 'update_email_initiated', identifier: cleanEmail, ip: getClientIp(req), metadata: { old_email: user.email } });
 

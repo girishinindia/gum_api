@@ -35,11 +35,20 @@ export async function register(req: Request, res: Response) {
 
   const emailOtp = await otpSvc.storeAndGetOTP(pendingId, 'email');
   const mobileOtp = await otpSvc.storeAndGetOTP(pendingId, 'sms');
-  await otpSvc.setCooldown(cleanEmail);
-  await otpSvc.setCooldown(cleanMobile);
+  await Promise.all([otpSvc.setCooldown(cleanEmail), otpSvc.setCooldown(cleanMobile)]);
 
-  await sendOtpEmail(cleanEmail, first_name.trim(), emailOtp);
-  await sendOtpSms(cleanMobile, first_name.trim(), mobileOtp);
+  // Send both OTPs concurrently — don't let one failure block the other
+  const [emailResult, smsResult] = await Promise.allSettled([
+    sendOtpEmail(cleanEmail, first_name.trim(), emailOtp),
+    sendOtpSms(cleanMobile, first_name.trim(), mobileOtp),
+  ]);
+
+  if (emailResult.status === 'rejected') console.error('[Register] Email OTP send failed:', emailResult.reason);
+  if (smsResult.status === 'rejected') console.error('[Register] SMS OTP send failed:', smsResult.reason);
+
+  if (emailResult.status === 'rejected' && smsResult.status === 'rejected') {
+    return err(res, 'Failed to send OTPs. Please try again.', 500);
+  }
 
   logAuth({ action: 'register_initiated', identifier: cleanEmail, ip, userAgent: ua });
   logAuth({ action: 'otp_sent_email', identifier: cleanEmail, ip });
@@ -221,14 +230,23 @@ export async function forgotPassword(req: Request, res: Response) {
     mobile_verified: false,
   });
 
-  // Generate + send dual OTPs
+  // Generate + send dual OTPs concurrently — don't let one failure block the other
   const emailOtp = await otpSvc.storeAndGetResetOTP(resetPendingId, 'email');
   const mobileOtp = await otpSvc.storeAndGetResetOTP(resetPendingId, 'sms');
-  await otpSvc.setCooldown(cleanEmail);
-  await otpSvc.setCooldown(cleanMobile);
+  await Promise.all([otpSvc.setCooldown(cleanEmail), otpSvc.setCooldown(cleanMobile)]);
 
-  await sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'forgot_password');
-  await sendSms(cleanMobile, user.first_name, mobileOtp, 'forgot_password');
+  const [emailResult, smsResult] = await Promise.allSettled([
+    sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'forgot_password'),
+    sendSms(cleanMobile, user.first_name, mobileOtp, 'forgot_password'),
+  ]);
+
+  if (emailResult.status === 'rejected') console.error('[ForgotPassword] Email OTP send failed:', emailResult.reason);
+  if (smsResult.status === 'rejected') console.error('[ForgotPassword] SMS OTP send failed:', smsResult.reason);
+
+  // Both must succeed for a good UX; if both fail, tell the user to retry
+  if (emailResult.status === 'rejected' && smsResult.status === 'rejected') {
+    return err(res, 'Failed to send OTPs. Please try again.', 500);
+  }
 
   logAuth({ userId: user.id, action: 'password_reset_requested', identifier: cleanEmail, ip, userAgent: req.headers['user-agent'] || null, metadata: { reset_pending_id: resetPendingId } });
   logAuth({ userId: user.id, action: 'otp_sent_email', identifier: cleanEmail, ip, metadata: { flow: 'password_reset' } });
