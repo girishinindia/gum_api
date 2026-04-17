@@ -21,7 +21,7 @@ function parseMultipartBody(req: Request): any {
   if (typeof body.is_new === 'string') body.is_new = body.is_new === 'true';
   if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   if (typeof body.display_order === 'string') body.display_order = parseInt(body.display_order) || 0;
-  for (const k of Object.keys(body)) { if (body[k] === '') delete body[k]; }
+  for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
 }
 
