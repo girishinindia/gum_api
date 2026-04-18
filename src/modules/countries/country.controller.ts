@@ -30,6 +30,13 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('countries').select('*', { count: 'exact' });
 
+  // By default, hide soft-deleted. Use ?show_deleted=true to show only deleted.
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,iso2.ilike.%${search}%,iso3.ilike.%${search}%,nationality.ilike.%${search}%`);
 
@@ -125,7 +132,47 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Country updated');
 }
 
-// DELETE /countries/:id
+// DELETE /countries/:id — soft delete (sets deleted_at timestamp)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('countries').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Country not found', 404);
+  if (old.deleted_at) return err(res, 'Country is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('countries')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id)
+    .select()
+    .single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'country_soft_deleted', targetType: 'country', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Country moved to trash');
+}
+
+// PATCH /countries/:id/restore — restore a soft-deleted country
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('countries').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Country not found', 404);
+  if (!old.deleted_at) return err(res, 'Country is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('countries')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id)
+    .select()
+    .single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'country_restored', targetType: 'country', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Country restored');
+}
+
+// DELETE /countries/:id/permanent — permanently delete (hard delete)
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('countries').select('name, flag_image').eq('id', id).single();
@@ -140,5 +187,5 @@ export async function remove(req: Request, res: Response) {
   logAdmin({ actorId: req.user!.id, action: 'country_deleted', targetType: 'country', targetId: id, targetName: old.name, ip: getClientIp(req) });
   if (old.flag_image) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'country', resourceId: id, resourceName: old.name, ip: getClientIp(req) });
 
-  return ok(res, null, 'Country deleted');
+  return ok(res, null, 'Country permanently deleted');
 }
