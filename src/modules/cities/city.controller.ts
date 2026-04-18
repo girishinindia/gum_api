@@ -31,6 +31,8 @@ export async function list(req: Request, res: Response) {
 
   // Filters
   if (req.query.state_id) q = q.eq('state_id', parseInt(req.query.state_id as string));
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

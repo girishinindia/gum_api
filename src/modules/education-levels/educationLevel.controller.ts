@@ -31,6 +31,8 @@ export async function list(req: Request, res: Response) {
 
   // Filters
   if (req.query.level_category) q = q.eq('level_category', req.query.level_category);
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

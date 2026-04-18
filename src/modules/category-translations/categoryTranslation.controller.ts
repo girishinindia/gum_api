@@ -128,12 +128,31 @@ export async function create(req: Request, res: Response) {
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).eq('for_material', true).single();
   if (!lang) return err(res, 'Language not found or not available for material', 404);
 
-  let imageUrl: string | null = null;
-  if (req.file) {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const uploadedUrls: string[] = [];
+
+  // Process main image
+  if (files?.image?.[0]) {
     const slug = (body.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
     const path = `category-translations/${slug}-${Date.now()}.webp`;
-    imageUrl = await processAndUploadImage(req.file.buffer, path, { width: 400, height: 400, quality: 85 });
-    body.image = imageUrl;
+    body.image = await processAndUploadImage(files.image[0].buffer, path, { width: 400, height: 400, quality: 85 });
+    uploadedUrls.push(body.image);
+  }
+
+  // Process OG image (1200x630 for Open Graph standard)
+  if (files?.og_image_file?.[0]) {
+    const slug = (body.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const path = `category-translations/og/${slug}-${Date.now()}.webp`;
+    body.og_image = await processAndUploadImage(files.og_image_file[0].buffer, path, { width: 1200, height: 630, quality: 85 });
+    uploadedUrls.push(body.og_image);
+  }
+
+  // Process Twitter image (1200x600 for Twitter card)
+  if (files?.twitter_image_file?.[0]) {
+    const slug = (body.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const path = `category-translations/twitter/${slug}-${Date.now()}.webp`;
+    body.twitter_image = await processAndUploadImage(files.twitter_image_file[0].buffer, path, { width: 1200, height: 600, quality: 85 });
+    uploadedUrls.push(body.twitter_image);
   }
 
   // Auto-generate structured_data if empty/null
@@ -151,14 +170,14 @@ export async function create(req: Request, res: Response) {
 
   const { data, error: e } = await supabase.from('category_translations').insert(body).select('*, categories(name, code, slug), languages(name, native_name, iso_code)').single();
   if (e) {
-    if (imageUrl) { try { await deleteImage(extractBunnyPath(imageUrl), imageUrl); } catch {} }
+    for (const url of uploadedUrls) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }
     if (e.code === '23505') return err(res, 'Translation for this category and language already exists', 409);
     return err(res, e.message, 500);
   }
 
   await clearCache(body.category_id);
   logAdmin({ actorId: req.user!.id, action: 'category_translation_created', targetType: 'category_translation', targetId: data.id, targetName: data.name, ip: getClientIp(req) });
-  if (imageUrl) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'category_translation', resourceId: data.id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'category_translation_image' } });
+  if (uploadedUrls.length) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'category_translation', resourceId: data.id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'category_translation_images', count: uploadedUrls.length } });
   return ok(res, data, 'Category translation created', 201);
 }
 
@@ -215,11 +234,34 @@ export async function update(req: Request, res: Response) {
     });
   }
 
-  if (req.file) {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  let mediaUploaded = false;
+
+  // Process main image
+  if (files?.image?.[0]) {
     const slug = (updates.name || old.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
     const path = `category-translations/${slug}-${Date.now()}.webp`;
-    updates.image = await processAndUploadImage(req.file.buffer, path, { width: 400, height: 400, quality: 85 });
+    updates.image = await processAndUploadImage(files.image[0].buffer, path, { width: 400, height: 400, quality: 85 });
     if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
+    mediaUploaded = true;
+  }
+
+  // Process OG image (1200x630)
+  if (files?.og_image_file?.[0]) {
+    const slug = (updates.name || old.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const path = `category-translations/og/${slug}-${Date.now()}.webp`;
+    updates.og_image = await processAndUploadImage(files.og_image_file[0].buffer, path, { width: 1200, height: 630, quality: 85 });
+    if (old.og_image) { try { await deleteImage(extractBunnyPath(old.og_image), old.og_image); } catch {} }
+    mediaUploaded = true;
+  }
+
+  // Process Twitter image (1200x600)
+  if (files?.twitter_image_file?.[0]) {
+    const slug = (updates.name || old.name || 'cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const path = `category-translations/twitter/${slug}-${Date.now()}.webp`;
+    updates.twitter_image = await processAndUploadImage(files.twitter_image_file[0].buffer, path, { width: 1200, height: 600, quality: 85 });
+    if (old.twitter_image) { try { await deleteImage(extractBunnyPath(old.twitter_image), old.twitter_image); } catch {} }
+    mediaUploaded = true;
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
@@ -231,9 +273,10 @@ export async function update(req: Request, res: Response) {
   }
 
   const changes: any = {};
+  const imageFields = ['image', 'og_image', 'twitter_image'];
   for (const k of Object.keys(updates)) {
-    if (k === 'image') {
-      changes.image = { old: old.image || null, new: updates.image };
+    if (imageFields.includes(k)) {
+      changes[k] = { old: (old as any)[k] || null, new: updates[k] };
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
@@ -242,17 +285,20 @@ export async function update(req: Request, res: Response) {
   await clearCache(old.category_id);
   if (updates.category_id && updates.category_id !== old.category_id) await clearCache(updates.category_id);
   logAdmin({ actorId: req.user!.id, action: 'category_translation_updated', targetType: 'category_translation', targetId: id, targetName: data.name, changes, ip: getClientIp(req) });
-  if (req.file) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'category_translation', resourceId: id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'category_translation_image', old_url: old.image } });
+  if (mediaUploaded) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'category_translation', resourceId: id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'category_translation_images' } });
 
   return ok(res, data, 'Category translation updated');
 }
 
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('category_translations').select('name, image, category_id').eq('id', id).single();
+  const { data: old } = await supabase.from('category_translations').select('name, image, og_image, twitter_image, category_id').eq('id', id).single();
   if (!old) return err(res, 'Category translation not found', 404);
 
-  if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
+  // Clean up all CDN images
+  for (const url of [old.image, old.og_image, old.twitter_image]) {
+    if (url) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }
+  }
 
   const { error: e } = await supabase.from('category_translations').delete().eq('id', id);
   if (e) return err(res, e.message, 500);

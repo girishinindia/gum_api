@@ -36,6 +36,8 @@ export async function list(req: Request, res: Response) {
 
   // Filters
   if (req.query.document_type_id) q = q.eq('document_type_id', parseInt(req.query.document_type_id as string));
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

@@ -10,8 +10,9 @@ r.get('/',     ctrl.list);
 r.get('/:id',  ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());
-r.post('/',      requirePermission('category_translation', 'create'), upload.single('image'), ctrl.create);
-r.patch('/:id',  requirePermission('category_translation', 'update'), upload.single('image'), ctrl.update);
+const multiUpload = upload.fields([{ name: 'image', maxCount: 1 }, { name: 'og_image_file', maxCount: 1 }, { name: 'twitter_image_file', maxCount: 1 }]);
+r.post('/',      requirePermission('category_translation', 'create'), multiUpload, ctrl.create);
+r.patch('/:id',  requirePermission('category_translation', 'update'), multiUpload, ctrl.update);
 r.delete('/:id', requirePermission('category_translation', 'delete'), ctrl.remove);
 
 export default r;

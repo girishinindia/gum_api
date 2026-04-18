@@ -7,6 +7,7 @@ import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logAuth, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
+import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
 function extractBunnyPath(cdnUrl: string): string {
@@ -17,13 +18,20 @@ const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'pr
 const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 
 export async function list(req: Request, res: Response) {
-  const page = parseInt(req.query.page as string) || 1;
-  const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-  const offset = (page - 1) * limit;
-  let q = supabase.from('users').select('id, first_name, last_name, full_name, email, mobile, status, locale, avatar_url, last_login_at, login_count, created_at', { count: 'exact' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
+
+  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, locale, avatar_url, last_login_at, login_count, created_at', { count: 'exact' });
+
+  // Search
+  if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,mobile.ilike.%${search}%`);
+
+  // Filters
   if (req.query.status) q = q.eq('status', req.query.status);
-  if (req.query.search) q = q.or(`full_name.ilike.%${req.query.search}%,email.ilike.%${req.query.search}%,mobile.ilike.%${req.query.search}%`);
-  const { data, count, error: e } = await q.range(offset, offset + limit - 1).order('created_at', { ascending: false });
+
+  // Sort + paginate
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
   return paginated(res, data || [], count || 0, page, limit);
 }

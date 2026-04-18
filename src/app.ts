@@ -33,6 +33,7 @@ import branchRoutes from './modules/branches/branch.routes';
 import departmentRoutes from './modules/departments/department.routes';
 import branchDepartmentRoutes from './modules/branch-departments/branchDepartment.routes';
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
+import tableSummaryRoutes from './modules/table-summary/tableSummary.routes';
 import profileRoutes from './modules/profile/profile.routes';
 
 const app = express();
@@ -89,6 +90,7 @@ app.use(`${api}/branches`,                    branchRoutes);
 app.use(`${api}/departments`,                 departmentRoutes);
 app.use(`${api}/branch-departments`,          branchDepartmentRoutes);
 app.use(`${api}/activity-logs`,               activityLogRoutes);
+app.use(`${api}/table-summary`,              tableSummaryRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
