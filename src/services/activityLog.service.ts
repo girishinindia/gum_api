@@ -3,7 +3,28 @@ import { logger } from '../utils/logger';
 
 async function rpcSafe(fn: string, params: Record<string, any>): Promise<any> {
   const { data, error } = await supabase.rpc(fn, params);
-  if (error) logger.error({ fn, error: error.message }, '[ActivityLog] RPC failed');
+  if (error) {
+    // User-friendly messages for common activity log errors
+    if (error.message?.includes('check constraint') && error.message?.includes('action_check')) {
+      const action = params.p_action || 'unknown';
+      logger.error(
+        { fn, action, error: error.message },
+        `[ActivityLog] Action "${action}" is not registered in the database constraint. Please run the latest migration to update the allowed actions list.`
+      );
+    } else if (error.code === '23503') {
+      logger.error(
+        { fn, error: error.message },
+        '[ActivityLog] Referenced record not found — the user or target may have been deleted.'
+      );
+    } else if (error.code === '23505') {
+      logger.error(
+        { fn, error: error.message },
+        '[ActivityLog] Duplicate activity log entry detected — this event was already recorded.'
+      );
+    } else {
+      logger.error({ fn, error: error.message }, '[ActivityLog] Failed to record activity — please check database connectivity and schema.');
+    }
+  }
   return data;
 }
 

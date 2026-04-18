@@ -25,7 +25,6 @@ function extractBunnyPath(cdnUrl: string): string {
 function parseMultipartBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
-  if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   if (typeof body.sub_category_id === 'string') body.sub_category_id = parseInt(body.sub_category_id);
   if (typeof body.language_id === 'string') body.language_id = parseInt(body.language_id);
   if (typeof body.tags === 'string') { try { body.tags = JSON.parse(body.tags); } catch { body.tags = []; } }
@@ -43,7 +42,7 @@ function generateStructuredData(opts: {
   description?: string | null;
   subCategorySlug: string;
   categorySlug: string;
-  categoryName: string;
+  categoryCode: string;
   isoCode?: string;
   image?: string | null;
   canonicalUrl?: string | null;
@@ -77,7 +76,7 @@ function generateStructuredData(opts: {
       itemListElement: [
         { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${lang}` },
         { '@type': 'ListItem', position: 2, name: 'Categories', item: `${SITE_URL}/${lang}/categories` },
-        { '@type': 'ListItem', position: 3, name: opts.categoryName, item: `${SITE_URL}/${lang}/categories/${opts.categorySlug}` },
+        { '@type': 'ListItem', position: 3, name: opts.categoryCode, item: `${SITE_URL}/${lang}/categories/${opts.categorySlug}` },
         { '@type': 'ListItem', position: 4, name: opts.name },
       ],
     },
@@ -96,13 +95,20 @@ function generateStructuredData(opts: {
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  let q = supabase.from('sub_category_translations').select('*, sub_categories(name, code, slug, category_id, categories(name, code)), languages(name, native_name, iso_code)', { count: 'exact' });
+  let q = supabase.from('sub_category_translations').select('*, sub_categories(code, slug, image, category_id, categories(code, slug)), languages(name, native_name, iso_code)', { count: 'exact' });
 
   if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%,meta_title.ilike.%${search}%,focus_keyword.ilike.%${search}%`);
   if (req.query.sub_category_id) q = q.eq('sub_category_id', req.query.sub_category_id);
   if (req.query.language_id) q = q.eq('language_id', req.query.language_id);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
@@ -112,7 +118,7 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('sub_category_translations').select('*, sub_categories(name, code, slug, category_id, categories(name, code)), languages(name, native_name, iso_code)').eq('id', req.params.id).single();
+  const { data, error: e } = await supabase.from('sub_category_translations').select('*, sub_categories(code, slug, image, category_id, categories(code, slug)), languages(name, native_name, iso_code)').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Sub-category translation not found', 404);
   return ok(res, data);
 }
@@ -125,23 +131,18 @@ export async function create(req: Request, res: Response) {
   }
 
   // Verify sub-category exists (include parent category for structured data)
-  const { data: subCat } = await supabase.from('sub_categories').select('id, slug, category_id, categories(name, slug)').eq('id', body.sub_category_id).single();
+  const { data: subCat } = await supabase.from('sub_categories').select('id, slug, image, category_id, categories(code, slug)').eq('id', body.sub_category_id).single();
   if (!subCat) return err(res, 'Sub-category not found', 404);
 
   // Verify language exists and for_material = true
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).eq('for_material', true).single();
   if (!lang) return err(res, 'Language not found or not available for material', 404);
 
+  // Set audit field
+  body.created_by = req.user!.id;
+
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   const uploadedUrls: string[] = [];
-
-  // Process main image
-  if (files?.image?.[0]) {
-    const slug = (body.name || 'sub-cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `sub-category-translations/${slug}-${Date.now()}.webp`;
-    body.image = await processAndUploadImage(files.image[0].buffer, path, { width: 400, height: 400, quality: 85 });
-    uploadedUrls.push(body.image);
-  }
 
   // Process OG image (1200x630 for Open Graph standard)
   if (files?.og_image_file?.[0]) {
@@ -159,7 +160,7 @@ export async function create(req: Request, res: Response) {
     uploadedUrls.push(body.twitter_image);
   }
 
-  // Auto-generate structured_data if empty/null
+  // Auto-generate structured_data if empty/null (use sub-category image as fallback)
   if (!body.structured_data || (Array.isArray(body.structured_data) && body.structured_data.length === 0)) {
     const parentCat = (subCat as any).categories;
     body.structured_data = generateStructuredData({
@@ -167,14 +168,14 @@ export async function create(req: Request, res: Response) {
       description: body.description,
       subCategorySlug: subCat.slug,
       categorySlug: parentCat?.slug || 'category',
-      categoryName: parentCat?.name || 'Category',
+      categoryCode: parentCat?.code || 'Category',
       isoCode: lang.iso_code,
-      image: body.image || null,
+      image: subCat.image || null,
       canonicalUrl: body.canonical_url,
     });
   }
 
-  const { data, error: e } = await supabase.from('sub_category_translations').insert(body).select('*, sub_categories(name, code, slug, category_id, categories(name, code)), languages(name, native_name, iso_code)').single();
+  const { data, error: e } = await supabase.from('sub_category_translations').insert(body).select('*, sub_categories(code, slug, image, category_id, categories(code, slug)), languages(name, native_name, iso_code)').single();
   if (e) {
     for (const url of uploadedUrls) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }
     if (e.code === '23505') return err(res, 'Translation for this sub-category and language already exists', 409);
@@ -200,19 +201,24 @@ export async function update(req: Request, res: Response) {
     }
   }
 
+  // Set audit field
+  updates.updated_by = req.user!.id;
+
   // Track resolved FK data for structured data regeneration
   let resolvedSubCatSlug: string | undefined;
+  let resolvedSubCatImage: string | undefined;
   let resolvedCatSlug: string | undefined;
-  let resolvedCatName: string | undefined;
+  let resolvedCatCode: string | undefined;
   let resolvedLangIso: string | undefined;
 
   if (updates.sub_category_id && updates.sub_category_id !== old.sub_category_id) {
-    const { data: subCat } = await supabase.from('sub_categories').select('id, slug, categories(name, slug)').eq('id', updates.sub_category_id).single();
+    const { data: subCat } = await supabase.from('sub_categories').select('id, slug, image, categories(code, slug)').eq('id', updates.sub_category_id).single();
     if (!subCat) return err(res, 'Sub-category not found', 404);
     resolvedSubCatSlug = subCat.slug;
+    resolvedSubCatImage = subCat.image;
     const parentCat = (subCat as any).categories;
     resolvedCatSlug = parentCat?.slug;
-    resolvedCatName = parentCat?.name;
+    resolvedCatCode = parentCat?.code;
   }
 
   if (updates.language_id && updates.language_id !== old.language_id) {
@@ -226,11 +232,12 @@ export async function update(req: Request, res: Response) {
     const subCatId = updates.sub_category_id || old.sub_category_id;
     const langId = updates.language_id || old.language_id;
     if (!resolvedSubCatSlug) {
-      const { data: subCat } = await supabase.from('sub_categories').select('slug, categories(name, slug)').eq('id', subCatId).single();
+      const { data: subCat } = await supabase.from('sub_categories').select('slug, image, categories(code, slug)').eq('id', subCatId).single();
       resolvedSubCatSlug = subCat?.slug;
+      resolvedSubCatImage = subCat?.image;
       const parentCat = (subCat as any)?.categories;
       resolvedCatSlug = parentCat?.slug;
-      resolvedCatName = parentCat?.name;
+      resolvedCatCode = parentCat?.code;
     }
     if (!resolvedLangIso) {
       const { data: lang } = await supabase.from('languages').select('iso_code').eq('id', langId).single();
@@ -241,24 +248,15 @@ export async function update(req: Request, res: Response) {
       description: updates.description !== undefined ? updates.description : old.description,
       subCategorySlug: resolvedSubCatSlug || 'sub-category',
       categorySlug: resolvedCatSlug || 'category',
-      categoryName: resolvedCatName || 'Category',
+      categoryCode: resolvedCatCode || 'Category',
       isoCode: resolvedLangIso || 'en',
-      image: updates.image || old.image,
+      image: resolvedSubCatImage || null,
       canonicalUrl: updates.canonical_url !== undefined ? updates.canonical_url : old.canonical_url,
     });
   }
 
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   let mediaUploaded = false;
-
-  // Process main image
-  if (files?.image?.[0]) {
-    const slug = (updates.name || old.name || 'sub-cat-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `sub-category-translations/${slug}-${Date.now()}.webp`;
-    updates.image = await processAndUploadImage(files.image[0].buffer, path, { width: 400, height: 400, quality: 85 });
-    if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
-    mediaUploaded = true;
-  }
 
   // Process OG image (1200x630)
   if (files?.og_image_file?.[0]) {
@@ -280,17 +278,19 @@ export async function update(req: Request, res: Response) {
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
 
-  const { data, error: e } = await supabase.from('sub_category_translations').update(updates).eq('id', id).select('*, sub_categories(name, code, slug, category_id, categories(name, code)), languages(name, native_name, iso_code)').single();
+  const { data, error: e } = await supabase.from('sub_category_translations').update(updates).eq('id', id).select('*, sub_categories(code, slug, image, category_id, categories(code, slug)), languages(name, native_name, iso_code)').single();
   if (e) {
     if (e.code === '23505') return err(res, 'Translation for this sub-category and language already exists', 409);
     return err(res, e.message, 500);
   }
 
   const changes: any = {};
-  const imageFields = ['image', 'og_image', 'twitter_image'];
+  const imageFields = ['og_image', 'twitter_image'];
   for (const k of Object.keys(updates)) {
     if (imageFields.includes(k)) {
       changes[k] = { old: (old as any)[k] || null, new: updates[k] };
+    } else if (k === 'updated_by') {
+      // skip audit field
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
@@ -304,13 +304,50 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Sub-category translation updated');
 }
 
+// DELETE /sub-category-translations/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('sub_category_translations').select('name, deleted_at, sub_category_id').eq('id', id).single();
+  if (!old) return err(res, 'Sub-category translation not found', 404);
+  if (old.deleted_at) return err(res, 'Translation is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('sub_category_translations')
+    .update({ deleted_at: new Date().toISOString(), is_active: false, is_deleted: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.sub_category_id);
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_translation_soft_deleted', targetType: 'sub_category_translation', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Sub-category translation moved to trash');
+}
+
+// PATCH /sub-category-translations/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('sub_category_translations').select('name, deleted_at, sub_category_id').eq('id', id).single();
+  if (!old) return err(res, 'Sub-category translation not found', 404);
+  if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('sub_category_translations')
+    .update({ deleted_at: null, is_active: true, is_deleted: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.sub_category_id);
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_translation_restored', targetType: 'sub_category_translation', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Sub-category translation restored');
+}
+
+// DELETE /sub-category-translations/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('sub_category_translations').select('name, image, og_image, twitter_image, sub_category_id').eq('id', id).single();
+  const { data: old } = await supabase.from('sub_category_translations').select('name, og_image, twitter_image, sub_category_id').eq('id', id).single();
   if (!old) return err(res, 'Sub-category translation not found', 404);
 
-  // Clean up all CDN images
-  for (const url of [old.image, old.og_image, old.twitter_image]) {
+  // Clean up CDN images
+  for (const url of [old.og_image, old.twitter_image]) {
     if (url) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }
   }
 
@@ -319,7 +356,7 @@ export async function remove(req: Request, res: Response) {
 
   await clearCache(old.sub_category_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_category_translation_deleted', targetType: 'sub_category_translation', targetId: id, targetName: old.name, ip: getClientIp(req) });
-  if (old.image) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'sub_category_translation', resourceId: id, resourceName: old.name, ip: getClientIp(req) });
+  if (old.og_image || old.twitter_image) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'sub_category_translation', resourceId: id, resourceName: old.name, ip: getClientIp(req) });
 
-  return ok(res, null, 'Sub-category translation deleted');
+  return ok(res, null, 'Sub-category translation permanently deleted');
 }

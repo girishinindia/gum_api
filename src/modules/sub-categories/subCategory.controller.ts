@@ -23,7 +23,6 @@ function parseMultipartBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.is_new === 'string') body.is_new = body.is_new === 'true';
-  if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   if (typeof body.display_order === 'string') body.display_order = parseInt(body.display_order) || 0;
   if (typeof body.category_id === 'string') body.category_id = parseInt(body.category_id) || 0;
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
@@ -31,12 +30,12 @@ function parseMultipartBody(req: Request): any {
 }
 
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
 
-  let q = supabase.from('sub_categories').select('*, categories(name, code)', { count: 'exact' });
+  let q = supabase.from('sub_categories').select('*, categories(code, slug)', { count: 'exact' });
 
-  // Search
-  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
+  // Search (name removed — now only on translations)
+  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -59,7 +58,7 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('sub_categories').select('*, categories(name, code)').eq('id', req.params.id).single();
+  const { data, error: e } = await supabase.from('sub_categories').select('*, categories(code, slug)').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Sub-category not found', 404);
   return ok(res, data);
 }
@@ -75,6 +74,9 @@ export async function create(req: Request, res: Response) {
   const { data: cat } = await supabase.from('categories').select('id').eq('id', body.category_id).single();
   if (!cat) return err(res, 'Category not found', 404);
 
+  // Set audit field
+  body.created_by = req.user!.id;
+
   let imageUrl: string | null = null;
   if (req.file) {
     const slug = (body.slug || body.code || 'subcat').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
@@ -83,16 +85,16 @@ export async function create(req: Request, res: Response) {
     body.image = imageUrl;
   }
 
-  const { data, error: e } = await supabase.from('sub_categories').insert(body).select('*, categories(name, code)').single();
+  const { data, error: e } = await supabase.from('sub_categories').insert(body).select('*, categories(code, slug)').single();
   if (e) {
     if (imageUrl) { try { await deleteImage(extractBunnyPath(imageUrl), imageUrl); } catch {} }
-    if (e.code === '23505') return err(res, 'Sub-category name, code, or slug already exists in this category', 409);
+    if (e.code === '23505') return err(res, 'Sub-category code or slug already exists in this category', 409);
     return err(res, e.message, 500);
   }
 
   await clearCache(body.category_id);
-  logAdmin({ actorId: req.user!.id, action: 'sub_category_created', targetType: 'sub_category', targetId: data.id, targetName: data.name, ip: getClientIp(req) });
-  if (imageUrl) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'sub_category', resourceId: data.id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'sub_category_image' } });
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_created', targetType: 'sub_category', targetId: data.id, targetName: data.code, ip: getClientIp(req) });
+  if (imageUrl) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'sub_category', resourceId: data.id, resourceName: data.code, ip: getClientIp(req), metadata: { type: 'sub_category_image' } });
   return ok(res, data, 'Sub-category created', 201);
 }
 
@@ -115,6 +117,9 @@ export async function update(req: Request, res: Response) {
     if (!cat) return err(res, 'Category not found', 404);
   }
 
+  // Set audit field
+  updates.updated_by = req.user!.id;
+
   if (req.file) {
     const slug = (updates.slug || old.slug || 'subcat').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
     const path = `sub-categories/${slug}-${Date.now()}.webp`;
@@ -124,9 +129,9 @@ export async function update(req: Request, res: Response) {
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
 
-  const { data, error: e } = await supabase.from('sub_categories').update(updates).eq('id', id).select('*, categories(name, code)').single();
+  const { data, error: e } = await supabase.from('sub_categories').update(updates).eq('id', id).select('*, categories(code, slug)').single();
   if (e) {
-    if (e.code === '23505') return err(res, 'Sub-category name, code, or slug already exists in this category', 409);
+    if (e.code === '23505') return err(res, 'Sub-category code or slug already exists in this category', 409);
     return err(res, e.message, 500);
   }
 
@@ -134,6 +139,8 @@ export async function update(req: Request, res: Response) {
   for (const k of Object.keys(updates)) {
     if (k === 'image') {
       changes.image = { old: old.image || null, new: updates.image };
+    } else if (k === 'updated_by') {
+      // skip audit field from changes
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
@@ -142,8 +149,8 @@ export async function update(req: Request, res: Response) {
   await clearCache(old.category_id);
   if (updates.category_id && updates.category_id !== old.category_id) await clearCache(updates.category_id);
 
-  logAdmin({ actorId: req.user!.id, action: 'sub_category_updated', targetType: 'sub_category', targetId: id, targetName: data.name, changes, ip: getClientIp(req) });
-  if (req.file) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'sub_category', resourceId: id, resourceName: data.name, ip: getClientIp(req), metadata: { type: 'sub_category_image', old_url: old.image } });
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_updated', targetType: 'sub_category', targetId: id, targetName: data.code, changes, ip: getClientIp(req) });
+  if (req.file) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'sub_category', resourceId: id, resourceName: data.code, ip: getClientIp(req), metadata: { type: 'sub_category_image', old_url: old.image } });
 
   return ok(res, data, 'Sub-category updated');
 }
@@ -151,43 +158,43 @@ export async function update(req: Request, res: Response) {
 // DELETE /sub-categories/:id (soft delete)
 export async function softDelete(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('sub_categories').select('name, category_id, deleted_at').eq('id', id).single();
+  const { data: old } = await supabase.from('sub_categories').select('code, category_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Sub-category not found', 404);
   if (old.deleted_at) return err(res, 'Sub-category is already in trash', 400);
 
   const { data, error: e } = await supabase
     .from('sub_categories')
-    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .update({ deleted_at: new Date().toISOString(), is_active: false, is_deleted: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.category_id);
-  logAdmin({ actorId: req.user!.id, action: 'sub_category_soft_deleted', targetType: 'sub_category', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_soft_deleted', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
   return ok(res, data, 'Sub-category moved to trash');
 }
 
 // PATCH /sub-categories/:id/restore
 export async function restore(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('sub_categories').select('name, category_id, deleted_at').eq('id', id).single();
+  const { data: old } = await supabase.from('sub_categories').select('code, category_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Sub-category not found', 404);
   if (!old.deleted_at) return err(res, 'Sub-category is not in trash', 400);
 
   const { data, error: e } = await supabase
     .from('sub_categories')
-    .update({ deleted_at: null, is_active: true })
+    .update({ deleted_at: null, is_active: true, is_deleted: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.category_id);
-  logAdmin({ actorId: req.user!.id, action: 'sub_category_restored', targetType: 'sub_category', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_restored', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
   return ok(res, data, 'Sub-category restored');
 }
 
 // DELETE /sub-categories/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('sub_categories').select('name, image, category_id').eq('id', id).single();
+  const { data: old } = await supabase.from('sub_categories').select('code, image, category_id').eq('id', id).single();
   if (!old) return err(res, 'Sub-category not found', 404);
 
   if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
@@ -196,8 +203,8 @@ export async function remove(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.category_id);
-  logAdmin({ actorId: req.user!.id, action: 'sub_category_deleted', targetType: 'sub_category', targetId: id, targetName: old.name, ip: getClientIp(req) });
-  if (old.image) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'sub_category', resourceId: id, resourceName: old.name, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_deleted', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
+  if (old.image) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'sub_category', resourceId: id, resourceName: old.code, ip: getClientIp(req) });
 
   return ok(res, null, 'Sub-category deleted');
 }
