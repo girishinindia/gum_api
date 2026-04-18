@@ -20,13 +20,20 @@ const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
 
-  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, locale, avatar_url, last_login_at, login_count, created_at', { count: 'exact' });
+  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, locale, avatar_url, last_login_at, login_count, created_at, deleted_at', { count: 'exact' });
+
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
 
   // Search
   if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,mobile.ilike.%${search}%`);
 
   // Filters
-  if (req.query.status) q = q.eq('status', req.query.status);
+  if (req.query.status) q = q.eq('status', req.query.status as string);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -266,6 +273,66 @@ export async function revokeAllSessions(req: Request, res: Response) {
   return ok(res, { revoked: count }, `${count} sessions revoked`);
 }
 
+
+// DELETE /users/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  if (id === req.user!.id) return err(res, 'Cannot soft-delete your own account', 403);
+
+  const { data: old } = await supabase.from('users').select('email, full_name, status, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'User not found', 404);
+  if (old.deleted_at) return err(res, 'User is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('users')
+    .update({ deleted_at: new Date().toISOString(), status: 'inactive' })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  // Revoke all active sessions
+  await supabase
+    .from('login_sessions')
+    .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'account_soft_deleted' })
+    .eq('user_id', id)
+    .eq('is_active', true);
+  await Promise.all([redis.del(`perms:${id}`), redis.del(`has_session:${id}`)]);
+
+  logAdmin({ actorId: req.user!.id, action: 'user_soft_deleted', targetType: 'user', targetId: id, targetName: old.email, ip: getClientIp(req) });
+  return ok(res, data, 'User moved to trash');
+}
+
+// PATCH /users/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('users').select('email, full_name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'User not found', 404);
+  if (!old.deleted_at) return err(res, 'User is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('users')
+    .update({ deleted_at: null, status: 'active' })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  logAdmin({ actorId: req.user!.id, action: 'user_restored', targetType: 'user', targetId: id, targetName: old.email, ip: getClientIp(req) });
+  return ok(res, data, 'User restored');
+}
+
+// DELETE /users/:id/permanent
+export async function remove(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  if (id === req.user!.id) return err(res, 'Cannot delete your own account', 403);
+
+  const { data: old } = await supabase.from('users').select('email, full_name').eq('id', id).single();
+  if (!old) return err(res, 'User not found', 404);
+
+  const { error: e } = await supabase.from('users').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
+
+  await Promise.all([redis.del(`perms:${id}`), redis.del(`has_session:${id}`)]);
+  logAdmin({ actorId: req.user!.id, action: 'user_deleted', targetType: 'user', targetId: id, targetName: old.email, ip: getClientIp(req) });
+  return ok(res, null, 'User permanently deleted');
+}
 
 // POST /users — admin creates a user directly (no OTP). Requires user:create.
 // Accepts multipart/form-data with optional avatar file.

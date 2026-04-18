@@ -7,11 +7,13 @@ const r = Router();
 r.use(authMiddleware, attachPermissions(), requireSuperAdmin());
 
 // Roles CRUD — super_admin only
-r.get('/',       ctrl.list);
-r.get('/:id',    ctrl.getById);
-r.post('/',      ctrl.create);
-r.patch('/:id',  ctrl.update);
-r.delete('/:id', ctrl.remove);
+r.get('/',                ctrl.list);
+r.post('/',               ctrl.create);
+r.patch('/:id/restore',   ctrl.restore);
+r.get('/:id',             ctrl.getById);
+r.patch('/:id',           ctrl.update);
+r.delete('/:id/permanent', ctrl.remove);
+r.delete('/:id',          ctrl.softDelete);
 
 // Role-Permission management — super_admin only
 r.get('/:id/permissions',                  ctrl.listPermissions);

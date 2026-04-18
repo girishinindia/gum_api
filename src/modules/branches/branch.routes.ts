@@ -11,8 +11,10 @@ r.get('/:id',  ctrl.getById);
 
 // Protected
 r.use(authMiddleware, attachPermissions());
-r.post('/',      requirePermission('branch', 'create'), ctrl.create);
-r.patch('/:id',  requirePermission('branch', 'update'), ctrl.update);
-r.delete('/:id', requirePermission('branch', 'delete'), ctrl.remove);
+r.post('/',                requirePermission('branch', 'create'),      ctrl.create);
+r.patch('/:id/restore',   requirePermission('branch', 'restore'),     ctrl.restore);
+r.patch('/:id',           requirePermission('branch', 'update'),      ctrl.update);
+r.delete('/:id/permanent', requirePermission('branch', 'delete'),     ctrl.remove);
+r.delete('/:id',          requirePermission('branch', 'soft_delete'), ctrl.softDelete);
 
 export default r;

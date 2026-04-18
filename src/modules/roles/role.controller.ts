@@ -7,8 +7,16 @@ import { getClientIp } from '../../utils/helpers';
 
 const ALLOWED_FIELDS = ['name', 'display_name', 'description', 'level'];
 
-export async function list(_req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('roles').select('*').order('level', { ascending: false });
+export async function list(req: Request, res: Response) {
+  let q = supabase.from('roles').select('*');
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+  q = q.order('level', { ascending: false });
+  const { data, error: e } = await q;
   if (e) return err(res, e.message, 500);
   return ok(res, data);
 }
@@ -64,6 +72,42 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Role updated');
 }
 
+// DELETE /roles/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: role } = await supabase.from('roles').select('name, is_system, deleted_at').eq('id', id).single();
+  if (!role) return err(res, 'Role not found', 404);
+  if (role.is_system) return err(res, 'Cannot soft-delete system roles', 403);
+  if (role.deleted_at) return err(res, 'Role is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('roles')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  logAdmin({ actorId: req.user!.id, action: 'role_soft_deleted', targetType: 'role', targetId: id, targetName: role.name, ip: getClientIp(req) });
+  return ok(res, data, 'Role moved to trash');
+}
+
+// PATCH /roles/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: role } = await supabase.from('roles').select('name, deleted_at').eq('id', id).single();
+  if (!role) return err(res, 'Role not found', 404);
+  if (!role.deleted_at) return err(res, 'Role is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('roles')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  logAdmin({ actorId: req.user!.id, action: 'role_restored', targetType: 'role', targetId: id, targetName: role.name, ip: getClientIp(req) });
+  return ok(res, data, 'Role restored');
+}
+
+// DELETE /roles/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: role } = await supabase.from('roles').select('name, is_system').eq('id', id).single();

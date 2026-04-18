@@ -34,11 +34,20 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,email.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.country_id) q = q.eq('country_id', req.query.country_id);
   if (req.query.state_id) q = q.eq('state_id', req.query.state_id);
   if (req.query.city_id) q = q.eq('city_id', req.query.city_id);
   if (req.query.branch_type) q = q.eq('branch_type', req.query.branch_type);
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -152,7 +161,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Branch updated');
 }
 
-// DELETE /branches/:id
+// DELETE /branches/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('branches').select('name, country_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Branch not found', 404);
+  if (old.deleted_at) return err(res, 'Branch is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('branches')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.country_id);
+  logAdmin({ actorId: req.user!.id, action: 'branch_soft_deleted', targetType: 'branch', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Branch moved to trash');
+}
+
+// PATCH /branches/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('branches').select('name, country_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Branch not found', 404);
+  if (!old.deleted_at) return err(res, 'Branch is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('branches')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.country_id);
+  logAdmin({ actorId: req.user!.id, action: 'branch_restored', targetType: 'branch', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Branch restored');
+}
+
+// DELETE /branches/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('branches').select('name, country_id').eq('id', id).single();

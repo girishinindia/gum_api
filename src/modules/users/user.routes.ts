@@ -15,8 +15,11 @@ r.get('/me/permissions',                        ctrl.getMyPermissions);
 // User management
 r.get('/',                                      requirePermission('user', 'read'), ctrl.list);
 r.post('/', upload.single('avatar'),            requireSuperAdmin(), ctrl.create);
+r.patch('/:id/restore',                         requirePermission('user', 'restore'), ctrl.restore);
 r.get('/:id',                                   requirePermission('user', 'read'), ctrl.getById);
 r.patch('/:id', upload.single('avatar'),        requirePermission('user', 'update'), ctrl.update);
+r.delete('/:id/permanent',                      requirePermission('user', 'delete'), ctrl.remove);
+r.delete('/:id',                                requirePermission('user', 'soft_delete'), ctrl.softDelete);
 
 // Role assignments — super_admin only
 r.post('/:id/roles',                            requireSuperAdmin(), ctrl.assignRole);

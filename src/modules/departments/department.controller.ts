@@ -35,6 +35,17 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,description.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
+  // Filter by is_active
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+
   // Filter by parent_department_id
   if (req.query.parent_department_id !== undefined) {
     if (req.query.parent_department_id === 'null') {
@@ -148,7 +159,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Department updated');
 }
 
-// DELETE /departments/:id
+// DELETE /departments/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('departments').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Department not found', 404);
+  if (old.deleted_at) return err(res, 'Department is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('departments')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'department_soft_deleted', targetType: 'department', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Department moved to trash');
+}
+
+// PATCH /departments/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('departments').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Department not found', 404);
+  if (!old.deleted_at) return err(res, 'Department is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('departments')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'department_restored', targetType: 'department', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Department restored');
+}
+
+// DELETE /departments/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('departments').select('name').eq('id', id).single();
