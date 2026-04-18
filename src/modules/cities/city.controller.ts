@@ -29,6 +29,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.state_id) q = q.eq('state_id', parseInt(req.query.state_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -119,7 +126,47 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'City updated');
 }
 
-// DELETE /cities/:id
+// DELETE /cities/:id  (soft delete — move to trash)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('cities').select('name, state_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'City not found', 404);
+  if (old.deleted_at) return err(res, 'City is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('cities')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  await redis.del(`cities:state:${old.state_id}`);
+
+  logAdmin({ actorId: req.user!.id, action: 'city_soft_deleted', targetType: 'city', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'City moved to trash');
+}
+
+// PATCH /cities/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('cities').select('name, state_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'City not found', 404);
+  if (!old.deleted_at) return err(res, 'City is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('cities')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  await redis.del(`cities:state:${old.state_id}`);
+
+  logAdmin({ actorId: req.user!.id, action: 'city_restored', targetType: 'city', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'City restored');
+}
+
+// DELETE /cities/:id/permanent  (hard delete)
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('cities').select('name, state_id').eq('id', id).single();
@@ -132,5 +179,5 @@ export async function remove(req: Request, res: Response) {
   await redis.del(`cities:state:${old.state_id}`);
 
   logAdmin({ actorId: req.user!.id, action: 'city_deleted', targetType: 'city', targetId: id, targetName: old.name, ip: getClientIp(req) });
-  return ok(res, null, 'City deleted');
+  return ok(res, null, 'City permanently deleted');
 }
