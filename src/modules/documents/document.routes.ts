@@ -10,10 +10,12 @@ const r = Router();
 r.get('/',     ctrl.list);
 r.get('/:id',  ctrl.getById);
 
-// Protected
+// Protected — specific routes MUST come before generic /:id
 r.use(authMiddleware, attachPermissions());
-r.post('/',      requirePermission('document', 'create'), upload.single('file'), ctrl.create);
-r.patch('/:id',  requirePermission('document', 'update'), upload.single('file'), ctrl.update);
-r.delete('/:id', requirePermission('document', 'delete'), ctrl.remove);
+r.post('/',                requirePermission('document', 'create'),      upload.single('file'), ctrl.create);
+r.patch('/:id/restore',   requirePermission('document', 'restore'),     ctrl.restore);
+r.patch('/:id',           requirePermission('document', 'update'),      upload.single('file'), ctrl.update);
+r.delete('/:id/permanent', requirePermission('document', 'delete'),     ctrl.remove);
+r.delete('/:id',          requirePermission('document', 'soft_delete'), ctrl.softDelete);
 
 export default r;

@@ -38,6 +38,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -141,6 +148,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Sub-category updated');
 }
 
+// DELETE /sub-categories/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('sub_categories').select('name, category_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Sub-category not found', 404);
+  if (old.deleted_at) return err(res, 'Sub-category is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('sub_categories')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.category_id);
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_soft_deleted', targetType: 'sub_category', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Sub-category moved to trash');
+}
+
+// PATCH /sub-categories/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('sub_categories').select('name, category_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Sub-category not found', 404);
+  if (!old.deleted_at) return err(res, 'Sub-category is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('sub_categories')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.category_id);
+  logAdmin({ actorId: req.user!.id, action: 'sub_category_restored', targetType: 'sub_category', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Sub-category restored');
+}
+
+// DELETE /sub-categories/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('sub_categories').select('name, image, category_id').eq('id', id).single();

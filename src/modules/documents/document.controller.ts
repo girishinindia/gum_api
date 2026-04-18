@@ -34,6 +34,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.document_type_id) q = q.eq('document_type_id', parseInt(req.query.document_type_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -148,7 +155,47 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Document updated');
 }
 
-// DELETE /documents/:id
+// DELETE /documents/:id  (soft delete — move to trash)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('documents').select('name, document_type_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Document not found', 404);
+  if (old.deleted_at) return err(res, 'Document is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('documents')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  await redis.del(`documents:type:${old.document_type_id}`);
+
+  logAdmin({ actorId: req.user!.id, action: 'document_soft_deleted', targetType: 'document', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Document moved to trash');
+}
+
+// PATCH /documents/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('documents').select('name, document_type_id, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Document not found', 404);
+  if (!old.deleted_at) return err(res, 'Document is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('documents')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  await redis.del(`documents:type:${old.document_type_id}`);
+
+  logAdmin({ actorId: req.user!.id, action: 'document_restored', targetType: 'document', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Document restored');
+}
+
+// DELETE /documents/:id/permanent  (hard delete)
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('documents').select('name, file_url, document_type_id').eq('id', id).single();
@@ -165,5 +212,5 @@ export async function remove(req: Request, res: Response) {
   logAdmin({ actorId: req.user!.id, action: 'document_deleted', targetType: 'document', targetId: id, targetName: old.name, ip: getClientIp(req) });
   if (old.file_url) logData({ actorId: req.user!.id, action: 'media_deleted', resourceType: 'document', resourceId: id, resourceName: old.name, ip: getClientIp(req) });
 
-  return ok(res, null, 'Document deleted');
+  return ok(res, null, 'Document permanently deleted');
 }

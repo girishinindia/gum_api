@@ -32,6 +32,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.level_band) q = q.eq('level_band', req.query.level_band);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -107,7 +114,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Designation updated');
 }
 
-// DELETE /designations/:id
+// DELETE /designations/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('designations').select('name, level_band, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Designation not found', 404);
+  if (old.deleted_at) return err(res, 'Designation is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('designations')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.level_band);
+  logAdmin({ actorId: req.user!.id, action: 'designation_soft_deleted', targetType: 'designation', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Designation moved to trash');
+}
+
+// PATCH /designations/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('designations').select('name, level_band, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Designation not found', 404);
+  if (!old.deleted_at) return err(res, 'Designation is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('designations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.level_band);
+  logAdmin({ actorId: req.user!.id, action: 'designation_restored', targetType: 'designation', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Designation restored');
+}
+
+// DELETE /designations/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('designations').select('name, level_band').eq('id', id).single();

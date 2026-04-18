@@ -8,9 +8,12 @@ const r = Router();
 r.get('/',     ctrl.list);
 r.get('/:id',  ctrl.getById);
 
+// Protected — specific routes MUST come before generic /:id
 r.use(authMiddleware, attachPermissions());
-r.post('/',      requirePermission('specialization', 'create'), ctrl.create);
-r.patch('/:id',  requirePermission('specialization', 'update'), ctrl.update);
-r.delete('/:id', requirePermission('specialization', 'delete'), ctrl.remove);
+r.post('/',                requirePermission('specialization', 'create'),      ctrl.create);
+r.patch('/:id/restore',   requirePermission('specialization', 'restore'),     ctrl.restore);
+r.patch('/:id',           requirePermission('specialization', 'update'),      ctrl.update);
+r.delete('/:id/permanent', requirePermission('specialization', 'delete'),     ctrl.remove);
+r.delete('/:id',          requirePermission('specialization', 'soft_delete'), ctrl.softDelete);
 
 export default r;

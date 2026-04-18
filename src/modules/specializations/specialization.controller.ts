@@ -30,6 +30,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.category) q = q.eq('category', req.query.category);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -102,6 +109,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Specialization updated');
 }
 
+// DELETE /specializations/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('specializations').select('name, category, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Specialization not found', 404);
+  if (old.deleted_at) return err(res, 'Specialization is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('specializations')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.category);
+  logAdmin({ actorId: req.user!.id, action: 'specialization_soft_deleted', targetType: 'specialization', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Specialization moved to trash');
+}
+
+// PATCH /specializations/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('specializations').select('name, category, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Specialization not found', 404);
+  if (!old.deleted_at) return err(res, 'Specialization is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('specializations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.category);
+  logAdmin({ actorId: req.user!.id, action: 'specialization_restored', targetType: 'specialization', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Specialization restored');
+}
+
+// DELETE /specializations/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('specializations').select('name, category').eq('id', id).single();

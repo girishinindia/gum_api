@@ -36,6 +36,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.platform_type) q = q.eq('platform_type', req.query.platform_type);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -129,6 +136,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Social media updated');
 }
 
+// DELETE /social-medias/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('social_medias').select('name, platform_type, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Social media not found', 404);
+  if (old.deleted_at) return err(res, 'Social media is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('social_medias')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.platform_type);
+  logAdmin({ actorId: req.user!.id, action: 'social_media_soft_deleted', targetType: 'social_media', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Social media moved to trash');
+}
+
+// PATCH /social-medias/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('social_medias').select('name, platform_type, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Social media not found', 404);
+  if (!old.deleted_at) return err(res, 'Social media is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('social_medias')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache(old.platform_type);
+  logAdmin({ actorId: req.user!.id, action: 'social_media_restored', targetType: 'social_media', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Social media restored');
+}
+
+// DELETE /social-medias/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('social_medias').select('name, icon, platform_type').eq('id', id).single();

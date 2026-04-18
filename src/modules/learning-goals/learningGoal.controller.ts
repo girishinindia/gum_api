@@ -28,6 +28,13 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
 
+  // Soft-delete filter
+  if (req.query.show_deleted === 'true') {
+    q = q.not('deleted_at', 'is', null);
+  } else {
+    q = q.is('deleted_at', null);
+  }
+
   // Filters
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
@@ -97,6 +104,43 @@ export async function update(req: Request, res: Response) {
   return ok(res, data, 'Learning goal updated');
 }
 
+// DELETE /learning-goals/:id (soft delete)
+export async function softDelete(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('learning_goals').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Learning goal not found', 404);
+  if (old.deleted_at) return err(res, 'Learning goal is already in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('learning_goals')
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'learning_goal_soft_deleted', targetType: 'learning_goal', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Learning goal moved to trash');
+}
+
+// PATCH /learning-goals/:id/restore
+export async function restore(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('learning_goals').select('name, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Learning goal not found', 404);
+  if (!old.deleted_at) return err(res, 'Learning goal is not in trash', 400);
+
+  const { data, error: e } = await supabase
+    .from('learning_goals')
+    .update({ deleted_at: null, is_active: true })
+    .eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'learning_goal_restored', targetType: 'learning_goal', targetId: id, targetName: old.name, ip: getClientIp(req) });
+  return ok(res, data, 'Learning goal restored');
+}
+
+// DELETE /learning-goals/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('learning_goals').select('name').eq('id', id).single();
