@@ -26,7 +26,10 @@ function parseBody(req: Request): any {
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
 
-  const selectFields = '*, parent:departments!departments_parent_department_id_fkey(id, name, code), head:users!departments_head_user_id_fkey(full_name, email)';
+  // NOTE: Self-referencing FK join (departments→departments) is not reliably supported
+  // by PostgREST schema cache. We fetch parent_department_id as a plain field and
+  // resolve the parent name on the client side from the full list.
+  const selectFields = '*, head:users!departments_head_user_id_fkey(full_name, email)';
   let q = supabase.from('departments').select(selectFields, { count: 'exact' });
 
   // Search
@@ -51,7 +54,7 @@ export async function list(req: Request, res: Response) {
 
 // GET /departments/:id
 export async function getById(req: Request, res: Response) {
-  const selectFields = '*, parent:departments!departments_parent_department_id_fkey(id, name, code), head:users!departments_head_user_id_fkey(full_name, email)';
+  const selectFields = '*, head:users!departments_head_user_id_fkey(full_name, email)';
   const { data, error: e } = await supabase.from('departments').select(selectFields).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Department not found', 404);
   return ok(res, data);
@@ -82,7 +85,7 @@ export async function create(req: Request, res: Response) {
     if (!user) return err(res, 'Head user not found', 404);
   }
 
-  const selectFields = '*, parent:departments!departments_parent_department_id_fkey(id, name, code), head:users!departments_head_user_id_fkey(full_name, email)';
+  const selectFields = '*, head:users!departments_head_user_id_fkey(full_name, email)';
   const { data, error: e } = await supabase.from('departments').insert(body).select(selectFields).single();
   if (e) {
     if (e.code === '23505') return err(res, 'Department name or code already exists', 409);
@@ -97,10 +100,9 @@ export async function create(req: Request, res: Response) {
 // PATCH /departments/:id
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const selectFields = '*, parent:departments!departments_parent_department_id_fkey(id, name, code), head:users!departments_head_user_id_fkey(full_name, email)';
-  const { data: old } = await supabase.from('departments').select(selectFields).eq('id', id).single();
+  const selectFields = '*, head:users!departments_head_user_id_fkey(full_name, email)';
+  const { data: old } = await supabase.from('departments').select('*').eq('id', id).single();
   if (!old) return err(res, 'Department not found', 404);
-
   const updates = parseBody(req);
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {

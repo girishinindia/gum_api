@@ -34,6 +34,10 @@ export async function list(req: Request, res: Response) {
   // Search
   if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
 
+  // Filter by active status
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 

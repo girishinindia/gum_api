@@ -101,6 +101,8 @@ export async function list(req: Request, res: Response) {
   if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%,meta_title.ilike.%${search}%,focus_keyword.ilike.%${search}%`);
   if (req.query.sub_category_id) q = q.eq('sub_category_id', req.query.sub_category_id);
   if (req.query.language_id) q = q.eq('language_id', req.query.language_id);
+  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
