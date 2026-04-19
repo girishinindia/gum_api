@@ -313,7 +313,7 @@ export async function softDelete(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from('sub_category_translations')
-    .update({ deleted_at: new Date().toISOString(), is_active: false, is_deleted: true })
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
@@ -331,13 +331,66 @@ export async function restore(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from('sub_category_translations')
-    .update({ deleted_at: null, is_active: true, is_deleted: false })
+    .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.sub_category_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_category_translation_restored', targetType: 'sub_category_translation', targetId: id, targetName: old.name, ip: getClientIp(req) });
   return ok(res, data, 'Sub-category translation restored');
+}
+
+// GET /sub-category-translations/coverage — per-sub-category language coverage stats
+export async function coverage(req: Request, res: Response) {
+  const { data: activeLangs, error: langErr } = await supabase
+    .from('languages')
+    .select('id, name, iso_code, native_name')
+    .eq('is_active', true)
+    .eq('for_material', true)
+    .order('id');
+  if (langErr) return err(res, langErr.message, 500);
+  const totalLangs = activeLangs?.length || 0;
+
+  const { data: subCats, error: scErr } = await supabase
+    .from('sub_categories')
+    .select('id, code, slug, category_id, categories(code, slug)')
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('code');
+  if (scErr) return err(res, scErr.message, 500);
+
+  const { data: translations, error: transErr } = await supabase
+    .from('sub_category_translations')
+    .select('sub_category_id, language_id')
+    .is('deleted_at', null);
+  if (transErr) return err(res, transErr.message, 500);
+
+  const transMap = new Map<number, Set<number>>();
+  for (const t of (translations || [])) {
+    if (!transMap.has(t.sub_category_id)) transMap.set(t.sub_category_id, new Set());
+    transMap.get(t.sub_category_id)!.add(t.language_id);
+  }
+
+  const result = (subCats || []).map((sc: any) => {
+    const translatedLangIds = transMap.get(sc.id) || new Set();
+    const missingLangs = (activeLangs || []).filter(l => !translatedLangIds.has(l.id));
+    const translatedLangs = (activeLangs || []).filter(l => translatedLangIds.has(l.id));
+    return {
+      sub_category_id: sc.id,
+      sub_category_code: sc.code,
+      sub_category_slug: sc.slug,
+      category_id: sc.category_id,
+      category_code: sc.categories?.code,
+      total_languages: totalLangs,
+      translated_count: translatedLangs.length,
+      missing_count: missingLangs.length,
+      is_complete: missingLangs.length === 0,
+      translated_languages: translatedLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code })),
+      missing_languages: missingLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code, native_name: l.native_name })),
+    };
+  });
+
+  return ok(res, result, 'Coverage retrieved');
 }
 
 // DELETE /sub-category-translations/:id/permanent

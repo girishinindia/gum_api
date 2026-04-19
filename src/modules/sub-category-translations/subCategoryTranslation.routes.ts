@@ -6,8 +6,9 @@ import * as ctrl from './subCategoryTranslation.controller';
 
 const r = Router();
 
-r.get('/',     ctrl.list);
-r.get('/:id',  ctrl.getById);
+r.get('/',         ctrl.list);
+r.get('/coverage', ctrl.coverage);
+r.get('/:id',      ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());
 const multiUpload = upload.fields([{ name: 'og_image_file', maxCount: 1 }, { name: 'twitter_image_file', maxCount: 1 }]);

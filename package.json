@@ -2,7 +2,7 @@
   "name": "growupmore-api",
   "version": "0.1.0",
   "private": true,
-  "description": "GrowUpMore Enterprise E-Learning Platform \u2014 REST API. Strict UDF-only data access (no naked SQL).",
+  "description": "GrowUpMore Enterprise E-Learning Platform — REST API. Strict UDF-only data access (no naked SQL).",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -16,6 +16,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.102.1",
     "axios": "^1.14.0",
     "bcryptjs": "^2.4.3",
@@ -35,6 +37,7 @@
     "ms": "^2.1.3",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^4.2.1",
+    "openai": "^6.34.0",
     "pg": "^8.20.0",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",

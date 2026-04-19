@@ -164,7 +164,7 @@ export async function softDelete(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from('sub_categories')
-    .update({ deleted_at: new Date().toISOString(), is_active: false, is_deleted: true })
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
@@ -182,7 +182,7 @@ export async function restore(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from('sub_categories')
-    .update({ deleted_at: null, is_active: true, is_deleted: false })
+    .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 

@@ -35,6 +35,7 @@ import branchDepartmentRoutes from './modules/branch-departments/branchDepartmen
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import tableSummaryRoutes from './modules/table-summary/tableSummary.routes';
 import profileRoutes from './modules/profile/profile.routes';
+import aiRoutes from './modules/ai/ai.routes';
 
 const app = express();
 
@@ -91,6 +92,7 @@ app.use(`${api}/departments`,                 departmentRoutes);
 app.use(`${api}/branch-departments`,          branchDepartmentRoutes);
 app.use(`${api}/activity-logs`,               activityLogRoutes);
 app.use(`${api}/table-summary`,              tableSummaryRoutes);
+app.use(`${api}/ai`,                        aiRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
