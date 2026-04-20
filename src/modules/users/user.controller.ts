@@ -63,12 +63,18 @@ export async function list(req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data } = await supabase.from('v_user_profile').select('*').eq('id', req.params.id).single();
   if (!data) return err(res, 'User not found', 404);
+  // Attach profile_image_url from user_profiles
+  const { data: profile } = await supabase.from('user_profiles').select('profile_image_url').eq('user_id', data.id).maybeSingle();
+  if (profile?.profile_image_url) data.profile_image_url = profile.profile_image_url;
   return ok(res, data);
 }
 
 export async function getMe(req: Request, res: Response) {
   const { data } = await supabase.from('v_user_profile').select('*').eq('id', req.user!.id).single();
   if (!data) return err(res, 'User not found', 404);
+  // Attach profile_image_url from user_profiles
+  const { data: profile } = await supabase.from('user_profiles').select('profile_image_url').eq('user_id', data.id).maybeSingle();
+  if (profile?.profile_image_url) data.profile_image_url = profile.profile_image_url;
   return ok(res, data);
 }
 
