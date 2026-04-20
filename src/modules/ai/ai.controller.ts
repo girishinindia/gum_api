@@ -868,7 +868,7 @@ export async function generateChapterTranslation(req: Request, res: Response) {
       ? 'Generate educational content with clear learning objectives and prerequisites.'
       : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
 
-    const { data: chapter } = await supabase.from('chapters').select('*, subjects(code, slug)').eq('id', chapter_id).single();
+    const { data: chapter } = await supabase.from('chapters').select('*').eq('id', chapter_id).single();
     if (!chapter) return err(res, 'Chapter not found', 404);
 
     let systemPrompt: string;
@@ -929,7 +929,7 @@ export async function bulkGenerateChapterTranslations(req: Request, res: Respons
     if (!chapter_id) return err(res, 'chapter_id is required', 400);
 
     const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
-    const { data: chapter } = await supabase.from('chapters').select('*, subjects(code, slug)').eq('id', chapter_id).single();
+    const { data: chapter } = await supabase.from('chapters').select('*').eq('id', chapter_id).single();
     if (!chapter) return err(res, 'Chapter not found', 404);
 
     const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
@@ -1033,7 +1033,7 @@ export async function generateTopicTranslation(req: Request, res: Response) {
       ? 'Generate educational content with clear learning objectives and prerequisites.'
       : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
 
-    const { data: topic } = await supabase.from('topics').select('*, chapters(code, slug, subjects(code))').eq('id', topic_id).single();
+    const { data: topic } = await supabase.from('topics').select('*').eq('id', topic_id).single();
     if (!topic) return err(res, 'Topic not found', 404);
 
     let systemPrompt: string;
@@ -1094,7 +1094,7 @@ export async function bulkGenerateTopicTranslations(req: Request, res: Response)
     if (!topic_id) return err(res, 'topic_id is required', 400);
 
     const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
-    const { data: topic } = await supabase.from('topics').select('*, chapters(code, slug, subjects(code))').eq('id', topic_id).single();
+    const { data: topic } = await supabase.from('topics').select('*').eq('id', topic_id).single();
     if (!topic) return err(res, 'Topic not found', 404);
 
     const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');

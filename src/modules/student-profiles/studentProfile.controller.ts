@@ -19,6 +19,16 @@ const SELECT_QUERY = '*';
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
 
+  // Strip system / identity columns the client must never set
+  delete body.id;
+  delete body.user_id;
+  delete body.created_at;
+  delete body.updated_at;
+  delete body.deleted_at;
+  delete body.created_by;
+  delete body.updated_by;
+  delete body.deleted_by;
+
   // Booleans
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.is_currently_studying === 'string') body.is_currently_studying = body.is_currently_studying === 'true';

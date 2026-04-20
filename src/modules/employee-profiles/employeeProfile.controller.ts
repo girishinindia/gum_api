@@ -19,6 +19,16 @@ const SELECT_WITH_JOINS = `*`;
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
 
+  // Strip system / identity columns the client must never set
+  delete body.id;
+  delete body.user_id;
+  delete body.created_at;
+  delete body.updated_at;
+  delete body.deleted_at;
+  delete body.created_by;
+  delete body.updated_by;
+  delete body.deleted_by;
+
   // Parse booleans
   for (const key of ['is_active', 'has_system_access', 'has_email_access', 'has_vpn_access', 'exit_interview_done', 'full_and_final_done']) {
     if (typeof body[key] === 'string') body[key] = body[key] === 'true';
