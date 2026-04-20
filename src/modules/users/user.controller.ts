@@ -14,13 +14,13 @@ function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }
 
-const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'preferences'];
+const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'preferences', 'type'];
 const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
 
-  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, locale, avatar_url, last_login_at, login_count, created_at, deleted_at', { count: 'exact' });
+  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, type, locale, avatar_url, last_login_at, login_count, created_at, deleted_at', { count: 'exact' });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -34,6 +34,7 @@ export async function list(req: Request, res: Response) {
 
   // Filters
   if (req.query.status) q = q.eq('status', req.query.status as string);
+  if (req.query.type) q = q.eq('type', req.query.type as string);
 
   // Sort + paginate
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -87,6 +88,11 @@ export async function update(req: Request, res: Response) {
     // No user can suspend or deactivate themselves (another super admin can restore them)
     if (req.body.status !== 'active' && id === req.user!.id) {
       return err(res, 'Cannot suspend or deactivate your own account. Ask another super admin.', 403);
+    }
+
+    // Super admins cannot suspend or deactivate other super admins
+    if (req.body.status !== 'active' && await isUserSuperAdmin(id)) {
+      return err(res, 'Cannot change status of another super administrator', 403);
     }
 
     updates.status = req.body.status;
@@ -283,6 +289,11 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'User not found', 404);
   if (old.deleted_at) return err(res, 'User is already in trash', 400);
 
+  // Super admins cannot soft-delete other super admins
+  if (await isUserSuperAdmin(id)) {
+    return err(res, 'Cannot delete another super administrator', 403);
+  }
+
   const { data, error: e } = await supabase
     .from('users')
     .update({ deleted_at: new Date().toISOString(), status: 'inactive' })
@@ -325,6 +336,11 @@ export async function remove(req: Request, res: Response) {
 
   const { data: old } = await supabase.from('users').select('email, full_name').eq('id', id).single();
   if (!old) return err(res, 'User not found', 404);
+
+  // Super admins cannot permanently delete other super admins
+  if (await isUserSuperAdmin(id)) {
+    return err(res, 'Cannot permanently delete another super administrator', 403);
+  }
 
   const { error: e } = await supabase.from('users').delete().eq('id', id);
   if (e) return err(res, e.message, 500);

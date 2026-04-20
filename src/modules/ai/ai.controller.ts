@@ -1102,9 +1102,9 @@ export async function generateSampleData(req: Request, res: Response) {
 // ─── AI MASTER DATA GENERATION ──────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 
-type MasterModule = 'skills' | 'languages' | 'education_levels' | 'document_types' | 'documents' | 'designations' | 'specializations' | 'learning_goals' | 'social_medias' | 'countries' | 'states' | 'cities' | 'categories' | 'sub_categories' | 'branches' | 'departments';
+type MasterModule = 'skills' | 'languages' | 'education_levels' | 'document_types' | 'documents' | 'designations' | 'specializations' | 'learning_goals' | 'social_medias' | 'countries' | 'states' | 'cities' | 'categories' | 'sub_categories' | 'branches' | 'departments' | 'branch_departments' | 'employee_profiles' | 'student_profiles' | 'instructor_profiles';
 
-const VALID_MASTER_MODULES: MasterModule[] = ['skills', 'languages', 'education_levels', 'document_types', 'documents', 'designations', 'specializations', 'learning_goals', 'social_medias', 'countries', 'states', 'cities', 'categories', 'sub_categories', 'branches', 'departments'];
+const VALID_MASTER_MODULES: MasterModule[] = ['skills', 'languages', 'education_levels', 'document_types', 'documents', 'designations', 'specializations', 'learning_goals', 'social_medias', 'countries', 'states', 'cities', 'categories', 'sub_categories', 'branches', 'departments', 'branch_departments', 'employee_profiles', 'student_profiles', 'instructor_profiles'];
 
 async function fetchMasterContext(module: MasterModule) {
   const ctx: Record<string, any[]> = {};
@@ -1150,6 +1150,68 @@ async function fetchMasterContext(module: MasterModule) {
     const { data } = await supabase.from('departments').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name');
     ctx.existing_departments = data || [];
   }
+  // For branch_departments, fetch branches, departments, and existing assignments
+  if (module === 'branch_departments') {
+    const [branchesRes, departmentsRes, existingRes] = await Promise.all([
+      supabase.from('branches').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('departments').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('branch_departments').select('branch_id, department_id').is('deleted_at', null),
+    ]);
+    ctx.branches = branchesRes.data || [];
+    ctx.departments = departmentsRes.data || [];
+    ctx.existing_assignments = (existingRes.data || []).map((a: any) => `${a.branch_id}-${a.department_id}`);
+  }
+  // For employee_profiles, fetch designations, departments, branches, and available users
+  if (module === 'employee_profiles') {
+    const [designations, departments, branches, users, existingProfiles] = await Promise.all([
+      supabase.from('designations').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('departments').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('branches').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('users').select('id, full_name, email').eq('status', 'active').eq('type', 'employee').is('deleted_at', null).order('id').limit(500),
+      supabase.from('employee_profiles').select('user_id').is('deleted_at', null),
+    ]);
+    ctx.designations = designations.data || [];
+    ctx.departments = departments.data || [];
+    ctx.branches = branches.data || [];
+    const usedUserIds = new Set((existingProfiles.data || []).map((p: any) => p.user_id));
+    ctx.available_users = (users.data || []).filter((u: any) => !usedUserIds.has(u.id));
+  }
+  // For student_profiles, fetch education_levels, learning_goals, specializations, languages, and available users
+  if (module === 'student_profiles') {
+    const [educationLevels, learningGoals, specializations, languages, users, existingProfiles] = await Promise.all([
+      supabase.from('education_levels').select('id, name').eq('is_active', true).is('deleted_at', null).order('sort_order'),
+      supabase.from('learning_goals').select('id, name').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('specializations').select('id, name').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('languages').select('id, name').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('users').select('id, full_name, email').eq('status', 'active').eq('type', 'student').is('deleted_at', null).order('id').limit(500),
+      supabase.from('student_profiles').select('user_id').is('deleted_at', null),
+    ]);
+    ctx.education_levels = educationLevels.data || [];
+    ctx.learning_goals = learningGoals.data || [];
+    ctx.specializations = specializations.data || [];
+    ctx.languages = languages.data || [];
+    const usedUserIds = new Set((existingProfiles.data || []).map((p: any) => p.user_id));
+    ctx.available_users = (users.data || []).filter((u: any) => !usedUserIds.has(u.id));
+  }
+  // For instructor_profiles, fetch designations, departments, branches, specializations, languages, and available users
+  if (module === 'instructor_profiles') {
+    const [designations, departments, branches, specializations, languages, users, existingProfiles] = await Promise.all([
+      supabase.from('designations').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('departments').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('branches').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('specializations').select('id, name').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('languages').select('id, name').eq('is_active', true).is('deleted_at', null).order('name'),
+      supabase.from('users').select('id, full_name, email').eq('status', 'active').eq('type', 'instructor').is('deleted_at', null).order('id').limit(500),
+      supabase.from('instructor_profiles').select('user_id').is('deleted_at', null),
+    ]);
+    ctx.designations = designations.data || [];
+    ctx.departments = departments.data || [];
+    ctx.branches = branches.data || [];
+    ctx.specializations = specializations.data || [];
+    ctx.languages = languages.data || [];
+    const usedUserIds = new Set((existingProfiles.data || []).map((p: any) => p.user_id));
+    ctx.available_users = (users.data || []).filter((u: any) => !usedUserIds.has(u.id));
+  }
   return ctx;
 }
 
@@ -1162,6 +1224,7 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
     countries: 'countries', states: 'states', cities: 'cities',
     categories: 'categories', sub_categories: 'sub_categories',
     branches: 'branches', departments: 'departments',
+    employee_profiles: 'employee_profiles', student_profiles: 'student_profiles', instructor_profiles: 'instructor_profiles',
   };
   const table = tableMap[module];
   if (!table) return '';
@@ -1178,6 +1241,10 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
   if (module === 'categories' || module === 'sub_categories') selectCols = 'code, slug';
   if (module === 'branches') selectCols = 'name, code';
   if (module === 'departments') selectCols = 'name, code';
+  if (module === 'branch_departments') selectCols = 'branch_id, department_id';
+  if (module === 'employee_profiles') selectCols = 'employee_code, user_id';
+  if (module === 'student_profiles') selectCols = 'enrollment_number, user_id';
+  if (module === 'instructor_profiles') selectCols = 'instructor_code, user_id';
 
   const { data } = await supabase.from(table).select(selectCols).eq('is_active', true).is('deleted_at', null).order('id').limit(500);
   if (!data || data.length === 0) return '';
@@ -1194,6 +1261,14 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
     items = data.map((r: any) => `${r.name} (${r.state_code || ''})`);
   } else if (['social_medias', 'branches', 'departments', 'designations'].includes(module)) {
     items = data.map((r: any) => `${r.name}${r.code ? ` (${r.code})` : ''}`);
+  } else if (module === 'branch_departments') {
+    items = data.map((r: any) => `branch:${r.branch_id}-dept:${r.department_id}`);
+  } else if (module === 'employee_profiles') {
+    items = data.map((r: any) => `${r.employee_code} (user:${r.user_id})`);
+  } else if (module === 'student_profiles') {
+    items = data.map((r: any) => `${r.enrollment_number} (user:${r.user_id})`);
+  } else if (module === 'instructor_profiles') {
+    items = data.map((r: any) => `${r.instructor_code} (user:${r.user_id})`);
   } else {
     items = data.map((r: any) => r.name);
   }
@@ -1444,7 +1519,7 @@ Use ONLY these IDs for category_id. Assign each sub-category to its most relevan
 FIELDS per record:
 - name: (REQUIRED, 1-200 chars) branch name e.g. "GrowUpMore Surat HQ", "GrowUpMore Mumbai Office"
 - code: (REQUIRED, 1-50 chars) unique uppercase code e.g. "SRT-HQ", "MUM-01", "DEL-02"
-- branch_type: (REQUIRED) one of: "head_office"|"regional_office"|"branch_office"|"satellite_office"|"virtual_office"|"warehouse"|"training_center"|"other"
+- branch_type: (REQUIRED) one of: "headquarters"|"office"|"campus"|"remote"|"warehouse"|"other"
 - address_line_1: (max 255) street address
 - address_line_2: (max 255) area, landmark
 - pincode: (max 10) 6-digit Indian PIN code
@@ -1474,6 +1549,194 @@ ${context.existing_departments?.length ? `Existing departments (for parent_depar
 Do NOT include: head_user_id (this is assigned separately).`,
         user: `Generate ${count} department records for an educational technology company. Include core departments (Engineering, Product, Design, Marketing, Sales, HR, Finance, Operations, Legal, Customer Support, Content, Quality Assurance) and optionally sub-departments.`,
       };
+
+    case 'branch_departments':
+      return {
+        system: `${base}
+FIELDS per record:
+- branch_id: (REQUIRED) ID of a branch from the available list below
+- department_id: (REQUIRED) ID of a department from the available list below
+- is_active: true
+- sort_order: sequential number
+
+Available branches: ${JSON.stringify((context.branches || []).map((b: any) => ({ id: b.id, name: b.name, code: b.code })))}
+Available departments: ${JSON.stringify((context.departments || []).map((d: any) => ({ id: d.id, name: d.name, code: d.code })))}
+${context.existing_assignments?.length ? `\nAlready assigned (branch_id-department_id pairs to SKIP): ${context.existing_assignments.join(', ')}` : ''}
+
+IMPORTANT: Each branch_id + department_id combination must be UNIQUE. Do not create duplicate assignments.
+Do NOT include: head_user_id (this is assigned separately).`,
+        user: `Generate ${count} branch-department assignment records. Assign departments to branches logically — every branch should have core departments (HR, Finance, Administration) and larger branches should also have specialized departments.`,
+      };
+
+    case 'employee_profiles': {
+      const availUsers = context.available_users || [];
+      const usersToAssign = availUsers.slice(0, count);
+      return {
+        system: `${base}
+IMPORTANT: This is a 1:1 profile table. Each user can have ONLY ONE employee profile. Generate exactly ${Math.min(count, usersToAssign.length)} records, one per user.
+${usersToAssign.length === 0 ? '\n⚠️ NO USERS AVAILABLE — all users already have employee profiles.' : ''}
+FIELDS per record:
+- user_id: (REQUIRED) must use ONLY from the available users list below
+- employee_code: (REQUIRED, UNIQUE) format "EMP-YYYY-NNN" e.g. "EMP-2024-001", "EMP-2025-042"
+- employee_type: (REQUIRED) one of: "full_time"|"part_time"|"contract"|"probation"|"intern"|"consultant"|"temporary"|"freelance"
+- designation_id: (REQUIRED) pick from available designations below
+- department_id: (REQUIRED) pick from available departments below
+- branch_id: (REQUIRED) pick from available branches below
+- reporting_manager_id: null (assigned separately)
+- joining_date: (REQUIRED) realistic date between 2020-01-01 and 2025-12-31
+- confirmation_date: set if employee_type is NOT probation (typically joining_date + 6 months)
+- probation_end_date: set if employee_type is "probation"
+- work_mode: one of: "on_site"|"remote"|"hybrid"
+- shift_type: one of: "general"|"morning"|"afternoon"|"night"|"rotational"|"flexible"|"other"
+- work_location: e.g. "Floor 2, Seat B-12" or "Remote - Mumbai"
+- weekly_off_days: e.g. "saturday,sunday"
+- pay_grade: one of: "L1"|"L2"|"L3"|"M1"|"M2"|"E1"|"E2"
+- salary_currency: "INR"
+- ctc_annual: realistic Indian CTC (300000 to 5000000)
+- basic_salary_monthly: roughly 40% of CTC/12
+- payment_mode: one of: "bank_transfer"|"cheque"|"cash"|"upi"|"other"
+- pf_number: format "GJ/AHD/NNNNN" (realistic Indian PF number) or null
+- esi_number: 10-digit number string or null
+- uan_number: 12-digit number string or null
+- tax_regime: "old"|"new"
+- leave_balance_casual: 0-12
+- leave_balance_sick: 0-12
+- leave_balance_earned: 0-30
+- total_experience_years: 0-30
+- experience_at_joining: 0-25
+- has_system_access: true/false
+- has_email_access: true/false
+- has_vpn_access: true/false (true for remote/hybrid)
+- notice_period_days: 30, 60, or 90
+- is_active: true
+
+Available users to assign (use ONLY these user_ids — these are users with type="employee"): ${JSON.stringify(usersToAssign.map((u: any) => ({ id: u.id, name: u.full_name })))}
+${context.designations?.length ? `Available designations: ${JSON.stringify(context.designations.map((d: any) => ({ id: d.id, name: d.name })))}` : ''}
+${context.departments?.length ? `Available departments: ${JSON.stringify(context.departments.map((d: any) => ({ id: d.id, name: d.name })))}` : ''}
+${context.branches?.length ? `Available branches: ${JSON.stringify(context.branches.map((b: any) => ({ id: b.id, name: b.name })))}` : ''}
+
+Do NOT include: shift_branch_id, exit_type, exit_reason, exit_interview_done, full_and_final_done, contract_end_date, resignation_date, last_working_date, relieving_date, access_card_number, laptop_asset_id, professional_tax_number.`,
+        user: `Generate ${Math.min(count, usersToAssign.length)} employee profiles for GrowUpMore staff. Create diverse profiles: mix of full_time, part_time, contract, intern. Vary departments, designations, branches. Use realistic Indian salary data, PF numbers, and joining dates.`,
+      };
+    }
+
+    case 'student_profiles': {
+      const availUsers = context.available_users || [];
+      const usersToAssign = availUsers.slice(0, count);
+      return {
+        system: `${base}
+IMPORTANT: This is a 1:1 profile table. Each user can have ONLY ONE student profile. Generate exactly ${Math.min(count, usersToAssign.length)} records, one per user.
+${usersToAssign.length === 0 ? '\n⚠️ NO USERS AVAILABLE — all users already have student profiles.' : ''}
+FIELDS per record:
+- user_id: (REQUIRED) must use ONLY from the available users list below
+- enrollment_number: (REQUIRED, UNIQUE) format "STU-YYYY-NNNNN" e.g. "STU-2024-00001"
+- enrollment_date: realistic date (2023-01-01 to today)
+- enrollment_type: one of: "self"|"corporate"|"scholarship"|"referral"|"trial"|"other"
+- education_level_id: pick from available education levels below (or null)
+- current_institution: realistic Indian institution name e.g. "IIT Bombay", "BITS Pilani", "Delhi University"
+- current_field_of_study: e.g. "Computer Science", "Business Administration", "Electrical Engineering"
+- current_semester_or_year: e.g. "3rd Semester", "2nd Year", "Final Year"
+- expected_graduation_date: future date or null
+- is_currently_studying: true/false
+- learning_goal_id: pick from available learning goals below (or null)
+- specialization_id: pick from available specializations below (or null)
+- preferred_learning_mode: one of: "self_paced"|"instructor_led"|"hybrid"|"cohort_based"|"mentored"
+- preferred_learning_language_id: pick from available languages below (or null)
+- preferred_content_type: one of: "video"|"text"|"interactive"|"audio"|"mixed"
+- daily_learning_hours: 0.5 to 8.0
+- weekly_available_days: 1 to 7
+- difficulty_preference: one of: "beginner"|"intermediate"|"advanced"|"mixed"
+- parent_guardian_name: realistic Indian name or null
+- parent_guardian_phone: Indian phone format "+91-XXXXXXXXXX" or null
+- parent_guardian_relation: one of: "father"|"mother"|"guardian"|"spouse"|"sibling"|"other" or null
+- courses_enrolled: 0-20
+- courses_completed: 0 to courses_enrolled
+- courses_in_progress: courses_enrolled - courses_completed
+- certificates_earned: 0 to courses_completed
+- total_learning_hours: 0-2000
+- average_score: 40.00-99.00 or null
+- current_streak_days: 0-365
+- longest_streak_days: >= current_streak_days
+- xp_points: 0-50000
+- level: 1-50
+- subscription_plan: one of: "free"|"basic"|"standard"|"premium"|"enterprise"|"lifetime"
+- has_active_subscription: true if plan != "free"
+- is_seeking_job: true/false
+- is_open_to_internship: true/false
+- is_open_to_freelance: true/false
+- is_active: true
+
+Available users to assign (use ONLY these user_ids — these are users with type="student"): ${JSON.stringify(usersToAssign.map((u: any) => ({ id: u.id, name: u.full_name })))}
+${context.education_levels?.length ? `Available education levels: ${JSON.stringify(context.education_levels.map((e: any) => ({ id: e.id, name: e.name })))}` : ''}
+${context.learning_goals?.length ? `Available learning goals: ${JSON.stringify(context.learning_goals.map((l: any) => ({ id: l.id, name: l.name })))}` : ''}
+${context.specializations?.length ? `Available specializations: ${JSON.stringify(context.specializations.map((s: any) => ({ id: s.id, name: s.name })))}` : ''}
+${context.languages?.length ? `Available languages: ${JSON.stringify(context.languages.map((l: any) => ({ id: l.id, name: l.name })))}` : ''}
+
+Do NOT include: referred_by_user_id, referral_code, subscription_start_date, subscription_end_date, total_amount_paid, resume_url, portfolio_url, preferred_job_roles, preferred_locations, expected_salary_range, parent_guardian_email.`,
+        user: `Generate ${Math.min(count, usersToAssign.length)} student profiles for GrowUpMore learners. Create diverse profiles: mix of self-enrolled, corporate, scholarship students. Vary education levels, institutions, learning preferences, subscription plans. Include realistic academic performance metrics.`,
+      };
+    }
+
+    case 'instructor_profiles': {
+      const availUsers = context.available_users || [];
+      const usersToAssign = availUsers.slice(0, count);
+      return {
+        system: `${base}
+IMPORTANT: This is a 1:1 profile table. Each user can have ONLY ONE instructor profile. Generate exactly ${Math.min(count, usersToAssign.length)} records, one per user.
+${usersToAssign.length === 0 ? '\n⚠️ NO USERS AVAILABLE — all users already have instructor profiles.' : ''}
+FIELDS per record:
+- user_id: (REQUIRED) must use ONLY from the available users list below
+- instructor_code: (REQUIRED, UNIQUE) format "INS-YYYY-NNN" e.g. "INS-2024-001"
+- instructor_type: one of: "internal"|"external"|"guest"|"visiting"|"corporate"|"community"|"other"
+- designation_id: pick from available designations below (or null)
+- department_id: pick from available departments below (or null)
+- branch_id: pick from available branches below (or null)
+- joining_date: realistic date for instructors (2020-2025)
+- specialization_id: pick from available specializations below (or null)
+- secondary_specialization_id: pick a DIFFERENT specialization or null
+- teaching_experience_years: 0-30
+- industry_experience_years: 0-30
+- total_experience_years: max of teaching + industry
+- preferred_teaching_language_id: pick from available languages below (or null)
+- teaching_mode: one of: "online"|"offline"|"hybrid"|"recorded_only"
+- instructor_bio: 2-4 sentences describing expertise and teaching philosophy
+- tagline: short catchy tagline e.g. "Making Machine Learning accessible to everyone"
+- highest_qualification: e.g. "Ph.D. in Computer Science", "M.Tech in AI", "MBA from IIM Ahmedabad"
+- certifications_summary: e.g. "AWS Solutions Architect, PMP, Scrum Master"
+- publications_count: 0-50
+- patents_count: 0-10
+- total_courses_created: 0-20
+- total_courses_published: 0 to total_courses_created
+- total_students_taught: 0-50000
+- total_reviews_received: 0-5000
+- average_rating: 0.0-5.0 (realistic: 3.5-4.8)
+- total_teaching_hours: 0-10000
+- total_content_minutes: 0-50000
+- completion_rate: 50.00-95.00
+- is_available: true/false
+- available_hours_per_week: 5-40
+- max_concurrent_courses: 1-5
+- payment_model: one of: "revenue_share"|"fixed_per_course"|"hourly"|"monthly_salary"|"per_student"|"hybrid"|"volunteer"|"other"
+- revenue_share_percentage: 30.00-70.00 (if revenue_share model)
+- hourly_rate: 500-10000 INR (if hourly model)
+- payment_currency: "INR"
+- approval_status: one of: "pending"|"under_review"|"approved"|"rejected"|"suspended"|"blacklisted" (most should be "approved")
+- is_verified: true/false (true for approved)
+- is_featured: true/false (few should be true)
+- badge: one of: "new"|"rising"|"popular"|"top_rated"|"expert"|"elite" or null
+- is_active: true
+
+Available users to assign (use ONLY these user_ids — these are users with type="instructor"): ${JSON.stringify(usersToAssign.map((u: any) => ({ id: u.id, name: u.full_name })))}
+${context.designations?.length ? `Available designations: ${JSON.stringify(context.designations.map((d: any) => ({ id: d.id, name: d.name })))}` : ''}
+${context.departments?.length ? `Available departments: ${JSON.stringify(context.departments.map((d: any) => ({ id: d.id, name: d.name })))}` : ''}
+${context.branches?.length ? `Available branches: ${JSON.stringify(context.branches.map((b: any) => ({ id: b.id, name: b.name })))}` : ''}
+${context.specializations?.length ? `Available specializations: ${JSON.stringify(context.specializations.map((s: any) => ({ id: s.id, name: s.name })))}` : ''}
+${context.languages?.length ? `Available languages: ${JSON.stringify(context.languages.map((l: any) => ({ id: l.id, name: l.name })))}` : ''}
+
+Do NOT include: demo_video_url, intro_video_duration_sec, awards_and_recognition, available_from, available_until, preferred_time_slots, fixed_rate_per_course, approved_by, approved_at, rejection_reason.`,
+        user: `Generate ${Math.min(count, usersToAssign.length)} instructor profiles for GrowUpMore. Create diverse profiles: mix of internal, external, guest, visiting instructors. Vary specializations, experience levels, teaching modes. Include realistic qualifications and performance metrics. Most should be "approved" status.`,
+      };
+    }
   }
 }
 
@@ -1544,6 +1807,10 @@ const MASTER_TABLE_MAP: Record<MasterModule, string> = {
   sub_categories: 'sub_categories',
   branches: 'branches',
   departments: 'departments',
+  branch_departments: 'branch_departments',
+  employee_profiles: 'employee_profiles',
+  student_profiles: 'student_profiles',
+  instructor_profiles: 'instructor_profiles',
 };
 
 // Columns to exclude from AI update payload (system-managed)

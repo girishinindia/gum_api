@@ -79,8 +79,8 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: department:activate required to create inactive', 403);
   }
 
-  // Prevent self-reference
-  if (body.parent_department_id === body.id) {
+  // Prevent self-reference (guard against both being undefined)
+  if (body.parent_department_id != null && body.parent_department_id === body.id) {
     return err(res, 'A department cannot be its own parent', 400);
   }
 

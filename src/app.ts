@@ -43,6 +43,9 @@ import userSkillRoutes from './modules/user-skills/userSkill.routes';
 import userLanguageRoutes from './modules/user-languages/userLanguage.routes';
 import userDocumentRoutes from './modules/user-documents/userDocument.routes';
 import userProjectRoutes from './modules/user-projects/userProject.routes';
+import employeeProfileRoutes from './modules/employee-profiles/employeeProfile.routes';
+import studentProfileRoutes from './modules/student-profiles/studentProfile.routes';
+import instructorProfileRoutes from './modules/instructor-profiles/instructorProfile.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import resumeRoutes from './modules/resume/resume.routes';
 
@@ -109,6 +112,9 @@ app.use(`${api}/user-skills`,              userSkillRoutes);
 app.use(`${api}/user-languages`,           userLanguageRoutes);
 app.use(`${api}/user-documents`,           userDocumentRoutes);
 app.use(`${api}/user-projects`,            userProjectRoutes);
+app.use(`${api}/employee-profiles`,          employeeProfileRoutes);
+app.use(`${api}/student-profiles`,           studentProfileRoutes);
+app.use(`${api}/instructor-profiles`,        instructorProfileRoutes);
 app.use(`${api}/ai`,                        aiRoutes);
 app.use(`${api}/resume`,                    resumeRoutes);
 
