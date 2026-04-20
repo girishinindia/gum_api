@@ -1102,9 +1102,9 @@ export async function generateSampleData(req: Request, res: Response) {
 // ─── AI MASTER DATA GENERATION ──────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 
-type MasterModule = 'skills' | 'languages' | 'education_levels' | 'document_types' | 'documents' | 'designations' | 'specializations' | 'learning_goals' | 'social_medias' | 'countries' | 'states' | 'cities' | 'categories' | 'sub_categories' | 'branches' | 'departments' | 'branch_departments' | 'employee_profiles' | 'student_profiles' | 'instructor_profiles';
+type MasterModule = 'skills' | 'languages' | 'education_levels' | 'document_types' | 'documents' | 'designations' | 'specializations' | 'learning_goals' | 'social_medias' | 'countries' | 'states' | 'cities' | 'categories' | 'sub_categories' | 'branches' | 'departments' | 'branch_departments' | 'employee_profiles' | 'student_profiles' | 'instructor_profiles' | 'subjects' | 'chapters' | 'topics';
 
-const VALID_MASTER_MODULES: MasterModule[] = ['skills', 'languages', 'education_levels', 'document_types', 'documents', 'designations', 'specializations', 'learning_goals', 'social_medias', 'countries', 'states', 'cities', 'categories', 'sub_categories', 'branches', 'departments', 'branch_departments', 'employee_profiles', 'student_profiles', 'instructor_profiles'];
+const VALID_MASTER_MODULES: MasterModule[] = ['skills', 'languages', 'education_levels', 'document_types', 'documents', 'designations', 'specializations', 'learning_goals', 'social_medias', 'countries', 'states', 'cities', 'categories', 'sub_categories', 'branches', 'departments', 'branch_departments', 'employee_profiles', 'student_profiles', 'instructor_profiles', 'subjects', 'chapters', 'topics'];
 
 async function fetchMasterContext(module: MasterModule) {
   const ctx: Record<string, any[]> = {};
@@ -1212,6 +1212,16 @@ async function fetchMasterContext(module: MasterModule) {
     const usedUserIds = new Set((existingProfiles.data || []).map((p: any) => p.user_id));
     ctx.available_users = (users.data || []).filter((u: any) => !usedUserIds.has(u.id));
   }
+  // For chapters, fetch subjects so AI can assign valid subject_id
+  if (module === 'chapters') {
+    const { data } = await supabase.from('subjects').select('id, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
+    ctx.subjects = data || [];
+  }
+  // For topics, fetch chapters (with subject info) so AI can assign valid chapter_id
+  if (module === 'topics') {
+    const { data: chapters } = await supabase.from('chapters').select('id, slug, subject_id, subjects(code)').eq('is_active', true).is('deleted_at', null).order('display_order');
+    ctx.chapters = chapters || [];
+  }
   return ctx;
 }
 
@@ -1225,6 +1235,7 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
     categories: 'categories', sub_categories: 'sub_categories',
     branches: 'branches', departments: 'departments',
     employee_profiles: 'employee_profiles', student_profiles: 'student_profiles', instructor_profiles: 'instructor_profiles',
+    subjects: 'subjects', chapters: 'chapters', topics: 'topics',
   };
   const table = tableMap[module];
   if (!table) return '';
@@ -1245,6 +1256,9 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
   if (module === 'employee_profiles') selectCols = 'employee_code, user_id';
   if (module === 'student_profiles') selectCols = 'enrollment_number, user_id';
   if (module === 'instructor_profiles') selectCols = 'instructor_code, user_id';
+  if (module === 'subjects') selectCols = 'code, slug';
+  if (module === 'chapters') selectCols = 'slug, subject_id';
+  if (module === 'topics') selectCols = 'slug, chapter_id';
 
   const { data } = await supabase.from(table).select(selectCols).eq('is_active', true).is('deleted_at', null).order('id').limit(500);
   if (!data || data.length === 0) return '';
@@ -1269,6 +1283,12 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
     items = data.map((r: any) => `${r.enrollment_number} (user:${r.user_id})`);
   } else if (module === 'instructor_profiles') {
     items = data.map((r: any) => `${r.instructor_code} (user:${r.user_id})`);
+  } else if (module === 'subjects') {
+    items = data.map((r: any) => `${r.code} (/${r.slug})`);
+  } else if (module === 'chapters') {
+    items = data.map((r: any) => `/${r.slug} (subject:${r.subject_id})`);
+  } else if (module === 'topics') {
+    items = data.map((r: any) => `/${r.slug} (chapter:${r.chapter_id})`);
   } else {
     items = data.map((r: any) => r.name);
   }
@@ -1739,6 +1759,55 @@ Do NOT include: demo_video_url, intro_video_duration_sec, awards_and_recognition
         user: `Generate ${Math.min(count, usersToAssign.length)} instructor profiles for GrowUpMore. Create diverse profiles: mix of internal, external, guest, visiting instructors. Vary specializations, experience levels, teaching modes. Include realistic qualifications and performance metrics. Most should be "approved" status.`,
       };
     }
+
+    case 'subjects':
+      return {
+        system: `${base}
+FIELDS per record:
+- code: (REQUIRED, UNIQUE, 1-100 chars) short uppercase code e.g. "MATH", "PHYSICS", "CS101", "ENG-LIT"
+- slug: (REQUIRED, UNIQUE, 1-255 chars) URL-friendly lowercase slug e.g. "mathematics", "physics", "computer-science-101"
+- difficulty_level: (REQUIRED) one of: "beginner"|"intermediate"|"advanced"|"expert"|"all_levels"
+- estimated_hours: integer (estimated hours to complete the subject, 10-500)
+- display_order: sequential integer starting from 1
+- sort_order: sequential integer starting from 1
+- is_active: true
+Generate subjects relevant to an Indian educational platform covering academics, competitive exams, technology, and professional development.`,
+        user: `Generate ${count} unique subjects. Include diverse topics: Mathematics, Physics, Chemistry, Biology, Computer Science, English Literature, Hindi, Data Structures & Algorithms, Web Development, Machine Learning, Digital Marketing, Aptitude & Reasoning, UPSC Preparation, CAT Preparation, GATE CS, JEE Maths, Accounting & Finance, etc. Use meaningful codes and URL-friendly slugs.`,
+      };
+
+    case 'chapters': {
+      const subjects = context.subjects || [];
+      return {
+        system: `${base}
+FIELDS per record:
+- subject_id: (REQUIRED) must be a valid ID from available subjects below
+- slug: (REQUIRED, UNIQUE per subject, 1-255 chars) URL-friendly lowercase slug e.g. "linear-algebra", "organic-chemistry"
+- display_order: sequential integer per subject (1, 2, 3... within each subject)
+- sort_order: sequential integer starting from 1
+- is_active: true
+
+Available subjects: ${JSON.stringify(subjects.map((s: any) => ({ id: s.id, code: s.code, slug: s.slug })))}
+Distribute chapters across the available subjects. Each chapter slug must be unique within its subject.`,
+        user: `Generate ${count} chapters distributed across the available subjects. For each subject, create logical chapter sequences. For example: Mathematics might have "linear-algebra", "calculus", "probability"; Computer Science might have "data-structures", "algorithms", "operating-systems". Use descriptive, URL-friendly slugs.`,
+      };
+    }
+
+    case 'topics': {
+      const chapters = context.chapters || [];
+      return {
+        system: `${base}
+FIELDS per record:
+- chapter_id: (REQUIRED) must be a valid ID from available chapters below
+- slug: (REQUIRED, UNIQUE per chapter, 1-255 chars) URL-friendly lowercase slug e.g. "matrix-multiplication", "newtons-laws"
+- display_order: sequential integer per chapter (1, 2, 3... within each chapter)
+- sort_order: sequential integer starting from 1
+- is_active: true
+
+Available chapters: ${JSON.stringify(chapters.map((c: any) => ({ id: c.id, slug: c.slug, subject: (c as any).subjects?.code || c.subject_id })))}
+Distribute topics across the available chapters. Each topic slug must be unique within its chapter.`,
+        user: `Generate ${count} topics distributed across the available chapters. Each chapter should get 2-5 granular topics. For example: a "linear-algebra" chapter might have "vectors-and-scalars", "matrix-operations", "eigenvalues-eigenvectors". Use descriptive URL-friendly slugs.`,
+      };
+    }
   }
 }
 
@@ -1813,6 +1882,9 @@ const MASTER_TABLE_MAP: Record<MasterModule, string> = {
   employee_profiles: 'employee_profiles',
   student_profiles: 'student_profiles',
   instructor_profiles: 'instructor_profiles',
+  subjects: 'subjects',
+  chapters: 'chapters',
+  topics: 'topics',
 };
 
 // Columns to exclude from AI update payload (system-managed)
