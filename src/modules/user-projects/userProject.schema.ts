@@ -1,0 +1,52 @@
+import { z } from 'zod';
+
+export const PROJECT_TYPES = ['personal','academic','professional','freelance','open_source','research','hackathon','internship','client','government','ngo','other'] as const;
+export const PROJECT_STATUSES = ['planning','in_progress','completed','on_hold','cancelled','abandoned'] as const;
+
+export const createUserProjectSchema = z.object({
+  user_id: z.coerce.number().int().positive(),
+  project_title: z.string().min(1, 'Project title is required').max(500),
+  project_code: z.string().max(50).optional().nullable(),
+  project_type: z.enum(PROJECT_TYPES).optional().default('personal'),
+  description: z.string().max(5000).optional().nullable(),
+  objectives: z.string().max(3000).optional().nullable(),
+  role_in_project: z.string().max(300).optional().nullable(),
+  responsibilities: z.string().max(5000).optional().nullable(),
+  team_size: z.coerce.number().int().min(1).max(10000).optional().nullable(),
+  is_solo_project: z.coerce.boolean().optional().default(false),
+  organization_name: z.string().max(500).optional().nullable(),
+  client_name: z.string().max(500).optional().nullable(),
+  industry: z.string().max(300).optional().nullable(),
+  technologies_used: z.string().max(2000).optional().nullable(),
+  tools_used: z.string().max(2000).optional().nullable(),
+  programming_languages: z.string().max(1000).optional().nullable(),
+  frameworks: z.string().max(1000).optional().nullable(),
+  databases_used: z.string().max(500).optional().nullable(),
+  platform: z.string().max(200).optional().nullable(),
+  start_date: z.string().optional().nullable(),
+  end_date: z.string().optional().nullable(),
+  is_ongoing: z.coerce.boolean().optional().default(false),
+  duration_months: z.coerce.number().int().min(0).max(600).optional().nullable(),
+  project_status: z.enum(PROJECT_STATUSES).optional().default('completed'),
+  key_achievements: z.string().max(5000).optional().nullable(),
+  challenges_faced: z.string().max(5000).optional().nullable(),
+  lessons_learned: z.string().max(5000).optional().nullable(),
+  impact_summary: z.string().max(2000).optional().nullable(),
+  users_served: z.string().max(300).optional().nullable(),
+  project_url: z.string().max(1000).optional().nullable(),
+  repository_url: z.string().max(1000).optional().nullable(),
+  demo_url: z.string().max(1000).optional().nullable(),
+  documentation_url: z.string().max(1000).optional().nullable(),
+  thumbnail_url: z.string().max(1000).optional().nullable(),
+  case_study_url: z.string().max(1000).optional().nullable(),
+  is_featured: z.coerce.boolean().optional().default(false),
+  is_published: z.coerce.boolean().optional().default(false),
+  awards: z.string().max(2000).optional().nullable(),
+  certifications: z.string().max(2000).optional().nullable(),
+  reference_name: z.string().max(300).optional().nullable(),
+  reference_email: z.string().email().optional().nullable(),
+  reference_phone: z.string().max(20).optional().nullable(),
+  display_order: z.coerce.number().int().min(0).optional().default(0),
+});
+
+export const updateUserProjectSchema = createUserProjectSchema.partial().omit({ user_id: true });

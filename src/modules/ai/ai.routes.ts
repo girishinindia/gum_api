@@ -15,4 +15,14 @@ r.post('/bulk-generate-translations', requirePermission('category_translation', 
 r.post('/generate-sub-category-translation', requirePermission('sub_category_translation', 'create'), ctrl.generateSubCategoryTranslation);
 r.post('/bulk-generate-sub-category-translations', requirePermission('sub_category_translation', 'create'), ctrl.bulkGenerateSubCategoryTranslations);
 
+// User profile sample data generation
+r.post('/generate-sample-data', ctrl.generateSampleData);
+
+// Master data generation
+r.post('/generate-master-data', ctrl.generateMasterData);
+r.post('/update-master-data', ctrl.updateMasterData);
+
+// Resume content (headline + bio)
+r.post('/generate-resume-content', ctrl.generateResumeContent);
+
 export default r;

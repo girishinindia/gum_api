@@ -10,6 +10,11 @@ export async function processAndUploadImage(buffer: Buffer, path: string, option
   return cdnUrl;
 }
 
+export async function uploadRawFile(buffer: Buffer, path: string): Promise<string> {
+  const cdnUrl = await uploadToBunny(path, buffer);
+  return cdnUrl;
+}
+
 export async function deleteImage(path: string, fullCdnUrl?: string): Promise<void> {
   // Purge CDN edge cache first (best-effort), then delete from storage
   if (fullCdnUrl) await purgeBunnyCdn(fullCdnUrl);

@@ -156,7 +156,10 @@ export async function remove(req: Request, res: Response) {
   if (!old) return err(res, 'Language not found', 404);
 
   const { error: e } = await supabase.from('languages').delete().eq('id', id);
-  if (e) return err(res, e.message, 500);
+  if (e) {
+    if (e.message?.includes('violates foreign key constraint')) return err(res, 'Cannot delete — this record is in use. Remove referencing records first.', 409);
+    return err(res, e.message, 500);
+  }
 
   await clearCache();
   await redis.del('languages:material');

@@ -122,7 +122,7 @@ export async function generateTranslation(req: Request, res: Response) {
     const { category_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!category_id || !target_language_code) return err(res, 'category_id and target_language_code are required', 400);
 
-    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'anthropic';
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
     const isEnglish = target_language_code === 'en';
     const targetLang = target_language_name || target_language_code;
     const userPrompt = prompt || (isEnglish
@@ -194,7 +194,7 @@ export async function bulkGenerateTranslations(req: Request, res: Response) {
     const { category_id, prompt, provider: reqProvider } = req.body;
     if (!category_id) return err(res, 'category_id is required', 400);
 
-    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'anthropic';
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
 
     // Fetch category
     const { data: category } = await supabase.from('categories').select('*').eq('id', category_id).single();
@@ -408,7 +408,7 @@ export async function generateSubCategoryTranslation(req: Request, res: Response
     const { sub_category_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!sub_category_id || !target_language_code) return err(res, 'sub_category_id and target_language_code are required', 400);
 
-    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'anthropic';
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
     const isEnglish = target_language_code === 'en';
     const targetLang = target_language_name || target_language_code;
     const userPrompt = prompt || (isEnglish
@@ -480,7 +480,7 @@ export async function bulkGenerateSubCategoryTranslations(req: Request, res: Res
     const { sub_category_id, prompt, provider: reqProvider } = req.body;
     if (!sub_category_id) return err(res, 'sub_category_id is required', 400);
 
-    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'anthropic';
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
 
     const { data: subCat } = await supabase.from('sub_categories').select('*, categories(code, slug)').eq('id', sub_category_id).single();
     if (!subCat) return err(res, 'Sub-category not found', 404);
@@ -665,5 +665,1047 @@ USER INSTRUCTIONS: ${userPrompt}`;
   } catch (error: any) {
     console.error('AI bulkGenerateSubCategoryTranslations error:', error);
     return err(res, error.message || 'Bulk generation failed', 500);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── AI SAMPLE DATA GENERATION FOR USER PROFILE MODULES ─────────────
+// ═══════════════════════════════════════════════════════════════════════
+
+type SampleModule = 'profile' | 'address' | 'contact' | 'identity' | 'bank' | 'education' | 'experience' | 'social_medias' | 'skills' | 'languages' | 'documents' | 'projects';
+
+const VALID_MODULES: SampleModule[] = ['profile', 'address', 'contact', 'identity', 'bank', 'education', 'experience', 'social_medias', 'skills', 'languages', 'documents', 'projects'];
+
+async function fetchMasterData(module: SampleModule) {
+  const data: Record<string, any[]> = {};
+
+  if (module === 'education') {
+    const { data: levels } = await supabase.from('education_levels').select('id, name, abbreviation, level_category').eq('is_active', true).is('deleted_at', null).order('level_order');
+    data.education_levels = levels || [];
+  }
+
+  if (module === 'skills') {
+    const { data: skills } = await supabase.from('skills').select('id, name').eq('is_active', true).is('deleted_at', null).order('name').limit(100);
+    data.skills = skills || [];
+  }
+
+  if (module === 'languages') {
+    const { data: langs } = await supabase.from('languages').select('id, name, native_name').eq('is_active', true).is('deleted_at', null).order('name').limit(50);
+    data.languages = langs || [];
+  }
+
+  if (module === 'social_medias') {
+    const { data: platforms } = await supabase.from('social_medias').select('id, name, code, base_url, placeholder').eq('is_active', true).is('deleted_at', null).order('display_order');
+    data.social_medias = platforms || [];
+  }
+
+  if (module === 'documents') {
+    const { data: docTypes } = await supabase.from('document_types').select('id, name').eq('is_active', true).is('deleted_at', null).order('sort_order');
+    data.document_types = docTypes || [];
+    const { data: docs } = await supabase.from('documents').select('id, name, document_type_id').eq('is_active', true).is('deleted_at', null).order('name');
+    data.documents = docs || [];
+  }
+
+  if (module === 'experience') {
+    const { data: desigs } = await supabase.from('designations').select('id, name').eq('is_active', true).is('deleted_at', null).order('name').limit(50);
+    data.designations = desigs || [];
+  }
+
+  if (module === 'profile') {
+    const { data: countries } = await supabase.from('countries').select('id, name').eq('is_active', true).is('deleted_at', null).order('name').limit(20);
+    data.countries = countries || [];
+  }
+
+  if (module === 'address') {
+    const { data: countries } = await supabase.from('countries').select('id, name').eq('is_active', true).is('deleted_at', null).order('name').limit(20);
+    data.countries = countries || [];
+    // Fetch Indian states + cities for realistic data
+    const indiaCountry = countries?.find(c => c.name === 'India');
+    if (indiaCountry) {
+      const { data: states } = await supabase.from('states').select('id, name').eq('country_id', indiaCountry.id).is('deleted_at', null).order('name').limit(40);
+      data.states = states || [];
+      if (states && states.length > 0) {
+        const stateIds = states.slice(0, 10).map(s => s.id);
+        const { data: cities } = await supabase.from('cities').select('id, name, state_id').in('state_id', stateIds).is('deleted_at', null).order('name').limit(100);
+        data.cities = cities || [];
+      }
+    }
+  }
+
+  return data;
+}
+
+// ─── Fetch existing user records to prevent duplicates ───
+interface ExistingUserData {
+  promptText: string;
+  usedIds: number[]; // FK IDs already used (skill_id, language_id, social_media_id, etc.)
+}
+
+async function fetchExistingUserRecords(module: SampleModule, userId: number): Promise<ExistingUserData> {
+  const empty: ExistingUserData = { promptText: '', usedIds: [] };
+  const multiRecordModules = ['education', 'experience', 'skills', 'languages', 'social_medias', 'documents', 'projects'];
+  if (!multiRecordModules.includes(module)) return empty;
+
+  let existing: string[] = [];
+  let usedIds: number[] = [];
+
+  if (module === 'education') {
+    const { data } = await supabase.from('user_education').select('institution_name, degree_title, field_of_study, education_level_id').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map(e => `${e.degree_title || ''} in ${e.field_of_study || ''} at ${e.institution_name || ''} (education_level_id: ${e.education_level_id})`);
+  }
+
+  if (module === 'experience') {
+    const { data } = await supabase.from('user_experience').select('company_name, job_title, designation_id').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map(e => `${e.job_title || ''} at ${e.company_name || ''} (designation_id: ${e.designation_id})`);
+  }
+
+  if (module === 'skills') {
+    const { data } = await supabase.from('user_skills').select('skill_id, skill:skills(name)').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map((s: any) => `skill_id: ${s.skill_id} (${s.skill?.name || 'unknown'})`);
+    usedIds = (data || []).map((s: any) => s.skill_id);
+  }
+
+  if (module === 'languages') {
+    const { data } = await supabase.from('user_languages').select('language_id, language:languages(name)').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map((l: any) => `language_id: ${l.language_id} (${l.language?.name || 'unknown'})`);
+    usedIds = (data || []).map((l: any) => l.language_id);
+  }
+
+  if (module === 'social_medias') {
+    const { data } = await supabase.from('user_social_medias').select('social_media_id, social_media:social_medias(name)').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map((s: any) => `social_media_id: ${s.social_media_id} (${s.social_media?.name || 'unknown'})`);
+    usedIds = (data || []).map((s: any) => s.social_media_id);
+  }
+
+  if (module === 'documents') {
+    const { data } = await supabase.from('user_documents').select('document_type_id, document_id, document_type:document_types(name), document:documents(name)').eq('user_id', userId).is('deleted_at', null);
+    existing = (data || []).map((d: any) => `document_type_id: ${d.document_type_id} (${d.document_type?.name || ''}), document_id: ${d.document_id} (${d.document?.name || ''})`);
+    usedIds = (data || []).filter((d: any) => d.document_id).map((d: any) => d.document_id);
+  }
+
+  if (module === 'projects') {
+    const { data } = await supabase.from('user_projects').select('project_title, project_type').eq('user_id', userId).eq('is_active', true).is('deleted_at', null);
+    existing = (data || []).map(p => `"${p.project_title}" (${p.project_type || ''})`);
+  }
+
+  if (existing.length === 0) return empty;
+  const promptText = `\n\n⚠️ ALREADY EXISTS — DO NOT DUPLICATE:\nThe user already has these ${module} records. Generate COMPLETELY DIFFERENT ones that do NOT overlap with any of these:\n${existing.map(e => `- ${e}`).join('\n')}`;
+  return { promptText, usedIds };
+}
+
+function buildSampleDataPrompt(module: SampleModule, masterData: Record<string, any[]>, count: number, userName: string, existingData: ExistingUserData = { promptText: '', usedIds: [] }): { system: string; user: string } {
+  // Filter out already-used FK IDs from available master data lists
+  const usedIdSet = new Set(existingData.usedIds);
+  if (module === 'skills' && masterData.skills) {
+    masterData = { ...masterData, skills: masterData.skills.filter(s => !usedIdSet.has(s.id)) };
+  }
+  if (module === 'languages' && masterData.languages) {
+    masterData = { ...masterData, languages: masterData.languages.filter(l => !usedIdSet.has(l.id)) };
+  }
+  if (module === 'social_medias' && masterData.social_medias) {
+    masterData = { ...masterData, social_medias: masterData.social_medias.filter(s => !usedIdSet.has(s.id)) };
+  }
+  if (module === 'documents' && masterData.documents) {
+    masterData = { ...masterData, documents: masterData.documents.filter(d => !usedIdSet.has(d.id)) };
+  }
+  const existingRecords = existingData.promptText;
+  const singleModules = ['profile', 'address', 'contact', 'identity', 'bank'];
+  const isSingle = singleModules.includes(module);
+  const base = `You are a realistic sample data generator for an Indian educational platform called GrowUpMore.
+Generate ${isSingle ? '1 record' : `${count} realistic sample records`} for a user named "${userName}".
+Context: Indian professional/student. Use realistic Indian names, institutions, companies, locations.
+Return ONLY valid JSON. ${isSingle ? 'Return a single JSON object.' : 'Return a JSON array of objects.'}${existingRecords}`;
+
+  switch (module) {
+    case 'profile':
+      return {
+        system: `${base}
+FIELDS (all optional, fill as many as makes sense):
+- date_of_birth: "YYYY-MM-DD" (age 20-35)
+- gender: "male"|"female"|"other"
+- blood_group: "A+"|"A-"|"B+"|"B-"|"AB+"|"AB-"|"O+"|"O-"
+- marital_status: "single"|"married"|"divorced"|"widowed"|"separated"
+- permanent_address_line1, permanent_address_line2: strings (max 255)
+- permanent_postal_code: 6-digit Indian PIN
+- current_address_line1, current_address_line2, current_postal_code
+- alternate_email: valid email (max 255)
+- alternate_phone: Indian phone "+91XXXXXXXXXX" (max 20)
+- emergency_contact_name (max 100), emergency_contact_relationship (max 50), emergency_contact_phone (max 20), emergency_contact_email
+- bio: 2-3 sentence professional bio (max 2000)
+- headline: professional headline like LinkedIn (max 200)
+${masterData.countries?.length ? `Available country IDs: ${JSON.stringify(masterData.countries.map(c => ({ id: c.id, name: c.name })))}. Use these for permanent_country_id and current_country_id.` : ''}
+Do NOT include: aadhar_number, pan_number, passport_number, bank details, UPI details.`,
+        user: `Generate a realistic Indian profile for "${userName}".`,
+      };
+
+    case 'address':
+      return {
+        system: `${base}
+FIELDS (all optional, fill ALL with realistic data):
+- permanent_address_line1: (max 255) street, house no.
+- permanent_address_line2: (max 255) landmark, area
+- permanent_postal_code: 6-digit Indian PIN code
+- current_address_line1: (max 255)
+- current_address_line2: (max 255)
+- current_postal_code: 6-digit Indian PIN code
+${masterData.countries?.length ? `Available country IDs: ${JSON.stringify(masterData.countries.map(c => ({ id: c.id, name: c.name })))}. Use for permanent_country_id and current_country_id.` : ''}
+${masterData.states?.length ? `Available state IDs: ${JSON.stringify(masterData.states.map(s => ({ id: s.id, name: s.name })))}. Use for permanent_state_id and current_state_id.` : ''}
+${masterData.cities?.length ? `Available city IDs (with state_id): ${JSON.stringify(masterData.cities.slice(0, 50).map(c => ({ id: c.id, name: c.name, state_id: c.state_id })))}. Use for permanent_city_id and current_city_id. Make sure city's state_id matches the chosen state.` : ''}
+Generate realistic Indian addresses. Permanent and current can be different cities/states to simulate someone who moved.`,
+        user: `Generate realistic Indian permanent and current addresses for "${userName}".`,
+      };
+
+    case 'contact':
+      return {
+        system: `${base}
+FIELDS (all optional, fill ALL with realistic data):
+- alternate_email: (max 255) a valid alternate email address
+- alternate_phone: (max 20) Indian phone "+91XXXXXXXXXX"
+- emergency_contact_name: (max 100) realistic Indian name (parent/spouse/sibling)
+- emergency_contact_relationship: (max 50) e.g. "Father", "Mother", "Spouse", "Brother", "Sister"
+- emergency_contact_phone: (max 20) Indian phone "+91XXXXXXXXXX"
+- emergency_contact_email: (max 255) valid email
+Generate realistic Indian contact information. The alternate email can be a Gmail/Yahoo address. Emergency contact should be a family member.`,
+        user: `Generate realistic alternate contact and emergency contact details for "${userName}".`,
+      };
+
+    case 'identity':
+      return {
+        system: `${base}
+FIELDS (all optional, fill ALL with realistic MASKED/SAMPLE data):
+- aadhar_number: (max 12 chars, NO spaces) 12-digit number e.g. "XXXXXXXXXXXX" or "234567891234" — must be exactly 12 characters with no spaces
+- pan_number: (max 10) format "ABCDE1234F" — 5 letters, 4 digits, 1 letter
+- passport_number: (max 20) Indian passport format e.g. "J1234567"
+- driving_license_number: (max 20) format like "GJ01-20200012345"
+- voter_id: (max 20) format like "ABC1234567"
+Generate SAMPLE/MASKED Indian identity document numbers. These are for demo purposes only, not real numbers.`,
+        user: `Generate sample masked Indian identity/KYC numbers for "${userName}". Use realistic formats but masked values.`,
+      };
+
+    case 'bank':
+      return {
+        system: `${base}
+FIELDS (all optional, fill ALL with realistic SAMPLE data):
+- bank_account_name: (max 100) account holder name (use the user's name)
+- bank_account_number: (max 30) realistic masked Indian bank account number e.g. "XXXX XXXX XXXX 4567"
+- bank_ifsc_code: (max 11) realistic Indian IFSC code format e.g. "SBIN0001234", "HDFC0000123", "ICIC0002345"
+- bank_name: (max 100) real Indian bank name e.g. "State Bank of India", "HDFC Bank", "ICICI Bank"
+- bank_branch: (max 100) realistic branch name e.g. "Connaught Place, New Delhi"
+- upi_id: (max 100) realistic UPI ID e.g. "name@upi", "name@paytm", "name@okaxis"
+- upi_number: (max 20) Indian phone number for UPI e.g. "9876543210"
+Generate realistic sample Indian banking details. Use masked account numbers for privacy. The IFSC code should be a realistic format matching the bank name.`,
+        user: `Generate sample Indian bank account and UPI details for "${userName}". Use masked account numbers.`,
+      };
+
+    case 'education':
+      return {
+        system: `${base}
+FIELDS per record:
+- education_level_id: (REQUIRED) pick from available levels below
+- institution_name: (REQUIRED, max 500) realistic Indian institution
+- board_or_university: (max 500) e.g. "CBSE", "Gujarat University"
+- field_of_study: (max 500) e.g. "Computer Science"
+- specialization: (max 500)
+- grade_or_percentage: (max 100) e.g. "8.5" or "85%"
+- grade_type: "percentage"|"cgpa"|"gpa"|"grade"|"pass_fail"
+- start_date: "YYYY-MM-DD"
+- end_date: "YYYY-MM-DD" (null if currently studying)
+- is_currently_studying: boolean
+- is_highest_qualification: boolean (only 1 should be true)
+- description: (max 2000) brief description
+
+Available education levels: ${JSON.stringify(masterData.education_levels?.map(l => ({ id: l.id, name: l.name, category: l.level_category })) || [])}
+Use ONLY these IDs for education_level_id.`,
+        user: `Generate ${count} education records for "${userName}" — from school through higher education. Make dates chronologically consistent.`,
+      };
+
+    case 'experience':
+      return {
+        system: `${base}
+FIELDS per record:
+- company_name: (REQUIRED, max 500) realistic Indian or MNC company
+- job_title: (REQUIRED, max 500)
+- employment_type: "full_time"|"part_time"|"contract"|"internship"|"freelance"|"self_employed"
+- department: (max 300)
+- location: (max 500) Indian city
+- work_mode: "on_site"|"remote"|"hybrid"
+- start_date: (REQUIRED) "YYYY-MM-DD"
+- end_date: "YYYY-MM-DD" (null if current job)
+- is_current_job: boolean (only 1 should be true)
+- description: (max 5000) job description with responsibilities
+- key_achievements: (max 5000)
+- skills_used: (max 2000) comma-separated
+${masterData.designations?.length ? `Available designation IDs: ${JSON.stringify(masterData.designations.slice(0, 20).map(d => ({ id: d.id, name: d.name })))}. Use ONLY these IDs for designation_id — pick the closest match or set to null if none fit.` : ''}
+Do NOT include: salary_range, reference_name, reference_phone, reference_email.`,
+        user: `Generate ${count} work experience records for "${userName}". Make dates chronologically consistent and career progression realistic.`,
+      };
+
+    case 'social_medias':
+      return {
+        system: `${base}
+FIELDS per record:
+- social_media_id: (REQUIRED) pick from available platforms below
+- profile_url: (REQUIRED, max 1000) realistic URL using the platform's base_url
+- username: (max 300)
+- is_primary: boolean (only 1 should be true)
+- is_verified: boolean (set false)
+
+Available platforms: ${JSON.stringify(masterData.social_medias?.map(s => ({ id: s.id, name: s.name, code: s.code, base_url: s.base_url })) || [])}
+Use ONLY these IDs for social_media_id. Generate a URL based on the platform's base_url.`,
+        user: `Generate ${count} social media profiles for "${userName}". Pick the most common platforms. Use a consistent username derived from the user's name.`,
+      };
+
+    case 'skills':
+      return {
+        system: `${base}
+FIELDS per record:
+- skill_id: (REQUIRED) pick from available skills below
+- proficiency_level: "beginner"|"elementary"|"intermediate"|"advanced"|"expert"
+- years_of_experience: number 0-30
+- is_primary: boolean (only 1 should be true)
+- endorsement_count: number 0-50
+
+Available skills: ${JSON.stringify(masterData.skills?.slice(0, 60).map(s => ({ id: s.id, name: s.name })) || [])}
+Use ONLY these IDs for skill_id. Do NOT repeat the same skill_id.`,
+        user: `Generate ${count} skill records for "${userName}". Pick a diverse but realistic set of skills for an IT professional. Vary proficiency levels realistically.`,
+      };
+
+    case 'languages':
+      return {
+        system: `${base}
+FIELDS per record:
+- language_id: (REQUIRED) pick from available languages below
+- proficiency_level: "basic"|"conversational"|"professional"|"fluent"|"native"
+- can_read: boolean
+- can_write: boolean
+- can_speak: boolean
+- is_primary: boolean (only 1 should be true)
+- is_native: boolean (only 1 should be true)
+
+Available languages: ${JSON.stringify(masterData.languages?.map(l => ({ id: l.id, name: l.name })) || [])}
+Use ONLY these IDs for language_id. Do NOT repeat the same language_id.`,
+        user: `Generate ${count} language records for "${userName}". Typical Indian user: native Hindi or regional language, professional English, perhaps 1-2 more.`,
+      };
+
+    case 'documents':
+      return {
+        system: `${base}
+FIELDS per record:
+- document_type_id: (REQUIRED) pick from available document types below
+- document_id: (REQUIRED) pick from available documents below — its document_type_id MUST match the record's document_type_id
+- document_number: (max 200) realistic format (masked, e.g. "XXXX-XXXX-1234")
+- issue_date: "YYYY-MM-DD"
+- expiry_date: "YYYY-MM-DD" (null if no expiry)
+- verification_status: "pending"
+Do NOT include: file (this needs actual file uploads).
+
+Available document types: ${JSON.stringify(masterData.document_types?.map(d => ({ id: d.id, name: d.name })) || [])}
+Available documents: ${JSON.stringify(masterData.documents?.map(d => ({ id: d.id, name: d.name, document_type_id: d.document_type_id })) || [])}
+Use ONLY these IDs. The document_id's document_type_id MUST match the record's document_type_id.`,
+        user: `Generate ${count} identity/KYC document metadata records for "${userName}". Use common Indian documents (Aadhar, PAN, Passport, etc.). Mask sensitive numbers. Pick the correct document_type_id and matching document_id for each.`,
+      };
+
+    case 'projects':
+      return {
+        system: `${base}
+FIELDS per record:
+- project_title: (REQUIRED, max 500)
+- project_type: "personal"|"academic"|"professional"|"freelance"|"open_source"|"research"|"hackathon"
+- description: (max 5000) detailed description
+- objectives: (max 3000)
+- role_in_project: (max 300)
+- responsibilities: (max 5000)
+- team_size: number 1-20
+- is_solo_project: boolean
+- organization_name: (max 500)
+- industry: (max 300)
+- technologies_used: (max 2000) comma-separated
+- tools_used: (max 2000) comma-separated
+- programming_languages: (max 1000) comma-separated
+- frameworks: (max 1000) comma-separated
+- databases_used: (max 500) comma-separated
+- platform: (max 200) e.g. "Web", "Mobile", "Cloud"
+- start_date: "YYYY-MM-DD"
+- end_date: "YYYY-MM-DD"
+- is_ongoing: boolean
+- project_status: "completed"|"in_progress"|"planning"
+- key_achievements: (max 5000)
+- impact_summary: (max 2000)
+- project_url: (max 1000) realistic URL
+- repository_url: (max 1000) GitHub URL
+- is_featured: boolean (max 1 true)
+- is_published: boolean (set true)
+- display_order: number starting from 1
+Do NOT include: reference_name, reference_email, reference_phone, client_name.`,
+        user: `Generate ${count} project records for "${userName}". Mix of academic, professional, and personal projects. Make technologies realistic and current.`,
+      };
+  }
+}
+
+export async function generateSampleData(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { module, provider: reqProvider, target_user_id, count: reqCount } = req.body;
+    if (!module || !VALID_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MODULES.join(', ')}`, 400);
+    if (!target_user_id) return err(res, 'target_user_id is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const singleObjectModules: SampleModule[] = ['profile', 'address', 'contact', 'identity', 'bank'];
+    const count = singleObjectModules.includes(module) ? 1 : Math.min(Math.max(reqCount || 3, 1), 10);
+
+    // Fetch user name for context
+    const { data: targetUser } = await supabase.from('users').select('id, full_name, email').eq('id', target_user_id).single();
+    if (!targetUser) return err(res, 'Target user not found', 404);
+
+    // Fetch relevant master data + existing records to avoid duplicates
+    const [masterData, existingData] = await Promise.all([
+      fetchMasterData(module),
+      fetchExistingUserRecords(module, target_user_id),
+    ]);
+    const { system, user: userContent } = buildSampleDataPrompt(module, masterData, count, targetUser.full_name || targetUser.email, existingData);
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, system, userContent);
+
+    let generated: any;
+    try { generated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    // Ensure array for non-single-object modules
+    if (!singleObjectModules.includes(module) && !Array.isArray(generated)) {
+      // Try to extract array from object wrapper
+      const keys = Object.keys(generated);
+      if (keys.length === 1 && Array.isArray(generated[keys[0]])) {
+        generated = generated[keys[0]];
+      } else {
+        generated = [generated];
+      }
+    }
+
+    logAdmin({ actorId: userId, action: 'ai_sample_data_generated', targetType: `user_${module}`, targetId: target_user_id, targetName: `${targetUser.full_name} → ${module} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      module,
+      provider,
+      target_user_id,
+      generated,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, `Sample ${module} data generated successfully`);
+  } catch (error: any) {
+    console.error('AI generateSampleData error:', error);
+    return err(res, error.message || 'Sample data generation failed', 500);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── AI MASTER DATA GENERATION ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+
+type MasterModule = 'skills' | 'languages' | 'education_levels' | 'document_types' | 'documents' | 'designations' | 'specializations' | 'learning_goals' | 'social_medias' | 'countries' | 'states' | 'cities' | 'categories' | 'sub_categories' | 'branches' | 'departments';
+
+const VALID_MASTER_MODULES: MasterModule[] = ['skills', 'languages', 'education_levels', 'document_types', 'documents', 'designations', 'specializations', 'learning_goals', 'social_medias', 'countries', 'states', 'cities', 'categories', 'sub_categories', 'branches', 'departments'];
+
+async function fetchMasterContext(module: MasterModule) {
+  const ctx: Record<string, any[]> = {};
+  // For documents module, fetch document_types so AI can assign valid document_type_id
+  if (module === 'documents') {
+    const { data } = await supabase.from('document_types').select('id, name').eq('is_active', true).is('deleted_at', null).order('sort_order');
+    ctx.document_types = data || [];
+  }
+  // For states, fetch countries so AI can assign valid country_id
+  if (module === 'states') {
+    const { data } = await supabase.from('countries').select('id, name, iso2').eq('is_active', true).is('deleted_at', null).order('name');
+    ctx.countries = data || [];
+  }
+  // For cities, fetch countries and states so AI can assign valid state_id
+  if (module === 'cities') {
+    const { data: countries } = await supabase.from('countries').select('id, name, iso2').eq('is_active', true).is('deleted_at', null).order('name');
+    ctx.countries = countries || [];
+    const { data: states } = await supabase.from('states').select('id, name, state_code, country_id').eq('is_active', true).is('deleted_at', null).order('name').limit(200);
+    ctx.states = states || [];
+  }
+  // For sub_categories, fetch categories so AI can assign valid category_id
+  if (module === 'sub_categories') {
+    const { data } = await supabase.from('categories').select('id, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
+    ctx.categories = data || [];
+  }
+  // For branches, fetch countries, states, cities for location + users for manager
+  if (module === 'branches') {
+    const { data: countries } = await supabase.from('countries').select('id, name').eq('is_active', true).is('deleted_at', null).order('name').limit(20);
+    ctx.countries = countries || [];
+    const indiaCountry = countries?.find(c => c.name === 'India');
+    if (indiaCountry) {
+      const { data: states } = await supabase.from('states').select('id, name').eq('country_id', indiaCountry.id).is('deleted_at', null).order('name').limit(40);
+      ctx.states = states || [];
+      if (states && states.length > 0) {
+        const stateIds = states.slice(0, 10).map(s => s.id);
+        const { data: cities } = await supabase.from('cities').select('id, name, state_id').in('state_id', stateIds).is('deleted_at', null).order('name').limit(100);
+        ctx.cities = cities || [];
+      }
+    }
+  }
+  // For departments, fetch existing departments for parent_department_id
+  if (module === 'departments') {
+    const { data } = await supabase.from('departments').select('id, name, code').eq('is_active', true).is('deleted_at', null).order('name');
+    ctx.existing_departments = data || [];
+  }
+  return ctx;
+}
+
+// ─── Fetch existing master records to prevent duplicates ───
+async function fetchExistingMasterRecords(module: MasterModule): Promise<string> {
+  const tableMap: Record<string, string> = {
+    skills: 'skills', languages: 'languages', education_levels: 'education_levels',
+    document_types: 'document_types', documents: 'documents', designations: 'designations',
+    specializations: 'specializations', learning_goals: 'learning_goals', social_medias: 'social_medias',
+    countries: 'countries', states: 'states', cities: 'cities',
+    categories: 'categories', sub_categories: 'sub_categories',
+    branches: 'branches', departments: 'departments',
+  };
+  const table = tableMap[module];
+  if (!table) return '';
+
+  // Select identifying columns based on module
+  let selectCols = 'name';
+  if (['skills', 'specializations'].includes(module)) selectCols = 'name, category';
+  if (module === 'designations') selectCols = 'name, code';
+  if (module === 'languages') selectCols = 'name, iso_code';
+  if (module === 'countries') selectCols = 'name, iso2';
+  if (module === 'states') selectCols = 'name, state_code';
+  if (module === 'cities') selectCols = 'name';
+  if (module === 'social_medias') selectCols = 'name, code';
+  if (module === 'categories' || module === 'sub_categories') selectCols = 'code, slug';
+  if (module === 'branches') selectCols = 'name, code';
+  if (module === 'departments') selectCols = 'name, code';
+
+  const { data } = await supabase.from(table).select(selectCols).eq('is_active', true).is('deleted_at', null).order('id').limit(500);
+  if (!data || data.length === 0) return '';
+
+  // Build compact list
+  let items: string[];
+  if (module === 'categories' || module === 'sub_categories') {
+    items = data.map((r: any) => r.code || r.slug);
+  } else if (module === 'languages') {
+    items = data.map((r: any) => `${r.name} (${r.iso_code || ''})`);
+  } else if (module === 'countries') {
+    items = data.map((r: any) => `${r.name} (${r.iso2 || ''})`);
+  } else if (module === 'states') {
+    items = data.map((r: any) => `${r.name} (${r.state_code || ''})`);
+  } else if (['social_medias', 'branches', 'departments', 'designations'].includes(module)) {
+    items = data.map((r: any) => `${r.name}${r.code ? ` (${r.code})` : ''}`);
+  } else {
+    items = data.map((r: any) => r.name);
+  }
+
+  return `\n\n⚠️ ALREADY EXISTS — DO NOT DUPLICATE:\nThese ${module} records already exist in the database. Generate COMPLETELY DIFFERENT/NEW ones that are NOT in this list:\n${items.join(', ')}`;
+}
+
+function buildMasterDataPrompt(module: MasterModule, context: Record<string, any[]>, count: number, existingRecords: string = ''): { system: string; user: string } {
+  const base = `You are a master data generator for an Indian educational platform called GrowUpMore.
+Generate ${count} unique, realistic records for the "${module}" master table.
+Context: Indian educational/professional platform. Generate diverse, commonly-used entries.
+Return ONLY valid JSON — a JSON array of objects. Do NOT include id, created_at, updated_at, deleted_at, created_by, updated_by, deleted_by fields.${existingRecords}`;
+
+  switch (module) {
+    case 'skills':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) name of the skill
+- category: (REQUIRED) one of: "technical"|"soft_skill"|"tool"|"framework"|"language"|"domain"|"certification"|"other"
+- description: (max 2000 chars) brief description of the skill
+- is_active: true
+- sort_order: sequential number starting from 1
+Generate a diverse mix of IT, soft skills, tools, frameworks, and certifications relevant to Indian professionals.`,
+        user: `Generate ${count} unique skills. Include popular technologies (React, Python, AWS), soft skills (Communication, Leadership), tools (VS Code, Docker), frameworks (Spring Boot, Django), and certifications (AWS Solutions Architect, PMP). Avoid duplicates.`,
+      };
+
+    case 'languages':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) language name in English
+- native_name: (max 200 chars) language name in its own script
+- iso_code: (max 10 chars) ISO 639-1 code
+- script: (max 100 chars) script used e.g. "Devanagari", "Latin"
+- for_material: boolean (true if this language should be used for platform content/translations)
+- is_active: true
+- sort_order: sequential number
+Generate Indian languages plus major world languages.`,
+        user: `Generate ${count} languages. Start with major Indian languages (Hindi, Gujarati, Tamil, Telugu, Bengali, Marathi, Kannada, Malayalam, Punjabi, Odia, Urdu, Assamese, Sanskrit) with native names in their scripts, then add major world languages (English, Spanish, French, Arabic, Mandarin, Japanese, German, etc.). Set for_material=true for English, Hindi, and Gujarati.`,
+      };
+
+    case 'education_levels':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) full name of education level
+- abbreviation: (max 50 chars) e.g. "B.Tech", "MBA", "PhD"
+- level_order: integer for ordering (higher = more advanced)
+- level_category: (REQUIRED) one of: "pre_school"|"school"|"diploma"|"undergraduate"|"postgraduate"|"doctoral"|"professional"|"informal"|"other"
+- description: (max 2000 chars)
+- is_active: true
+- sort_order: sequential number
+Generate education levels following the Indian education system hierarchy.`,
+        user: `Generate ${count} education levels covering the full Indian education spectrum: Pre-School/Nursery, Primary (1-5), Secondary (6-10), Higher Secondary (11-12), ITI/Diploma, B.Tech/B.E., B.Sc, B.Com, BBA, BA, BCA, M.Tech, M.Sc, MBA, MCA, MA, M.Com, PhD, Post-Doctoral, Professional certifications, etc. Order by level_order from lowest to highest.`,
+      };
+
+    case 'document_types':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) category name for documents
+- description: (max 2000 chars) what this category includes
+- is_active: true
+- sort_order: sequential number
+Generate categories of identity/KYC documents relevant to India.`,
+        user: `Generate ${count} document type categories. Examples: "Identity Proof", "Address Proof", "Education Certificate", "Employment Proof", "Professional License", "Financial Document", "Government ID", "Travel Document", "Insurance", "Other".`,
+      };
+
+    case 'documents':
+      return {
+        system: `${base}
+FIELDS per record:
+- document_type_id: (REQUIRED) must be a valid ID from available document types below
+- name: (REQUIRED, 1-200 chars) specific document name
+- description: (max 2000 chars) brief description
+- is_active: true
+- sort_order: sequential number
+
+Available document types: ${JSON.stringify(context.document_types?.map(d => ({ id: d.id, name: d.name })) || [])}
+Use ONLY these IDs for document_type_id. Assign each document to the most appropriate type.`,
+        user: `Generate ${count} specific documents. Examples: Aadhar Card, PAN Card, Passport, Driving License, Voter ID, Ration Card, 10th Marksheet, 12th Marksheet, Degree Certificate, Experience Letter, Salary Slip, Bank Statement, etc. Map each to the correct document_type_id.`,
+      };
+
+    case 'designations':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) designation/job title
+- code: (max 50 chars) short code e.g. "SDE1", "PM", "VP"
+- level: integer 0-10 (0=intern, 10=C-suite)
+- level_band: (REQUIRED) one of: "intern"|"entry"|"mid"|"senior"|"lead"|"manager"|"director"|"executive"
+- description: (max 2000 chars) brief description of the role
+- is_active: true
+- sort_order: sequential number
+Generate designations covering the typical Indian corporate hierarchy.`,
+        user: `Generate ${count} designations covering the full hierarchy: Intern, Trainee, Junior Developer, Software Engineer, Senior Software Engineer, Tech Lead, Engineering Manager, Architect, Principal Engineer, Director of Engineering, VP Engineering, CTO, Data Analyst, Product Manager, Designer, HR Executive, Business Analyst, DevOps Engineer, QA Engineer, etc.`,
+      };
+
+    case 'specializations':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) specialization name
+- category: (REQUIRED) one of: "technology"|"data"|"design"|"business"|"language"|"science"|"mathematics"|"arts"|"health"|"exam_prep"|"professional"|"other"
+- description: (max 2000 chars)
+- is_active: true
+- sort_order: sequential number
+Generate specializations relevant to Indian education and professional development.`,
+        user: `Generate ${count} specializations. Include: Web Development, Mobile Development, Machine Learning, Data Science, Cloud Computing, Cybersecurity, UI/UX Design, Digital Marketing, Financial Analysis, Competitive Exam Prep (UPSC, CAT, GATE, JEE), Content Writing, Blockchain, IoT, Game Development, Project Management, etc.`,
+      };
+
+    case 'learning_goals':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) learning goal name
+- description: (max 2000 chars)
+- display_order: sequential integer
+- is_active: true
+- sort_order: sequential number
+Generate learning goals for an Indian educational platform.`,
+        user: `Generate ${count} learning goals. Examples: "Get a job in IT", "Prepare for government exams", "Learn a new programming language", "Upskill for promotion", "Career switch to tech", "Build a portfolio", "Prepare for interviews", "Learn freelancing", "Start a business", "Academic excellence", "Competitive exam preparation", "Personal development", etc.`,
+      };
+
+    case 'social_medias':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) platform display name
+- code: (REQUIRED, 1-50 chars) lowercase slug e.g. "linkedin", "github"
+- base_url: (max 500 chars) profile base URL e.g. "https://linkedin.com/in/"
+- placeholder: (max 500 chars) placeholder text for the URL input e.g. "your-profile-slug"
+- platform_type: (REQUIRED) one of: "social"|"professional"|"code"|"video"|"blog"|"portfolio"|"messaging"|"website"|"other"
+- display_order: sequential integer
+- is_active: true
+- sort_order: sequential number
+Generate popular social media and professional platforms.`,
+        user: `Generate ${count} platforms. Include: LinkedIn, GitHub, Twitter/X, Facebook, Instagram, YouTube, LeetCode, HackerRank, Stack Overflow, Medium, Behance, Dribbble, CodePen, Portfolio Website, Personal Blog, Telegram, WhatsApp, Discord, Reddit, Kaggle, etc.`,
+      };
+
+    case 'countries':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) country name in English
+- nationality: (max 200 chars) e.g. "Indian", "American"
+- iso2: (REQUIRED, exactly 2 chars) ISO 3166-1 alpha-2 code e.g. "IN", "US"
+- iso3: (REQUIRED, exactly 3 chars) ISO 3166-1 alpha-3 code e.g. "IND", "USA"
+- phone_code: (max 10 chars) international dialing code e.g. "+91", "+1"
+- currency: (max 3 chars) ISO 4217 currency code e.g. "INR", "USD"
+- currency_symbol: (max 5 chars) e.g. "₹", "$"
+- currency_name: (max 100 chars) e.g. "Indian Rupee", "US Dollar"
+- tld: (max 10 chars) top-level domain e.g. ".in", ".us"
+- national_language: (max 100 chars) primary language
+- region: (max 100 chars) world region e.g. "Asia", "Europe", "Africa"
+- subregion: (max 100 chars) e.g. "Southern Asia", "Western Europe"
+- languages: JSON array of language objects [{"code":"hi","name":"Hindi"},...]
+- latitude: decimal number
+- longitude: decimal number
+- is_active: true
+- sort_order: sequential number
+Generate real-world countries with accurate data.`,
+        user: `Generate ${count} countries with accurate ISO codes, currencies, and phone codes. Start with major countries: India, United States, United Kingdom, Canada, Australia, Germany, France, Japan, China, Brazil, etc.`,
+      };
+
+    case 'states':
+      return {
+        system: `${base}
+FIELDS per record:
+- country_id: (REQUIRED) must be a valid ID from available countries below
+- name: (REQUIRED, 1-200 chars) state/province name
+- state_code: (max 10 chars) state abbreviation e.g. "GJ", "MH", "CA"
+- is_active: true
+- sort_order: sequential number
+
+Available countries: ${JSON.stringify(context.countries?.map((c: any) => ({ id: c.id, name: c.name, iso2: c.iso2 })) || [])}
+Use ONLY these IDs for country_id. Generate states/provinces that belong to these countries.`,
+        user: `Generate ${count} states/provinces. Focus primarily on Indian states (Gujarat, Maharashtra, Rajasthan, Karnataka, Tamil Nadu, etc.) and include some states from other available countries. Use accurate state codes.`,
+      };
+
+    case 'cities':
+      return {
+        system: `${base}
+FIELDS per record:
+- state_id: (REQUIRED) must be a valid ID from available states below
+- name: (REQUIRED, 1-200 chars) city name
+- phonecode: (max 20 chars) STD/area code e.g. "0261", "022", "011"
+- timezone: (max 100 chars) timezone identifier e.g. "Asia/Kolkata", "America/New_York"
+- latitude: decimal number
+- longitude: decimal number
+- is_active: true
+- sort_order: sequential number
+
+Available countries: ${JSON.stringify(context.countries?.slice(0, 20).map((c: any) => ({ id: c.id, name: c.name })) || [])}
+Available states (with country_id): ${JSON.stringify(context.states?.map((s: any) => ({ id: s.id, name: s.name, state_code: s.state_code, country_id: s.country_id })) || [])}
+Use ONLY the available state IDs for state_id. Generate cities that belong to these states.`,
+        user: `Generate ${count} cities. Focus primarily on major Indian cities (Surat, Ahmedabad, Mumbai, Delhi, Bangalore, Chennai, Hyderabad, Pune, Kolkata, Jaipur, etc.) mapped to their correct state. Include cities from other available states/countries too. Use accurate phone codes and timezones.`,
+      };
+
+    case 'categories':
+      return {
+        system: `${base}
+FIELDS per record:
+- code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "programming", "data-science"
+- slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
+- display_order: sequential integer starting from 1
+- is_new: boolean (true for recently added categories)
+- new_until: date string "YYYY-MM-DD" or null
+- is_active: true
+- og_site_name: "GrowUpMore"
+- og_type: "website"
+- twitter_site: "@growupmore"
+- twitter_card: "summary_large_image"
+- robots_directive: "index, follow"
+- sort_order: sequential number
+Do NOT include: image, name, description (these come from translations). Generate category codes for an Indian educational platform.`,
+        user: `Generate ${count} category codes for course/content categories. Examples: programming, web-development, mobile-development, data-science, machine-learning, cloud-computing, cybersecurity, devops, database, ui-ux-design, digital-marketing, business, finance, competitive-exams, languages, school-education, college-education, professional-certifications, soft-skills, career-development.`,
+      };
+
+    case 'sub_categories':
+      return {
+        system: `${base}
+FIELDS per record:
+- category_id: (REQUIRED) must be a valid ID from available categories below
+- code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "react", "python-basics"
+- slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
+- display_order: sequential integer starting from 1
+- is_new: boolean (true for recently added)
+- new_until: date string "YYYY-MM-DD" or null
+- is_active: true
+- og_site_name: "GrowUpMore"
+- og_type: "website"
+- twitter_site: "@growupmore"
+- twitter_card: "summary_large_image"
+- robots_directive: "index, follow"
+- sort_order: sequential number
+Do NOT include: image, name, description (these come from translations).
+
+Available categories: ${JSON.stringify(context.categories?.map((c: any) => ({ id: c.id, code: c.code })) || [])}
+Use ONLY these IDs for category_id. Assign each sub-category to its most relevant parent category.`,
+        user: `Generate ${count} sub-category codes. Map each to the correct parent category. Examples: react, angular, vue, node-js (under web-dev), python, java, javascript (under programming), aws, azure, gcp (under cloud), etc.`,
+      };
+
+    case 'branches':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) branch name e.g. "GrowUpMore Surat HQ", "GrowUpMore Mumbai Office"
+- code: (REQUIRED, 1-50 chars) unique uppercase code e.g. "SRT-HQ", "MUM-01", "DEL-02"
+- branch_type: (REQUIRED) one of: "head_office"|"regional_office"|"branch_office"|"satellite_office"|"virtual_office"|"warehouse"|"training_center"|"other"
+- address_line_1: (max 255) street address
+- address_line_2: (max 255) area, landmark
+- pincode: (max 10) 6-digit Indian PIN code
+- phone: (max 20) phone number with country code e.g. "+91-261-1234567"
+- email: (max 255) branch email e.g. "surat@growupmore.com"
+- website: (max 500) branch website URL or null
+- google_maps_url: (max 1000) Google Maps URL or null
+- is_active: true
+- sort_order: sequential number
+${context.countries?.length ? `Available country IDs: ${JSON.stringify(context.countries.map((c: any) => ({ id: c.id, name: c.name })))}. Use for country_id.` : ''}
+${context.states?.length ? `Available state IDs: ${JSON.stringify(context.states.map((s: any) => ({ id: s.id, name: s.name })))}. Use for state_id.` : ''}
+${context.cities?.length ? `Available city IDs (with state_id): ${JSON.stringify(context.cities.slice(0, 50).map((c: any) => ({ id: c.id, name: c.name, state_id: c.state_id })))}. Use for city_id. Ensure city's state_id matches the chosen state.` : ''}
+Do NOT include: branch_manager_id (this is assigned separately).`,
+        user: `Generate ${count} branch/office records for GrowUpMore across different Indian cities. Include a head office, regional offices, and branch offices. Use realistic Indian addresses and PIN codes.`,
+      };
+
+    case 'departments':
+      return {
+        system: `${base}
+FIELDS per record:
+- name: (REQUIRED, 1-200 chars) department name e.g. "Engineering", "Human Resources"
+- code: (REQUIRED, 1-50 chars) unique uppercase code e.g. "ENG", "HR", "MKT", "FIN"
+- description: (max 2000 chars) brief description of department responsibilities
+- is_active: true
+- sort_order: sequential number
+${context.existing_departments?.length ? `Existing departments (for parent_department_id, optional): ${JSON.stringify(context.existing_departments.map((d: any) => ({ id: d.id, name: d.name, code: d.code })))}. You may set parent_department_id to create sub-departments under existing ones, or set to null for top-level departments.` : ''}
+Do NOT include: head_user_id (this is assigned separately).`,
+        user: `Generate ${count} department records for an educational technology company. Include core departments (Engineering, Product, Design, Marketing, Sales, HR, Finance, Operations, Legal, Customer Support, Content, Quality Assurance) and optionally sub-departments.`,
+      };
+  }
+}
+
+export async function generateMasterData(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { module, provider: reqProvider, count: reqCount, prompt } = req.body;
+    if (!module || !VALID_MASTER_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MASTER_MODULES.join(', ')}`, 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const count = Math.min(Math.max(reqCount || 10, 1), 50);
+
+    const [context, existingRecords] = await Promise.all([
+      fetchMasterContext(module),
+      fetchExistingMasterRecords(module),
+    ]);
+    const { system, user: userContent } = buildMasterDataPrompt(module, context, count, existingRecords);
+    const finalUserContent = prompt ? `${userContent}\n\nAdditional instructions from user: ${prompt}` : userContent;
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, system, finalUserContent);
+
+    let generated: any;
+    try { generated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    // Ensure array
+    if (!Array.isArray(generated)) {
+      const keys = Object.keys(generated);
+      if (keys.length === 1 && Array.isArray(generated[keys[0]])) {
+        generated = generated[keys[0]];
+      } else {
+        generated = [generated];
+      }
+    }
+
+    logAdmin({ actorId: userId, action: 'ai_sample_data_generated', targetType: `master_${module}`, targetId: 0, targetName: `master → ${module} (${provider}, ${generated.length} records)`, ip: getClientIp(req) });
+
+    return ok(res, {
+      module,
+      provider,
+      generated,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, `${generated.length} ${module} records generated successfully`);
+  } catch (error: any) {
+    console.error('AI generateMasterData error:', error);
+    return err(res, error.message || 'Master data generation failed', 500);
+  }
+}
+
+// ─── AI MASTER DATA UPDATE ─────────────────────────────────────────
+
+const MASTER_TABLE_MAP: Record<MasterModule, string> = {
+  skills: 'skills',
+  languages: 'languages',
+  education_levels: 'education_levels',
+  document_types: 'document_types',
+  documents: 'documents',
+  designations: 'designations',
+  specializations: 'specializations',
+  learning_goals: 'learning_goals',
+  social_medias: 'social_medias',
+  countries: 'countries',
+  states: 'states',
+  cities: 'cities',
+  categories: 'categories',
+  sub_categories: 'sub_categories',
+  branches: 'branches',
+  departments: 'departments',
+};
+
+// Columns to exclude from AI update payload (system-managed)
+const SYSTEM_COLUMNS = ['id', 'created_at', 'updated_at', 'deleted_at', 'created_by', 'updated_by', 'deleted_by', 'flag_image', 'icon', 'icon_url', 'image'];
+
+function stripSystemColumns(record: any): any {
+  const cleaned: any = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (!SYSTEM_COLUMNS.includes(k)) cleaned[k] = v;
+  }
+  return cleaned;
+}
+
+export async function updateMasterData(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { module, provider: reqProvider, prompt, record_ids } = req.body;
+    if (!module || !VALID_MASTER_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MASTER_MODULES.join(', ')}`, 400);
+    if (!prompt) return err(res, 'Prompt is required for update mode', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const table = MASTER_TABLE_MAP[module as MasterModule];
+
+    // Fetch existing records
+    let q = supabase.from(table).select('*').is('deleted_at', null).eq('is_active', true);
+    if (record_ids && Array.isArray(record_ids) && record_ids.length > 0) {
+      q = q.in('id', record_ids);
+    }
+    q = q.order('id').limit(100);
+
+    const { data: existingRecords, error: fetchErr } = await q;
+    if (fetchErr) return err(res, fetchErr.message, 500);
+    if (!existingRecords || existingRecords.length === 0) return err(res, 'No existing records found to update', 404);
+
+    // Build update prompt
+    const recordsForAI = existingRecords.map(r => {
+      const cleaned = stripSystemColumns(r);
+      cleaned.id = r.id; // keep id so AI can map updates back
+      return cleaned;
+    });
+
+    const systemPrompt = `You are a master data updater for an Indian educational platform called GrowUpMore.
+You will receive existing records from the "${module}" table and a user instruction.
+Your job is to UPDATE the existing records according to the user's instructions.
+
+CRITICAL RULES:
+1. Return ONLY valid JSON — a JSON array of objects.
+2. Each object MUST include the "id" field with the EXACT same value from the input — this is used to map updates.
+3. Only modify the fields that the user's instruction asks you to change. Keep other fields unchanged.
+4. Do NOT add new records — only update the ones provided.
+5. Do NOT remove any records — return ALL provided records.
+6. Do NOT include system fields: created_at, updated_at, deleted_at, created_by, updated_by, deleted_by, flag_image, icon, icon_url, image.`;
+
+    const userContent = `EXISTING RECORDS:\n${JSON.stringify(recordsForAI, null, 2)}\n\nUSER INSTRUCTION: ${prompt}`;
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+
+    let updated: any;
+    try { updated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    // Ensure array
+    if (!Array.isArray(updated)) {
+      const keys = Object.keys(updated);
+      if (keys.length === 1 && Array.isArray(updated[keys[0]])) {
+        updated = updated[keys[0]];
+      } else {
+        updated = [updated];
+      }
+    }
+
+    // Validate all returned records have valid IDs from the original set
+    const validIds = new Set(existingRecords.map(r => r.id));
+    updated = updated.filter((r: any) => r.id && validIds.has(r.id));
+
+    logAdmin({ actorId: userId, action: 'ai_master_data_updated', targetType: `master_${module}`, targetId: 0, targetName: `master → ${module} update (${provider}, ${updated.length} records)`, ip: getClientIp(req) });
+
+    return ok(res, {
+      module,
+      provider,
+      generated: updated,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, `${updated.length} ${module} records updated by AI`);
+  } catch (error: any) {
+    console.error('AI updateMasterData error:', error);
+    return err(res, error.message || 'Master data update failed', 500);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── Generate / Update Resume Content (Headline + Bio) ──
+// ═══════════════════════════════════════════════════════════════════════
+
+export async function generateResumeContent(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { provider: reqProvider, prompt, target_user_id, mode } = req.body;
+    if (!target_user_id) return err(res, 'target_user_id is required', 400);
+    if (!prompt?.trim()) return err(res, 'Prompt is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const generateMode = mode === 'update' ? 'update' : 'generate';
+
+    // Fetch user info
+    const { data: targetUser } = await supabase.from('users').select('id, full_name, email').eq('id', target_user_id).single();
+    if (!targetUser) return err(res, 'Target user not found', 404);
+
+    // Fetch profile context (existing headline/bio + profile data)
+    const { data: profile } = await supabase.from('user_profiles').select('headline, bio, gender, date_of_birth, marital_status').eq('user_id', target_user_id).maybeSingle();
+
+    // Fetch skills, education, experience for richer context
+    const [skillsRes, eduRes, expRes] = await Promise.all([
+      supabase.from('user_skills').select('skill:skills(name), proficiency_level').eq('user_id', target_user_id).is('deleted_at', null).limit(20),
+      supabase.from('user_education').select('institution_name, degree, field_of_study, start_year, end_year').eq('user_id', target_user_id).is('deleted_at', null).order('end_year', { ascending: false }).limit(5),
+      supabase.from('user_experience').select('company_name, job_title, start_date, end_date, is_current').eq('user_id', target_user_id).is('deleted_at', null).order('start_date', { ascending: false }).limit(5),
+    ]);
+
+    const skills = (skillsRes.data || []).map((s: any) => s.skill?.name).filter(Boolean);
+    const education = (eduRes.data || []).map((e: any) => `${e.degree || ''} in ${e.field_of_study || ''} from ${e.institution_name || ''} (${e.start_year || ''}–${e.end_year || 'present'})`).filter((s: string) => s.trim().length > 10);
+    const experience = (expRes.data || []).map((e: any) => `${e.job_title || ''} at ${e.company_name || ''} (${e.start_date?.slice(0, 7) || ''}–${e.is_current ? 'present' : e.end_date?.slice(0, 7) || ''})`).filter((s: string) => s.trim().length > 10);
+
+    let contextBlock = `User: ${targetUser.full_name || targetUser.email}`;
+    if (skills.length > 0) contextBlock += `\nSkills: ${skills.join(', ')}`;
+    if (education.length > 0) contextBlock += `\nEducation:\n- ${education.join('\n- ')}`;
+    if (experience.length > 0) contextBlock += `\nExperience:\n- ${experience.join('\n- ')}`;
+
+    const systemPrompt = `You are a professional resume writer for an Indian educational/professional platform called GrowUpMore.
+Generate a professional resume headline and bio for the user based on their profile data and the user's instructions.
+
+RULES:
+- headline: max 200 characters. A punchy, professional tagline. Use "|" or "·" as separators. e.g. "Senior Software Engineer | React & Node.js | Cloud Architecture"
+- bio: max 2000 characters. A compelling 3rd-person professional summary. 2-4 sentences. Highlight key skills, experience, and aspirations.
+- Return ONLY valid JSON: { "headline": "...", "bio": "..." }
+- Do NOT include any markdown, code blocks, or extra text — ONLY the JSON object.
+${generateMode === 'update' && profile?.headline ? `\nCurrent headline: "${profile.headline}"` : ''}
+${generateMode === 'update' && profile?.bio ? `\nCurrent bio: "${profile.bio}"` : ''}`;
+
+    const userContent = `${contextBlock}\n\nUser instructions: ${prompt.trim()}`;
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+
+    let generated: any;
+    try { generated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    // Validate output
+    if (!generated.headline && !generated.bio) return err(res, 'AI did not generate headline or bio. Please try again.', 500);
+    if (generated.headline && generated.headline.length > 200) generated.headline = generated.headline.slice(0, 200);
+    if (generated.bio && generated.bio.length > 2000) generated.bio = generated.bio.slice(0, 2000);
+
+    logAdmin({ actorId: userId, action: 'ai_resume_content_generated', targetType: 'user_profile', targetId: target_user_id, targetName: `${targetUser.full_name} → resume (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      generated,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, 'Resume content generated');
+  } catch (error: any) {
+    console.error('AI generateResumeContent error:', error);
+    return err(res, error.message || 'Resume content generation failed', 500);
   }
 }

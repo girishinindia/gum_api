@@ -152,7 +152,10 @@ export async function remove(req: Request, res: Response) {
   if (!old) return err(res, 'Specialization not found', 404);
 
   const { error: e } = await supabase.from('specializations').delete().eq('id', id);
-  if (e) return err(res, e.message, 500);
+  if (e) {
+    if (e.message?.includes('violates foreign key constraint')) return err(res, 'Cannot delete — this record is in use. Remove referencing records first.', 409);
+    return err(res, e.message, 500);
+  }
 
   await clearCache(old.category);
   logAdmin({ actorId: req.user!.id, action: 'specialization_deleted', targetType: 'specialization', targetId: id, targetName: old.name, ip: getClientIp(req) });

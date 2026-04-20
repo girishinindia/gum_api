@@ -35,7 +35,16 @@ import branchDepartmentRoutes from './modules/branch-departments/branchDepartmen
 import activityLogRoutes from './modules/activity-logs/activityLog.routes';
 import tableSummaryRoutes from './modules/table-summary/tableSummary.routes';
 import profileRoutes from './modules/profile/profile.routes';
+import userProfileRoutes from './modules/user-profiles/userProfile.routes';
+import userEducationRoutes from './modules/user-education/userEducation.routes';
+import userExperienceRoutes from './modules/user-experience/userExperience.routes';
+import userSocialMediaRoutes from './modules/user-social-medias/userSocialMedia.routes';
+import userSkillRoutes from './modules/user-skills/userSkill.routes';
+import userLanguageRoutes from './modules/user-languages/userLanguage.routes';
+import userDocumentRoutes from './modules/user-documents/userDocument.routes';
+import userProjectRoutes from './modules/user-projects/userProject.routes';
 import aiRoutes from './modules/ai/ai.routes';
+import resumeRoutes from './modules/resume/resume.routes';
 
 const app = express();
 
@@ -92,7 +101,16 @@ app.use(`${api}/departments`,                 departmentRoutes);
 app.use(`${api}/branch-departments`,          branchDepartmentRoutes);
 app.use(`${api}/activity-logs`,               activityLogRoutes);
 app.use(`${api}/table-summary`,              tableSummaryRoutes);
+app.use(`${api}/user-profiles`,              userProfileRoutes);
+app.use(`${api}/user-education`,             userEducationRoutes);
+app.use(`${api}/user-experience`,           userExperienceRoutes);
+app.use(`${api}/user-social-medias`,        userSocialMediaRoutes);
+app.use(`${api}/user-skills`,              userSkillRoutes);
+app.use(`${api}/user-languages`,           userLanguageRoutes);
+app.use(`${api}/user-documents`,           userDocumentRoutes);
+app.use(`${api}/user-projects`,            userProjectRoutes);
 app.use(`${api}/ai`,                        aiRoutes);
+app.use(`${api}/resume`,                    resumeRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

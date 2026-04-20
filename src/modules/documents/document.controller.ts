@@ -204,7 +204,10 @@ export async function remove(req: Request, res: Response) {
   if (old.file_url) { try { await deleteImage(extractBunnyPath(old.file_url), old.file_url); } catch {} }
 
   const { error: e } = await supabase.from('documents').delete().eq('id', id);
-  if (e) return err(res, e.message, 500);
+  if (e) {
+    if (e.message?.includes('violates foreign key constraint')) return err(res, 'Cannot delete — this record is in use. Remove referencing records first.', 409);
+    return err(res, e.message, 500);
+  }
 
   await clearCache();
   await redis.del(`documents:type:${old.document_type_id}`);
