@@ -103,39 +103,56 @@ export async function upsert(req: Request, res: Response) {
 
   const updates: any = { ...parsed.data, updated_by: req.user!.id };
 
-  // Handle profile image upload
+  // Handle profile image upload — upload NEW image first, then delete old one
+  let uploadedProfileImage = false;
+  let uploadedCoverImage = false;
   if (req.files && typeof req.files === 'object') {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     if (files.profile_image?.[0]) {
       const file = files.profile_image[0];
-      // Delete old image if exists
-      const { data: existing } = await supabase.from('user_profiles').select('profile_image_url').eq('user_id', userId).maybeSingle();
-      if (existing?.profile_image_url) {
-        try { await deleteImage(extractBunnyPath(existing.profile_image_url)); } catch {}
+      try {
+        const path = `profiles/user-${userId}-profile-${Date.now()}.webp`;
+        const newUrl = await processAndUploadImage(file.buffer, path, { width: 500, height: 500, quality: 85 });
+        // Upload succeeded — now safe to delete old image
+        const { data: existing } = await supabase.from('user_profiles').select('profile_image_url').eq('user_id', userId).maybeSingle();
+        if (existing?.profile_image_url) {
+          try { await deleteImage(extractBunnyPath(existing.profile_image_url)); } catch {}
+        }
+        updates.profile_image_url = newUrl;
+        uploadedProfileImage = true;
+      } catch (e: any) {
+        console.error('[PROFILE] Failed to upload profile image:', e.message);
+        return err(res, 'Failed to upload profile image', 500);
       }
-      const path = `profiles/user-${userId}-profile.webp`;
-      updates.profile_image_url = await processAndUploadImage(file.buffer, path, { width: 500, height: 500, quality: 85 });
     }
     if (files.cover_image?.[0]) {
       const file = files.cover_image[0];
-      const { data: existing } = await supabase.from('user_profiles').select('cover_image_url').eq('user_id', userId).maybeSingle();
-      if (existing?.cover_image_url) {
-        try { await deleteImage(extractBunnyPath(existing.cover_image_url)); } catch {}
+      try {
+        const path = `profiles/user-${userId}-cover-${Date.now()}.webp`;
+        const newUrl = await processAndUploadImage(file.buffer, path, { width: 1200, height: 400, quality: 85 });
+        // Upload succeeded — now safe to delete old image
+        const { data: existing } = await supabase.from('user_profiles').select('cover_image_url').eq('user_id', userId).maybeSingle();
+        if (existing?.cover_image_url) {
+          try { await deleteImage(extractBunnyPath(existing.cover_image_url)); } catch {}
+        }
+        updates.cover_image_url = newUrl;
+        uploadedCoverImage = true;
+      } catch (e: any) {
+        console.error('[PROFILE] Failed to upload cover image:', e.message);
+        return err(res, 'Failed to upload cover image', 500);
       }
-      const path = `profiles/user-${userId}-cover.webp`;
-      updates.cover_image_url = await processAndUploadImage(file.buffer, path, { width: 1200, height: 400, quality: 85 });
     }
   }
 
-  // Handle explicit image removal
-  if (req.body.profile_image_url === 'null' || req.body.profile_image_url === null) {
+  // Handle explicit image removal (only if no new file was uploaded for that field)
+  if (!uploadedProfileImage && (req.body.profile_image_url === 'null' || req.body.profile_image_url === null)) {
     const { data: existing } = await supabase.from('user_profiles').select('profile_image_url').eq('user_id', userId).maybeSingle();
     if (existing?.profile_image_url) {
       try { await deleteImage(extractBunnyPath(existing.profile_image_url)); } catch {}
     }
     updates.profile_image_url = null;
   }
-  if (req.body.cover_image_url === 'null' || req.body.cover_image_url === null) {
+  if (!uploadedCoverImage && (req.body.cover_image_url === 'null' || req.body.cover_image_url === null)) {
     const { data: existing } = await supabase.from('user_profiles').select('cover_image_url').eq('user_id', userId).maybeSingle();
     if (existing?.cover_image_url) {
       try { await deleteImage(extractBunnyPath(existing.cover_image_url)); } catch {}
