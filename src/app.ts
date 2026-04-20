@@ -52,6 +52,8 @@ import topicRoutes from './modules/topics/topic.routes';
 import subjectTranslationRoutes from './modules/subject-translations/subjectTranslation.routes';
 import chapterTranslationRoutes from './modules/chapter-translations/chapterTranslation.routes';
 import topicTranslationRoutes from './modules/topic-translations/topicTranslation.routes';
+import subTopicRoutes from './modules/sub-topics/subTopic.routes';
+import subTopicTranslationRoutes from './modules/sub-topic-translations/subTopicTranslation.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import resumeRoutes from './modules/resume/resume.routes';
 
@@ -127,6 +129,8 @@ app.use(`${api}/topics`,                      topicRoutes);
 app.use(`${api}/subject-translations`,        subjectTranslationRoutes);
 app.use(`${api}/chapter-translations`,        chapterTranslationRoutes);
 app.use(`${api}/topic-translations`,          topicTranslationRoutes);
+app.use(`${api}/sub-topics`,                  subTopicRoutes);
+app.use(`${api}/sub-topic-translations`,      subTopicTranslationRoutes);
 app.use(`${api}/ai`,                        aiRoutes);
 app.use(`${api}/resume`,                    resumeRoutes);
 

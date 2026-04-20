@@ -27,6 +27,10 @@ r.post('/bulk-generate-chapter-translations', requirePermission('ai', 'create'),
 r.post('/generate-topic-translation', requirePermission('ai', 'create'), ctrl.generateTopicTranslation);
 r.post('/bulk-generate-topic-translations', requirePermission('ai', 'create'), ctrl.bulkGenerateTopicTranslations);
 
+// Sub-topic translations
+r.post('/generate-sub-topic-translation', requirePermission('ai', 'create'), ctrl.generateSubTopicTranslation);
+r.post('/bulk-generate-sub-topic-translations', requirePermission('ai', 'create'), ctrl.bulkGenerateSubTopicTranslations);
+
 // User profile sample data generation
 r.post('/generate-sample-data', requirePermission('ai', 'create'), ctrl.generateSampleData);
 
