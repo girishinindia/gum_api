@@ -20,7 +20,7 @@ const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
 
-  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, type, locale, avatar_url, last_login_at, login_count, created_at, deleted_at', { count: 'exact' });
+  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, type, locale, avatar_url, last_login_at, login_count, created_at, deleted_at, user_profiles(profile_image_url)', { count: 'exact' });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
