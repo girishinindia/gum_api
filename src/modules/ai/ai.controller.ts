@@ -669,6 +669,519 @@ USER INSTRUCTIONS: ${userPrompt}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── AI TRANSLATION FOR MATERIAL MODULES (Subjects, Chapters, Topics) ─
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── Generic helper: material translation fields differ from category translations ───
+const MATERIAL_FIELDS_SUBJECT = ['name', 'short_intro', 'long_intro'];
+const MATERIAL_FIELDS_CHAPTER = ['name', 'short_intro', 'long_intro', 'prerequisites', 'learning_objectives'];
+const MATERIAL_FIELDS_TOPIC   = ['name', 'short_intro', 'long_intro', 'prerequisites', 'learning_objectives'];
+
+function buildMaterialJsonSpec(fields: string[]): string {
+  return '{' + fields.map(f => `"${f}":"..."`).join(', ') + '}';
+}
+
+function extractMaterialFields(translated: any, fields: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const f of fields) result[f] = translated[f] || '';
+  return result;
+}
+
+// ─── SUBJECT translation (single) ───
+export async function generateSubjectTranslation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { subject_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
+    if (!subject_id || !target_language_code) return err(res, 'subject_id and target_language_code are required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const isEnglish = target_language_code === 'en';
+    const targetLang = target_language_name || target_language_code;
+    const userPrompt = prompt || (isEnglish
+      ? 'Generate educational content with engaging introductions.'
+      : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
+
+    const { data: subject } = await supabase.from('subjects').select('*').eq('id', subject_id).single();
+    if (!subject) return err(res, 'Subject not found', 404);
+
+    let systemPrompt: string;
+    let userContent: string;
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_SUBJECT);
+
+    if (isEnglish) {
+      systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
+Generate comprehensive English content for the subject. Fill ALL fields.
+- name: Full name of the subject
+- short_intro: 1-2 sentence engaging introduction
+- long_intro: 3-5 sentence detailed introduction covering scope and importance
+OUTPUT — return ONLY valid JSON: ${jsonSpec}
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: subject.code, slug: subject.slug, name: subject.name || subject.code, description: subject.description || '' });
+    } else {
+      const { data: enTrans } = await supabase.from('subject_translations').select('*, languages!inner(iso_code)').eq('subject_id', subject_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
+      const source = enTrans?.[0];
+      if (!source) return err(res, 'English translation not found. Please create the English version first.', 404);
+
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_SUBJECT) sourceContent[f] = source[f] || '';
+
+      systemPrompt = `You are a professional multilingual educational translator.
+Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
+RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify(sourceContent);
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let translated: any;
+    try { translated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    logAdmin({ actorId: userId, action: isEnglish ? 'ai_content_generated' : 'ai_translation_generated', targetType: 'subject_translation', targetId: Number(subject_id), targetName: `${subject.code} → ${targetLang} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      source_language: isEnglish ? 'subject_info' : 'en', target_language: target_language_code, provider,
+      translated: extractMaterialFields(translated, MATERIAL_FIELDS_SUBJECT),
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, isEnglish ? 'Content generated successfully' : 'Translation generated successfully');
+  } catch (error: any) {
+    console.error('AI generateSubjectTranslation error:', error);
+    return err(res, error.message || 'AI generation failed', 500);
+  }
+}
+
+// ─── SUBJECT translation (bulk) ───
+export async function bulkGenerateSubjectTranslations(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { subject_id, prompt, provider: reqProvider } = req.body;
+    if (!subject_id) return err(res, 'subject_id is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    const { data: subject } = await supabase.from('subjects').select('*').eq('id', subject_id).single();
+    if (!subject) return err(res, 'Subject not found', 404);
+
+    const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
+    if (!allLangs || allLangs.length === 0) return err(res, 'No active languages found', 404);
+
+    const { data: existing } = await supabase.from('subject_translations').select('id, language_id, deleted_at').eq('subject_id', subject_id);
+    const activeLangIds = new Set((existing || []).filter(e => !e.deleted_at).map(e => e.language_id));
+    const softDeletedMap = new Map((existing || []).filter(e => e.deleted_at).map(e => [e.language_id, e.id]));
+    const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+
+    if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
+
+    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
+    let englishSource: any = null;
+    if (hasEnglish) {
+      const { data: enTrans } = await supabase.from('subject_translations').select('*').eq('subject_id', subject_id).is('deleted_at', null);
+      const enLang = allLangs.find(l => l.iso_code === 'en');
+      if (enLang && enTrans) englishSource = enTrans.find((t: any) => t.language_id === enLang.id);
+    }
+
+    const langList = missingLangs.map(l => `${l.iso_code}: ${l.name}`).join(', ');
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_SUBJECT);
+
+    let systemPrompt: string;
+    let userContent: string;
+
+    if (!hasEnglish) {
+      systemPrompt = `You are a professional educational content writer and multilingual translator for GrowUpMore.
+TASK: Generate comprehensive English content for the subject below, then translate into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences. Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: subject.code, slug: subject.slug, name: subject.name || subject.code, description: subject.description || '' });
+    } else {
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_SUBJECT) sourceContent[f] = englishSource?.[f] || '';
+      systemPrompt = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate English content into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = `English source:\n${JSON.stringify(sourceContent)}`;
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let allTranslations: any;
+    try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    const results: any[] = [];
+    for (const lang of missingLangs) {
+      const translated = allTranslations[lang.iso_code];
+      if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation for this language' }); continue; }
+
+      const record: any = {
+        subject_id, language_id: lang.id,
+        ...extractMaterialFields(translated, MATERIAL_FIELDS_SUBJECT),
+        is_active: true, deleted_at: null, updated_by: userId,
+      };
+
+      const softDeletedId = softDeletedMap.get(lang.id);
+      let saved: any, saveErr: any;
+      if (softDeletedId) {
+        const r2 = await supabase.from('subject_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+        saved = r2.data; saveErr = r2.error;
+      } else {
+        const r2 = await supabase.from('subject_translations').insert({ ...record, created_by: userId }).select().single();
+        saved = r2.data; saveErr = r2.error;
+      }
+
+      results.push(saveErr
+        ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+        : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+    }
+
+    logAdmin({ actorId: userId, action: 'ai_bulk_translation_generated', targetType: 'subject_translation', targetId: Number(subject_id), targetName: `${subject.code} → ${missingLangs.length} languages (${provider})`, ip: getClientIp(req) });
+    const successCount = results.filter(r => r.status === 'success').length;
+    return ok(res, { results, provider, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }, `Bulk generation complete: ${successCount}/${results.length} succeeded`);
+  } catch (error: any) {
+    console.error('AI bulkGenerateSubjectTranslations error:', error);
+    return err(res, error.message || 'Bulk generation failed', 500);
+  }
+}
+
+// ─── CHAPTER translation (single) ───
+export async function generateChapterTranslation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { chapter_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
+    if (!chapter_id || !target_language_code) return err(res, 'chapter_id and target_language_code are required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const isEnglish = target_language_code === 'en';
+    const targetLang = target_language_name || target_language_code;
+    const userPrompt = prompt || (isEnglish
+      ? 'Generate educational content with clear learning objectives and prerequisites.'
+      : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
+
+    const { data: chapter } = await supabase.from('chapters').select('*, subjects(code, slug)').eq('id', chapter_id).single();
+    if (!chapter) return err(res, 'Chapter not found', 404);
+
+    let systemPrompt: string;
+    let userContent: string;
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_CHAPTER);
+
+    if (isEnglish) {
+      systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
+Generate comprehensive English content for the chapter. Fill ALL fields.
+- name: Full name of the chapter
+- short_intro: 1-2 sentence engaging introduction
+- long_intro: 3-5 sentence detailed introduction
+- prerequisites: What learners should know before starting this chapter
+- learning_objectives: What learners will achieve after completing this chapter (bullet points as text)
+OUTPUT — return ONLY valid JSON: ${jsonSpec}
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: chapter.code || '', slug: chapter.slug, name: chapter.name || chapter.code, parent_subject: chapter.subjects?.code || '' });
+    } else {
+      const { data: enTrans } = await supabase.from('chapter_translations').select('*, languages!inner(iso_code)').eq('chapter_id', chapter_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
+      const source = enTrans?.[0];
+      if (!source) return err(res, 'English translation not found. Please create the English version first.', 404);
+
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_CHAPTER) sourceContent[f] = source[f] || '';
+
+      systemPrompt = `You are a professional multilingual educational translator.
+Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
+RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify(sourceContent);
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let translated: any;
+    try { translated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    logAdmin({ actorId: userId, action: isEnglish ? 'ai_content_generated' : 'ai_translation_generated', targetType: 'chapter_translation', targetId: Number(chapter_id), targetName: `${chapter.code || chapter.slug} → ${targetLang} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      source_language: isEnglish ? 'chapter_info' : 'en', target_language: target_language_code, provider,
+      translated: extractMaterialFields(translated, MATERIAL_FIELDS_CHAPTER),
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, isEnglish ? 'Content generated successfully' : 'Translation generated successfully');
+  } catch (error: any) {
+    console.error('AI generateChapterTranslation error:', error);
+    return err(res, error.message || 'AI generation failed', 500);
+  }
+}
+
+// ─── CHAPTER translation (bulk) ───
+export async function bulkGenerateChapterTranslations(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { chapter_id, prompt, provider: reqProvider } = req.body;
+    if (!chapter_id) return err(res, 'chapter_id is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const { data: chapter } = await supabase.from('chapters').select('*, subjects(code, slug)').eq('id', chapter_id).single();
+    if (!chapter) return err(res, 'Chapter not found', 404);
+
+    const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
+    if (!allLangs || allLangs.length === 0) return err(res, 'No active languages found', 404);
+
+    const { data: existing } = await supabase.from('chapter_translations').select('id, language_id, deleted_at').eq('chapter_id', chapter_id);
+    const activeLangIds = new Set((existing || []).filter(e => !e.deleted_at).map(e => e.language_id));
+    const softDeletedMap = new Map((existing || []).filter(e => e.deleted_at).map(e => [e.language_id, e.id]));
+    const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+
+    if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
+
+    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
+    let englishSource: any = null;
+    if (hasEnglish) {
+      const { data: enTrans } = await supabase.from('chapter_translations').select('*').eq('chapter_id', chapter_id).is('deleted_at', null);
+      const enLang = allLangs.find(l => l.iso_code === 'en');
+      if (enLang && enTrans) englishSource = enTrans.find((t: any) => t.language_id === enLang.id);
+    }
+
+    const langList = missingLangs.map(l => `${l.iso_code}: ${l.name}`).join(', ');
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_CHAPTER);
+
+    let systemPrompt: string;
+    let userContent: string;
+
+    if (!hasEnglish) {
+      systemPrompt = `You are a professional educational content writer and multilingual translator for GrowUpMore.
+TASK: Generate comprehensive English content for the chapter below, then translate into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: name = full chapter name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: chapter.code || '', slug: chapter.slug, name: chapter.name || chapter.code, parent_subject: chapter.subjects?.code || '' });
+    } else {
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_CHAPTER) sourceContent[f] = englishSource?.[f] || '';
+      systemPrompt = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate English content into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = `English source:\n${JSON.stringify(sourceContent)}`;
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let allTranslations: any;
+    try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    const results: any[] = [];
+    for (const lang of missingLangs) {
+      const translated = allTranslations[lang.iso_code];
+      if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation for this language' }); continue; }
+
+      const record: any = {
+        chapter_id, language_id: lang.id,
+        ...extractMaterialFields(translated, MATERIAL_FIELDS_CHAPTER),
+        is_active: true, deleted_at: null, updated_by: userId,
+      };
+
+      const softDeletedId = softDeletedMap.get(lang.id);
+      let saved: any, saveErr: any;
+      if (softDeletedId) {
+        const r2 = await supabase.from('chapter_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+        saved = r2.data; saveErr = r2.error;
+      } else {
+        const r2 = await supabase.from('chapter_translations').insert({ ...record, created_by: userId }).select().single();
+        saved = r2.data; saveErr = r2.error;
+      }
+
+      results.push(saveErr
+        ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+        : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+    }
+
+    logAdmin({ actorId: userId, action: 'ai_bulk_translation_generated', targetType: 'chapter_translation', targetId: Number(chapter_id), targetName: `${chapter.code || chapter.slug} → ${missingLangs.length} languages (${provider})`, ip: getClientIp(req) });
+    const successCount = results.filter(r => r.status === 'success').length;
+    return ok(res, { results, provider, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }, `Bulk generation complete: ${successCount}/${results.length} succeeded`);
+  } catch (error: any) {
+    console.error('AI bulkGenerateChapterTranslations error:', error);
+    return err(res, error.message || 'Bulk generation failed', 500);
+  }
+}
+
+// ─── TOPIC translation (single) ───
+export async function generateTopicTranslation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
+    if (!topic_id || !target_language_code) return err(res, 'topic_id and target_language_code are required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const isEnglish = target_language_code === 'en';
+    const targetLang = target_language_name || target_language_code;
+    const userPrompt = prompt || (isEnglish
+      ? 'Generate educational content with clear learning objectives and prerequisites.'
+      : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
+
+    const { data: topic } = await supabase.from('topics').select('*, chapters(code, slug, subjects(code))').eq('id', topic_id).single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    let systemPrompt: string;
+    let userContent: string;
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_TOPIC);
+
+    if (isEnglish) {
+      systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
+Generate comprehensive English content for the topic. Fill ALL fields.
+- name: Full name of the topic
+- short_intro: 1-2 sentence engaging introduction
+- long_intro: 3-5 sentence detailed introduction
+- prerequisites: What learners should know before starting this topic
+- learning_objectives: What learners will achieve after completing this topic (bullet points as text)
+OUTPUT — return ONLY valid JSON: ${jsonSpec}
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: topic.code || '', slug: topic.slug, name: topic.name || topic.code, parent_chapter: topic.chapters?.code || '', parent_subject: topic.chapters?.subjects?.code || '' });
+    } else {
+      const { data: enTrans } = await supabase.from('topic_translations').select('*, languages!inner(iso_code)').eq('topic_id', topic_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
+      const source = enTrans?.[0];
+      if (!source) return err(res, 'English translation not found. Please create the English version first.', 404);
+
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_TOPIC) sourceContent[f] = source[f] || '';
+
+      systemPrompt = `You are a professional multilingual educational translator.
+Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
+RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify(sourceContent);
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let translated: any;
+    try { translated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    logAdmin({ actorId: userId, action: isEnglish ? 'ai_content_generated' : 'ai_translation_generated', targetType: 'topic_translation', targetId: Number(topic_id), targetName: `${topic.code || topic.slug} → ${targetLang} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      source_language: isEnglish ? 'topic_info' : 'en', target_language: target_language_code, provider,
+      translated: extractMaterialFields(translated, MATERIAL_FIELDS_TOPIC),
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, isEnglish ? 'Content generated successfully' : 'Translation generated successfully');
+  } catch (error: any) {
+    console.error('AI generateTopicTranslation error:', error);
+    return err(res, error.message || 'AI generation failed', 500);
+  }
+}
+
+// ─── TOPIC translation (bulk) ───
+export async function bulkGenerateTopicTranslations(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, prompt, provider: reqProvider } = req.body;
+    if (!topic_id) return err(res, 'topic_id is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const { data: topic } = await supabase.from('topics').select('*, chapters(code, slug, subjects(code))').eq('id', topic_id).single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
+    if (!allLangs || allLangs.length === 0) return err(res, 'No active languages found', 404);
+
+    const { data: existing } = await supabase.from('topic_translations').select('id, language_id, deleted_at').eq('topic_id', topic_id);
+    const activeLangIds = new Set((existing || []).filter(e => !e.deleted_at).map(e => e.language_id));
+    const softDeletedMap = new Map((existing || []).filter(e => e.deleted_at).map(e => [e.language_id, e.id]));
+    const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+
+    if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
+
+    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
+    let englishSource: any = null;
+    if (hasEnglish) {
+      const { data: enTrans } = await supabase.from('topic_translations').select('*').eq('topic_id', topic_id).is('deleted_at', null);
+      const enLang = allLangs.find(l => l.iso_code === 'en');
+      if (enLang && enTrans) englishSource = enTrans.find((t: any) => t.language_id === enLang.id);
+    }
+
+    const langList = missingLangs.map(l => `${l.iso_code}: ${l.name}`).join(', ');
+    const jsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_TOPIC);
+
+    let systemPrompt: string;
+    let userContent: string;
+
+    if (!hasEnglish) {
+      systemPrompt = `You are a professional educational content writer and multilingual translator for GrowUpMore.
+TASK: Generate comprehensive English content for the topic below, then translate into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: name = full topic name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({ code: topic.code || '', slug: topic.slug, name: topic.name || topic.code, parent_chapter: topic.chapters?.code || '', parent_subject: topic.chapters?.subjects?.code || '' });
+    } else {
+      const sourceContent: any = {};
+      for (const f of MATERIAL_FIELDS_TOPIC) sourceContent[f] = englishSource?.[f] || '';
+      systemPrompt = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate English content into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
+LANGUAGES: ${langList}
+RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = `English source:\n${JSON.stringify(sourceContent)}`;
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let allTranslations: any;
+    try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    const results: any[] = [];
+    for (const lang of missingLangs) {
+      const translated = allTranslations[lang.iso_code];
+      if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation for this language' }); continue; }
+
+      const record: any = {
+        topic_id, language_id: lang.id,
+        ...extractMaterialFields(translated, MATERIAL_FIELDS_TOPIC),
+        is_active: true, deleted_at: null, updated_by: userId,
+      };
+
+      const softDeletedId = softDeletedMap.get(lang.id);
+      let saved: any, saveErr: any;
+      if (softDeletedId) {
+        const r2 = await supabase.from('topic_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+        saved = r2.data; saveErr = r2.error;
+      } else {
+        const r2 = await supabase.from('topic_translations').insert({ ...record, created_by: userId }).select().single();
+        saved = r2.data; saveErr = r2.error;
+      }
+
+      results.push(saveErr
+        ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+        : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+    }
+
+    logAdmin({ actorId: userId, action: 'ai_bulk_translation_generated', targetType: 'topic_translation', targetId: Number(topic_id), targetName: `${topic.code || topic.slug} → ${missingLangs.length} languages (${provider})`, ip: getClientIp(req) });
+    const successCount = results.filter(r => r.status === 'success').length;
+    return ok(res, { results, provider, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }, `Bulk generation complete: ${successCount}/${results.length} succeeded`);
+  } catch (error: any) {
+    console.error('AI bulkGenerateTopicTranslations error:', error);
+    return err(res, error.message || 'Bulk generation failed', 500);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── AI SAMPLE DATA GENERATION FOR USER PROFILE MODULES ─────────────
 // ═══════════════════════════════════════════════════════════════════════
 
