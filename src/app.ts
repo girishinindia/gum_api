@@ -46,6 +46,12 @@ import userProjectRoutes from './modules/user-projects/userProject.routes';
 import employeeProfileRoutes from './modules/employee-profiles/employeeProfile.routes';
 import studentProfileRoutes from './modules/student-profiles/studentProfile.routes';
 import instructorProfileRoutes from './modules/instructor-profiles/instructorProfile.routes';
+import subjectRoutes from './modules/subjects/subject.routes';
+import chapterRoutes from './modules/chapters/chapter.routes';
+import topicRoutes from './modules/topics/topic.routes';
+import subjectTranslationRoutes from './modules/subject-translations/subjectTranslation.routes';
+import chapterTranslationRoutes from './modules/chapter-translations/chapterTranslation.routes';
+import topicTranslationRoutes from './modules/topic-translations/topicTranslation.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import resumeRoutes from './modules/resume/resume.routes';
 
@@ -115,6 +121,12 @@ app.use(`${api}/user-projects`,            userProjectRoutes);
 app.use(`${api}/employee-profiles`,          employeeProfileRoutes);
 app.use(`${api}/student-profiles`,           studentProfileRoutes);
 app.use(`${api}/instructor-profiles`,        instructorProfileRoutes);
+app.use(`${api}/subjects`,                    subjectRoutes);
+app.use(`${api}/chapters`,                    chapterRoutes);
+app.use(`${api}/topics`,                      topicRoutes);
+app.use(`${api}/subject-translations`,        subjectTranslationRoutes);
+app.use(`${api}/chapter-translations`,        chapterTranslationRoutes);
+app.use(`${api}/topic-translations`,          topicTranslationRoutes);
 app.use(`${api}/ai`,                        aiRoutes);
 app.use(`${api}/resume`,                    resumeRoutes);
 

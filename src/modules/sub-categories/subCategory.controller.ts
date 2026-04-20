@@ -32,7 +32,7 @@ function parseMultipartBody(req: Request): any {
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
 
-  let q = supabase.from('sub_categories').select('*, categories(code, slug)', { count: 'exact' });
+  let q = supabase.from('sub_categories').select('*, categories(name, code, slug)', { count: 'exact' });
 
   // Search (name removed — now only on translations)
   if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
@@ -58,7 +58,7 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('sub_categories').select('*, categories(code, slug)').eq('id', req.params.id).single();
+  const { data, error: e } = await supabase.from('sub_categories').select('*, categories(name, code, slug)').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Sub-category not found', 404);
   return ok(res, data);
 }
@@ -85,7 +85,7 @@ export async function create(req: Request, res: Response) {
     body.image = imageUrl;
   }
 
-  const { data, error: e } = await supabase.from('sub_categories').insert(body).select('*, categories(code, slug)').single();
+  const { data, error: e } = await supabase.from('sub_categories').insert(body).select('*, categories(name, code, slug)').single();
   if (e) {
     if (imageUrl) { try { await deleteImage(extractBunnyPath(imageUrl), imageUrl); } catch {} }
     if (e.code === '23505') return err(res, 'Sub-category code or slug already exists in this category', 409);
@@ -129,7 +129,7 @@ export async function update(req: Request, res: Response) {
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
 
-  const { data, error: e } = await supabase.from('sub_categories').update(updates).eq('id', id).select('*, categories(code, slug)').single();
+  const { data, error: e } = await supabase.from('sub_categories').update(updates).eq('id', id).select('*, categories(name, code, slug)').single();
   if (e) {
     if (e.code === '23505') return err(res, 'Sub-category code or slug already exists in this category', 409);
     return err(res, e.message, 500);

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const createCategorySchema = z.object({
+  name: z.string().min(1).max(200).trim(),
   code: z.string().min(1).max(100).trim(),
   slug: z.string().min(1).max(200).trim(),
   display_order: z.number().int().optional().default(0),

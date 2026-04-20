@@ -30,8 +30,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('categories').select('*', { count: 'exact' });
 
-  // Search (name removed — now only on translations)
-  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
+  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

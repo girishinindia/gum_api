@@ -1127,7 +1127,7 @@ async function fetchMasterContext(module: MasterModule) {
   }
   // For sub_categories, fetch categories so AI can assign valid category_id
   if (module === 'sub_categories') {
-    const { data } = await supabase.from('categories').select('id, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
+    const { data } = await supabase.from('categories').select('id, name, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
     ctx.categories = data || [];
   }
   // For branches, fetch countries, states, cities for location + users for manager
@@ -1238,7 +1238,7 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
   if (module === 'states') selectCols = 'name, state_code';
   if (module === 'cities') selectCols = 'name';
   if (module === 'social_medias') selectCols = 'name, code';
-  if (module === 'categories' || module === 'sub_categories') selectCols = 'code, slug';
+  if (module === 'categories' || module === 'sub_categories') selectCols = 'name, code, slug';
   if (module === 'branches') selectCols = 'name, code';
   if (module === 'departments') selectCols = 'name, code';
   if (module === 'branch_departments') selectCols = 'branch_id, department_id';
@@ -1252,7 +1252,7 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
   // Build compact list
   let items: string[];
   if (module === 'categories' || module === 'sub_categories') {
-    items = data.map((r: any) => r.code || r.slug);
+    items = data.map((r: any) => `${r.name || r.code} (${r.code})`);
   } else if (module === 'languages') {
     items = data.map((r: any) => `${r.name} (${r.iso_code || ''})`);
   } else if (module === 'countries') {
@@ -1473,6 +1473,7 @@ Use ONLY the available state IDs for state_id. Generate cities that belong to th
       return {
         system: `${base}
 FIELDS per record:
+- name: (REQUIRED, 1-200 chars) human-readable category name e.g. "Programming", "Data Science", "Web Development"
 - code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "programming", "data-science"
 - slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
 - display_order: sequential integer starting from 1
@@ -1485,8 +1486,8 @@ FIELDS per record:
 - twitter_card: "summary_large_image"
 - robots_directive: "index, follow"
 - sort_order: sequential number
-Do NOT include: image, name, description (these come from translations). Generate category codes for an Indian educational platform.`,
-        user: `Generate ${count} category codes for course/content categories. Examples: programming, web-development, mobile-development, data-science, machine-learning, cloud-computing, cybersecurity, devops, database, ui-ux-design, digital-marketing, business, finance, competitive-exams, languages, school-education, college-education, professional-certifications, soft-skills, career-development.`,
+Do NOT include: image (uploaded separately). Generate categories for an Indian educational platform.`,
+        user: `Generate ${count} categories for course/content categories. Each must have a name, code, and slug. Examples: name="Programming" code="programming" slug="programming", name="Web Development" code="web-development" slug="web-development", name="Data Science" code="data-science" slug="data-science", name="Machine Learning" code="machine-learning" slug="machine-learning", etc.`,
       };
 
     case 'sub_categories':
@@ -1494,6 +1495,7 @@ Do NOT include: image, name, description (these come from translations). Generat
         system: `${base}
 FIELDS per record:
 - category_id: (REQUIRED) must be a valid ID from available categories below
+- name: (REQUIRED, 1-200 chars) human-readable sub-category name e.g. "React", "Python Basics", "AWS"
 - code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "react", "python-basics"
 - slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
 - display_order: sequential integer starting from 1
@@ -1506,11 +1508,11 @@ FIELDS per record:
 - twitter_card: "summary_large_image"
 - robots_directive: "index, follow"
 - sort_order: sequential number
-Do NOT include: image, name, description (these come from translations).
+Do NOT include: image (uploaded separately).
 
-Available categories: ${JSON.stringify(context.categories?.map((c: any) => ({ id: c.id, code: c.code })) || [])}
-Use ONLY these IDs for category_id. Assign each sub-category to its most relevant parent category.`,
-        user: `Generate ${count} sub-category codes. Map each to the correct parent category. Examples: react, angular, vue, node-js (under web-dev), python, java, javascript (under programming), aws, azure, gcp (under cloud), etc.`,
+Available categories (use ONLY these IDs for category_id): ${JSON.stringify(context.categories?.map((c: any) => ({ id: c.id, name: c.name, code: c.code })) || [])}
+Assign each sub-category to its most relevant parent category.`,
+        user: `Generate ${count} sub-categories. Each must have category_id, name, code, and slug. Map each to the correct parent category from the available list. Examples: name="React" code="react" slug="react" (under web-development), name="Python" code="python" slug="python" (under programming), name="AWS" code="aws" slug="aws" (under cloud-computing), etc.`,
       };
 
     case 'branches':
