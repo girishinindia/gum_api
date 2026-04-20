@@ -20,7 +20,7 @@ const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
 
-  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, type, locale, avatar_url, last_login_at, login_count, created_at, deleted_at, user_profiles(profile_image_url)', { count: 'exact' });
+  let q = supabase.from('users').select('id, first_name, last_name, full_name, display_name, email, mobile, status, type, locale, avatar_url, last_login_at, login_count, created_at, deleted_at', { count: 'exact' });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -41,6 +41,22 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
+
+  // Attach profile_image_url from user_profiles
+  if (data && data.length > 0) {
+    const userIds = data.map((u: any) => u.id);
+    const { data: profiles } = await supabase
+      .from('user_profiles')
+      .select('user_id, profile_image_url')
+      .in('user_id', userIds);
+    if (profiles) {
+      const profileMap = new Map(profiles.map((p: any) => [p.user_id, p.profile_image_url]));
+      for (const u of data as any[]) {
+        u.profile_image_url = profileMap.get(u.id) || null;
+      }
+    }
+  }
+
   return paginated(res, data || [], count || 0, page, limit);
 }
 
