@@ -1054,7 +1054,7 @@ export async function generateSampleData(req: Request, res: Response) {
 
     const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
     const singleObjectModules: SampleModule[] = ['profile', 'address', 'contact', 'identity', 'bank'];
-    const count = singleObjectModules.includes(module) ? 1 : Math.min(Math.max(reqCount || 3, 1), 10);
+    const count = singleObjectModules.includes(module) ? 1 : Math.min(Math.max(reqCount || 3, 1), 25);
 
     // Fetch user name for context
     const { data: targetUser } = await supabase.from('users').select('id, full_name, email').eq('id', target_user_id).single();
@@ -1487,7 +1487,7 @@ export async function generateMasterData(req: Request, res: Response) {
     if (!module || !VALID_MASTER_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MASTER_MODULES.join(', ')}`, 400);
 
     const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
-    const count = Math.min(Math.max(reqCount || 10, 1), 50);
+    const count = Math.min(Math.max(reqCount || 10, 1), 100);
 
     const [context, existingRecords] = await Promise.all([
       fetchMasterContext(module),
