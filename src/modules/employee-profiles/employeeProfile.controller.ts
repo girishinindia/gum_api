@@ -12,7 +12,9 @@ const clearCache = async () => {
   await redis.del(CACHE_KEY);
 };
 
-const SELECT_WITH_JOINS = `*, designations(name, code), departments(name), branches(name, code), users!employee_profiles_reporting_manager_id_fkey(full_name, email), shift_branch:branches!employee_profiles_shift_branch_id_fkey(name, code), user:users!employee_profiles_user_id_fkey(id, full_name, email, mobile, avatar_url)`;
+// Simple select – explicit FK-based joins removed to avoid PostgREST errors
+// when constraint names don't match the actual database schema.
+const SELECT_WITH_JOINS = `*`;
 
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
