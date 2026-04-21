@@ -117,6 +117,56 @@ function parseJSON(raw: string): any {
   return JSON.parse(cleaned);
 }
 
+/**
+ * Call AI and return raw text (not JSON). Used for HTML translation.
+ */
+async function callAIRaw(provider: AIProvider, systemPrompt: string, userContent: string, maxTokens: number = 16384): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  if (provider === 'anthropic') {
+    const client = getAnthropic();
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'user', content: `${systemPrompt}\n\n${userContent}` },
+      ],
+    });
+    const text = msg.content.find(b => b.type === 'text')?.text || '';
+    return { text, inputTokens: msg.usage?.input_tokens || 0, outputTokens: msg.usage?.output_tokens || 0 };
+  }
+
+  if (provider === 'openai') {
+    const client = getOpenAI();
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.3,
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+    });
+    const text = completion.choices[0]?.message?.content || '';
+    return { text, inputTokens: completion.usage?.prompt_tokens || 0, outputTokens: completion.usage?.completion_tokens || 0 };
+  }
+
+  if (provider === 'gemini') {
+    const client = getGemini();
+    const model = client.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: maxTokens,
+      },
+    });
+    const result = await model.generateContent(`${systemPrompt}\n\n${userContent}`);
+    const response = result.response;
+    const text = response.text() || '';
+    return { text, inputTokens: response.usageMetadata?.promptTokenCount || 0, outputTokens: response.usageMetadata?.candidatesTokenCount || 0 };
+  }
+
+  throw new Error(`Unknown AI provider: ${provider}`);
+}
+
 // ─── Single-language generate (existing endpoint) ───
 export async function generateTranslation(req: Request, res: Response) {
   try {
@@ -3414,5 +3464,183 @@ export async function importMaterialTree(req: Request, res: Response) {
   } catch (error: any) {
     console.error('Import material tree error:', error);
     return err(res, error.message || 'Material tree import failed', 500);
+  }
+}
+
+// ─── Translate HTML Page to All Languages ───
+
+/**
+ * POST /ai/translate-page
+ * Takes an English HTML file + sub_topic_id, translates it to all other active languages,
+ * uploads each translated file to CDN, and updates DB records.
+ *
+ * Body (multipart): file (HTML), sub_topic_id, provider (optional)
+ * Returns per-language results with progress.
+ */
+export async function translatePage(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const { sub_topic_id, provider: reqProvider } = req.body;
+    if (!sub_topic_id) return err(res, 'sub_topic_id is required', 400);
+
+    const file = (req as any).file;
+    if (!file) return err(res, 'HTML file is required', 400);
+    const origName = (file.originalname || '').toLowerCase();
+    if (!origName.endsWith('.html') && !origName.endsWith('.htm')) return err(res, 'Only .html/.htm files are allowed', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const htmlContent = file.buffer.toString('utf-8');
+    if (!htmlContent || htmlContent.length < 50) return err(res, 'HTML file has insufficient content', 400);
+
+    // Get the base filename without extension for naming translated files
+    const baseFileName = file.originalname.replace(/\.(html|htm)$/i, '');
+
+    // Get sub-topic with full parent hierarchy for folder path
+    const { data: subTopic } = await supabase
+      .from('sub_topics')
+      .select('id, slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+      .eq('id', sub_topic_id)
+      .single();
+    if (!subTopic) return err(res, 'Sub-topic not found', 404);
+
+    const parentTopic = (subTopic as any).topics;
+    const parentChapter = parentTopic?.chapters;
+    const parentSubject = parentChapter?.subjects;
+    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
+      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
+      : null;
+
+    // Get all active material languages EXCEPT English
+    const { data: allLangs } = await supabase
+      .from('languages')
+      .select('id, name, native_name, iso_code')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .order('id');
+
+    const targetLangs = (allLangs || []).filter(l => l.iso_code !== 'en');
+    if (targetLangs.length === 0) return err(res, 'No target languages found for translation', 400);
+
+    // Get context about the subject/chapter/topic for better translation
+    const subjectName = parentSubject?.slug?.replace(/-/g, ' ') || '';
+    const chapterName = parentChapter?.slug?.replace(/-/g, ' ') || '';
+    const topicName = parentTopic?.slug?.replace(/-/g, ' ') || '';
+
+    const results: { language: string; iso_code: string; status: string; page_url?: string; error?: string }[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    // Translate one language at a time for quality
+    for (const lang of targetLangs) {
+      try {
+        const systemPrompt = `You are an expert translator. Translate the following HTML page from English to ${lang.name} (${lang.native_name}).
+
+CRITICAL RULES:
+1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
+2. Only translate the visible text content between HTML tags.
+3. Keep ALL technical terms, programming keywords, and code in English. Examples: HTML, CSS, JavaScript, Python, Pandas, DataFrame, API, JSON, REST, SQL, Git, React, Node.js, npm, webpack, function, class, variable, array, object, string, boolean, integer, float, import, export, async, await, try, catch, throw, return, const, let, var, if, else, for, while, switch, case, break, continue, null, undefined, true, false, NaN, Infinity, console.log, getElementById, querySelector, addEventListener, fetch, Promise, callback, middleware, endpoint, framework, library, module, component, prop, state, hook, render, DOM, HTTP, HTTPS, URL, URI, TCP, UDP, DNS, IP, SSL, TLS, SSH, FTP, CDN, CMS, SDK, IDE, CLI, GUI, OOP, MVC, CRUD, SPA, SSR, CSR, PWA, SEO, UX, UI, etc.
+4. Keep brand names and product names in English (Google, Microsoft, Apple, GitHub, Stack Overflow, VS Code, etc.)
+5. Keep code snippets, code examples, and inline code EXACTLY in English - do not translate any code.
+6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
+7. Do NOT add any explanation, comments, or wrapper - return ONLY the translated HTML.
+8. The subject is "${subjectName}", chapter is "${chapterName}", topic is "${topicName}" - keep these and related technical terms in English where translation would sound unnatural or weird.
+9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
+10. Do NOT translate alt attributes of images if they contain technical terms.
+
+Return ONLY the complete translated HTML document, nothing else.`;
+
+        // Calculate max tokens based on HTML size (translated HTML is usually similar or slightly larger)
+        const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
+        const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+
+        // Clean up AI response — strip any markdown code fences
+        let translatedHtml = aiResult.text.trim();
+        if (translatedHtml.startsWith('```html')) {
+          translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
+        } else if (translatedHtml.startsWith('```')) {
+          translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
+        }
+
+        if (!translatedHtml || translatedHtml.length < 50) {
+          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI returned empty or too short translation' });
+          continue;
+        }
+
+        // Check if existing translation has a page file to delete
+        const { data: existingTrans } = await supabase
+          .from('sub_topic_translations')
+          .select('id, page')
+          .eq('sub_topic_id', sub_topic_id)
+          .eq('language_id', lang.id)
+          .is('deleted_at', null)
+          .single();
+
+        // Delete old file from CDN
+        if (existingTrans?.page) {
+          try {
+            const oldPath = (existingTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+            await deleteImage(oldPath, existingTrans.page);
+          } catch {}
+        }
+
+        // Upload translated HTML with language-suffixed filename
+        const translatedFileName = `${baseFileName}_${lang.iso_code}.html`;
+        const uploadPath = materialBasePath
+          ? `${materialBasePath}/${lang.iso_code}/${translatedFileName}`
+          : `sub-topic-translations/pages/${translatedFileName}`;
+
+        const pageUrl = await uploadRawFile(Buffer.from(translatedHtml, 'utf-8'), uploadPath);
+
+        // Update or create DB record
+        if (existingTrans) {
+          await supabase
+            .from('sub_topic_translations')
+            .update({ page: pageUrl, updated_by: userId })
+            .eq('id', existingTrans.id);
+        } else {
+          await supabase
+            .from('sub_topic_translations')
+            .insert({
+              sub_topic_id: Number(sub_topic_id),
+              language_id: lang.id,
+              name: subTopic.slug.replace(/-/g, ' '),
+              page: pageUrl,
+              is_active: true,
+              created_by: userId,
+            });
+        }
+
+        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'success', page_url: pageUrl });
+      } catch (langErr: any) {
+        console.error(`Translation failed for ${lang.name}:`, langErr);
+        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
+      }
+    }
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    logAdmin({
+      actorId: userId,
+      action: 'page_translated',
+      targetType: 'sub_topic_translation',
+      targetId: Number(sub_topic_id),
+      targetName: subTopic.slug,
+      ip: getClientIp(req),
+      metadata: { provider, languages: successCount, errors: errorCount, inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+    });
+
+    return ok(res, {
+      results,
+      summary: { total: targetLangs.length, success: successCount, errors: errorCount },
+      tokens: { input: totalInputTokens, output: totalOutputTokens },
+    }, `Translated to ${successCount}/${targetLangs.length} languages`);
+  } catch (error: any) {
+    console.error('Translate page error:', error);
+    return err(res, error.message || 'Page translation failed', 500);
   }
 }
