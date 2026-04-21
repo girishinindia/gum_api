@@ -46,7 +46,22 @@ export async function list(req: Request, res: Response) {
   }
 
   // Filters
-  if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
+  if (req.query.chapter_id) {
+    q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
+  } else if (req.query.subject_id) {
+    // Filter by subject — get chapter IDs belonging to this subject
+    const { data: subChapters } = await supabase
+      .from('chapters')
+      .select('id')
+      .eq('subject_id', parseInt(req.query.subject_id as string));
+    const chapterIds = (subChapters || []).map((c: any) => c.id);
+    if (chapterIds.length > 0) {
+      q = q.in('chapter_id', chapterIds);
+    } else {
+      // No chapters under this subject — return empty
+      return paginated(res, [], 0, page, limit);
+    }
+  }
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
