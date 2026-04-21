@@ -6,7 +6,8 @@ import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { uploadRawFile, createBunnyFolder, createBunnyFolders } from '../../services/storage.service';
+import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage } from '../../services/storage.service';
+import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
 import { matchSubject, matchChapter, matchTopic } from '../../services/materialMatcher.service';
 import { generateMaterialData, type MaterialTreeInput } from '../../services/materialAiGenerator.service';
@@ -3038,21 +3039,30 @@ USER INSTRUCTIONS: ${userPrompt}`;
         createdSubTopics++;
       }
 
-      // Check if translation exists
+      // Check if translation exists (include page URL so we can delete old file)
       const { data: existingTrans } = await supabase
         .from('sub_topic_translations')
-        .select('id')
+        .select('id, page')
         .eq('sub_topic_id', subTopicId)
         .eq('language_id', language_id)
         .is('deleted_at', null)
         .single();
 
-      // Upload HTML file to Bunny storage using proper folder structure
+      // Delete old page file from CDN if updating existing translation
+      if (existingTrans?.page) {
+        try {
+          const oldPath = (existingTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+          await deleteImage(oldPath, existingTrans.page);
+        } catch {}
+      }
+
+      // Upload HTML file to Bunny storage using original filename
       let pageUrl: string | undefined;
       try {
+        const originalName = file.originalname || `${slug}.html`;
         const pagePath = materialBasePath
-          ? `${materialBasePath}/${language.iso_code}/${slug}-${Date.now()}.html`
-          : `sub-topic-translations/pages/${slug}-${language.iso_code}-${Date.now()}.html`;
+          ? `${materialBasePath}/${language.iso_code}/${originalName}`
+          : `sub-topic-translations/pages/${originalName}`;
         pageUrl = await uploadRawFile(file.buffer, pagePath);
       } catch (uploadErr) {
         console.error('Failed to upload page file to storage:', uploadErr);

@@ -188,12 +188,12 @@ export async function create(req: Request, res: Response) {
     uploadedUrls.push(body.video_thumbnail);
   }
 
-  // Process page file (HTML upload) — use structured folder path when available
+  // Process page file (HTML upload) — use original filename, structured folder path when available
   if (files?.page_file?.[0]) {
-    const slug = (body.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const originalName = files.page_file[0].originalname || `${(body.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}.html`;
     const path = materialBasePath
-      ? `${materialBasePath}/${lang.iso_code}/${slug}-${Date.now()}.html`
-      : `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
+      ? `${materialBasePath}/${lang.iso_code}/${originalName}`
+      : `sub-topic-translations/pages/${originalName}`;
     body.page = await uploadRawFile(files.page_file[0].buffer, path);
     uploadedUrls.push(body.page);
   }
@@ -348,14 +348,15 @@ export async function update(req: Request, res: Response) {
     mediaUploaded = true;
   }
 
-  // Process page file (HTML upload) — use structured folder path when available
+  // Process page file (HTML upload) — use original filename, delete old file first if exists
   if (files?.page_file?.[0]) {
-    const slug = (updates.name || old.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = (updateMaterialBasePath && updateLangIso)
-      ? `${updateMaterialBasePath}/${updateLangIso}/${slug}-${Date.now()}.html`
-      : `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
-    updates.page = await uploadRawFile(files.page_file[0].buffer, path);
+    // Delete previous file from CDN first
     if (old.page) { try { await deleteImage(extractBunnyPath(old.page), old.page); } catch {} }
+    const originalName = files.page_file[0].originalname || `${(updates.name || old.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}.html`;
+    const path = (updateMaterialBasePath && updateLangIso)
+      ? `${updateMaterialBasePath}/${updateLangIso}/${originalName}`
+      : `sub-topic-translations/pages/${originalName}`;
+    updates.page = await uploadRawFile(files.page_file[0].buffer, path);
     mediaUploaded = true;
   }
 
