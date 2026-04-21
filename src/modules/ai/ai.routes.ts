@@ -56,4 +56,7 @@ r.post('/reverse-translate-page', requirePermission('ai', 'create'), htmlUpload.
 const txtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { const ext = file.originalname.toLowerCase(); if (ext.endsWith('.txt') || ext.endsWith('.csv')) cb(null, true); else cb(new Error('Only .txt or .csv files are allowed')); } });
 r.post('/import-material-tree', requirePermission('ai', 'create'), txtUpload.single('file'), ctrl.importMaterialTree);
 
+// Import from CDN — scan Bunny storage and create missing DB records
+r.post('/import-from-cdn', requirePermission('ai', 'create'), ctrl.importFromCdn);
+
 export default r;

@@ -6,7 +6,7 @@ import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage } from '../../services/storage.service';
+import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
 import { matchSubject, matchChapter, matchTopic } from '../../services/materialMatcher.service';
@@ -3733,5 +3733,325 @@ Return ONLY the complete translated HTML document in English, nothing else.`;
   } catch (error: any) {
     console.error('Reverse translate page error:', error);
     return err(res, error.message || 'Reverse translation failed', 500);
+  }
+}
+
+// ─── Import from CDN ───
+/**
+ * Scan the Bunny CDN `materials/` folder recursively and create missing
+ * database records (subjects, chapters, topics, sub-topics, translations).
+ * Optionally uses AI to generate SEO data (title, description, meta) for
+ * each new record by downloading and analyzing the HTML files.
+ *
+ * Expected CDN structure:
+ *   materials/{subject-slug}/{chapter-slug}/{topic-slug}/{lang-iso}/{file.html}
+ *   materials/{subject-slug}/{chapter-slug}/{topic-slug}/resources/{file.*}
+ */
+export async function importFromCdn(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) return err(res, 'Unauthorized', 401);
+
+    const { provider = 'gemini', generate_seo = false } = req.body;
+
+    // Fetch active languages
+    const { data: languages } = await supabase
+      .from('languages')
+      .select('id, name, iso_code, is_active')
+      .eq('is_active', true)
+      .order('id');
+
+    if (!languages?.length) return err(res, 'No active languages found', 400);
+
+    const langByIso = new Map(languages.map(l => [l.iso_code, l]));
+    const englishLang = languages.find(l => l.iso_code === 'en');
+
+    // Fetch existing records for lookup
+    const [subjectsRes, chaptersRes, topicsRes] = await Promise.all([
+      supabase.from('subjects').select('id, slug, name').eq('is_deleted', false),
+      supabase.from('chapters').select('id, slug, name, subject_id').eq('is_deleted', false),
+      supabase.from('topics').select('id, slug, name, chapter_id').eq('is_deleted', false),
+    ]);
+
+    const existingSubjects = new Map((subjectsRes.data || []).map(s => [s.slug, s]));
+    const existingChapters = new Map((chaptersRes.data || []).map(c => [`${c.subject_id}:${c.slug}`, c]));
+    const existingTopics = new Map((topicsRes.data || []).map(t => [`${t.chapter_id}:${t.slug}`, t]));
+
+    // Scan CDN
+    const cdnTree = await listBunnyStorageRecursive('materials');
+
+    const report = {
+      subjects: { found: 0, created: 0, existing: 0 },
+      chapters: { found: 0, created: 0, existing: 0 },
+      topics: { found: 0, created: 0, existing: 0 },
+      sub_topics: { found: 0, created: 0, existing: 0 },
+      translations: { found: 0, created: 0, existing: 0, updated: 0 },
+      errors: [] as string[],
+    };
+
+    // Level 1: Subjects
+    for (const subjectNode of cdnTree) {
+      if (!subjectNode.isDirectory) continue;
+      report.subjects.found++;
+
+      const subjectSlug = subjectNode.name;
+      let subject = existingSubjects.get(subjectSlug);
+
+      if (!subject) {
+        // Create subject
+        const name = subjectSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const newSlug = await generateUniqueSlug(supabase, 'subjects', name);
+        const { data: created, error: createErr } = await supabase
+          .from('subjects')
+          .insert({ name, slug: newSlug, description: `Imported from CDN: ${subjectSlug}`, is_active: true, sort_order: 0 })
+          .select('id, slug, name')
+          .single();
+
+        if (createErr || !created) {
+          report.errors.push(`Failed to create subject "${subjectSlug}": ${createErr?.message}`);
+          continue;
+        }
+        subject = created;
+        existingSubjects.set(newSlug, created);
+        report.subjects.created++;
+      } else {
+        report.subjects.existing++;
+      }
+
+      // Level 2: Chapters
+      const chapterNodes = subjectNode.children || [];
+      for (const chapterNode of chapterNodes) {
+        if (!chapterNode.isDirectory) continue;
+        report.chapters.found++;
+
+        const chapterSlug = chapterNode.name;
+        const chapterKey = `${subject.id}:${chapterSlug}`;
+        let chapter = existingChapters.get(chapterKey);
+
+        if (!chapter) {
+          const name = chapterSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          const newSlug = await generateUniqueSlug(supabase, 'chapters', name);
+          const { data: created, error: createErr } = await supabase
+            .from('chapters')
+            .insert({ name, slug: newSlug, subject_id: subject.id, description: `Imported from CDN: ${chapterSlug}`, is_active: true, sort_order: 0 })
+            .select('id, slug, name, subject_id')
+            .single();
+
+          if (createErr || !created) {
+            report.errors.push(`Failed to create chapter "${chapterSlug}" under subject "${subject.name}": ${createErr?.message}`);
+            continue;
+          }
+          chapter = created;
+          existingChapters.set(`${subject.id}:${newSlug}`, created);
+          report.chapters.created++;
+        } else {
+          report.chapters.existing++;
+        }
+
+        // Level 3: Topics
+        const topicNodes = chapterNode.children || [];
+        for (const topicNode of topicNodes) {
+          if (!topicNode.isDirectory) continue;
+          report.topics.found++;
+
+          const topicSlug = topicNode.name;
+          const topicKey = `${chapter.id}:${topicSlug}`;
+          let topic = existingTopics.get(topicKey);
+
+          if (!topic) {
+            const name = topicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            const newSlug = await generateUniqueSlug(supabase, 'topics', name);
+            const { data: created, error: createErr } = await supabase
+              .from('topics')
+              .insert({ name, slug: newSlug, chapter_id: chapter.id, description: `Imported from CDN: ${topicSlug}`, is_active: true, sort_order: 0 })
+              .select('id, slug, name, chapter_id')
+              .single();
+
+            if (createErr || !created) {
+              report.errors.push(`Failed to create topic "${topicSlug}" under chapter "${chapter.name}": ${createErr?.message}`);
+              continue;
+            }
+            topic = created;
+            existingTopics.set(`${chapter.id}:${newSlug}`, created);
+            report.topics.created++;
+
+            // Create CDN folders for the topic
+            const basePath = `materials/${subject.slug || subjectSlug}/${chapter.slug || chapterSlug}/${newSlug}`;
+            await createBunnyFolders([basePath, `${basePath}/resources`]);
+            for (const lang of languages) {
+              await createBunnyFolder(`${basePath}/${lang.iso_code}`);
+            }
+          } else {
+            report.topics.existing++;
+          }
+
+          // Level 4: Language folders → files (sub-topics)
+          const langFolderNodes = topicNode.children || [];
+          for (const langFolderNode of langFolderNodes) {
+            if (!langFolderNode.isDirectory) continue;
+            if (langFolderNode.name === 'resources') continue; // skip resources folder
+
+            const langIso = langFolderNode.name;
+            const lang = langByIso.get(langIso);
+            if (!lang) {
+              report.errors.push(`Unknown language ISO "${langIso}" in ${topicNode.path}`);
+              continue;
+            }
+
+            const fileNodes = langFolderNode.children || [];
+            for (const fileNode of fileNodes) {
+              if (fileNode.isDirectory) continue;
+              if (!fileNode.name.endsWith('.html') && !fileNode.name.endsWith('.htm')) continue;
+
+              report.translations.found++;
+
+              // Derive sub-topic slug from filename
+              // e.g. "my-page.html" → "my-page", "my-page_gu.html" → "my-page"
+              let baseName = fileNode.name.replace(/\.(html|htm)$/i, '');
+              // Strip language suffix if present (e.g. _gu, _hi, _en)
+              baseName = baseName.replace(/_[a-z]{2,3}$/, '');
+
+              const subTopicSlug = baseName;
+
+              // Check if sub-topic exists
+              const { data: existingST } = await supabase
+                .from('sub_topics')
+                .select('id, slug')
+                .eq('topic_id', topic.id)
+                .eq('is_deleted', false)
+                .ilike('slug', `%${subTopicSlug}%`)
+                .limit(1);
+
+              let subTopicId: number;
+
+              if (existingST?.length) {
+                subTopicId = existingST[0].id;
+                report.sub_topics.existing++;
+              } else {
+                report.sub_topics.found++;
+                // Create sub-topic
+                const stName = subTopicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                const stSlug = await generateUniqueSlug(supabase, 'sub_topics', stName);
+
+                let description = `Imported from CDN: ${subTopicSlug}`;
+                let metaTitle = stName;
+                let metaDescription = '';
+                let metaKeywords = '';
+
+                // Optionally AI-generate SEO data
+                if (generate_seo && langIso === 'en') {
+                  try {
+                    const htmlContent = await downloadBunnyFile(fileNode.path);
+                    if (htmlContent && htmlContent.length > 100) {
+                      const seoPrompt = `Analyze this HTML educational page and generate SEO metadata. Return JSON:
+{
+  "title": "concise descriptive title",
+  "description": "2-3 sentence description of the content",
+  "meta_title": "SEO optimized title (max 60 chars)",
+  "meta_description": "SEO meta description (max 160 chars)",
+  "meta_keywords": "comma separated keywords"
+}`;
+                      const seoResult = await callAI(provider as AIProvider, seoPrompt, htmlContent.substring(0, 5000), 1024);
+                      const parsed = parseJSON(seoResult.text);
+                      if (parsed) {
+                        description = parsed.description || description;
+                        metaTitle = parsed.meta_title || metaTitle;
+                        metaDescription = parsed.meta_description || '';
+                        metaKeywords = parsed.meta_keywords || '';
+                      }
+                    }
+                  } catch (seoErr: any) {
+                    report.errors.push(`SEO generation failed for ${fileNode.path}: ${seoErr.message}`);
+                  }
+                }
+
+                const { data: createdST, error: stErr } = await supabase
+                  .from('sub_topics')
+                  .insert({
+                    name: stName,
+                    slug: stSlug,
+                    topic_id: topic.id,
+                    description,
+                    meta_title: metaTitle,
+                    meta_description: metaDescription,
+                    meta_keywords: metaKeywords,
+                    is_active: true,
+                    sort_order: 0,
+                  })
+                  .select('id, slug')
+                  .single();
+
+                if (stErr || !createdST) {
+                  report.errors.push(`Failed to create sub-topic "${subTopicSlug}" under topic "${topic.name}": ${stErr?.message}`);
+                  continue;
+                }
+                subTopicId = createdST.id;
+                report.sub_topics.created++;
+              }
+
+              // Create or update sub-topic translation
+              const cdnUrl = `${config.bunny.cdnUrl}/${fileNode.path}`;
+              const { data: existingTrans } = await supabase
+                .from('sub_topic_translations')
+                .select('id, page')
+                .eq('sub_topic_id', subTopicId)
+                .eq('language_id', lang.id)
+                .eq('is_deleted', false)
+                .limit(1);
+
+              if (existingTrans?.length) {
+                // Update with CDN URL if page is different
+                if (existingTrans[0].page !== cdnUrl) {
+                  await supabase
+                    .from('sub_topic_translations')
+                    .update({ page: cdnUrl })
+                    .eq('id', existingTrans[0].id);
+                  report.translations.updated++;
+                } else {
+                  report.translations.existing++;
+                }
+              } else {
+                // Create translation
+                let transName = subTopicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                if (langIso !== 'en') transName = `${transName} (${lang.name})`;
+
+                const { error: transErr } = await supabase
+                  .from('sub_topic_translations')
+                  .insert({
+                    sub_topic_id: subTopicId,
+                    language_id: lang.id,
+                    name: transName,
+                    description: `Imported from CDN`,
+                    page: cdnUrl,
+                    is_active: true,
+                    sort_order: 0,
+                  });
+
+                if (transErr) {
+                  report.errors.push(`Failed to create translation for "${subTopicSlug}" in ${langIso}: ${transErr.message}`);
+                } else {
+                  report.translations.created++;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'ai_content_generated',
+      targetType: 'cdn_import',
+      targetId: 0,
+      targetName: 'Import from CDN',
+      ip: getClientIp(req),
+      metadata: { report },
+    });
+
+    return ok(res, { report }, 'CDN import completed');
+  } catch (error: any) {
+    console.error('Import from CDN error:', error);
+    return err(res, error.message || 'CDN import failed', 500);
   }
 }

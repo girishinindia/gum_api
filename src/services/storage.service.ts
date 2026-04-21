@@ -70,6 +70,53 @@ export async function uploadRawFile(buffer: Buffer, path: string): Promise<strin
   return cdnUrl;
 }
 
+export interface CdnTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size: number;
+  children?: CdnTreeNode[];
+}
+
+/**
+ * Recursively list all files and folders from Bunny CDN under a given path.
+ * Returns a tree structure.
+ */
+export async function listBunnyStorageRecursive(dirPath: string): Promise<CdnTreeNode[]> {
+  const items = await listBunnyStorage(dirPath);
+  const nodes: CdnTreeNode[] = [];
+
+  for (const item of items) {
+    const name = (item.ObjectName || '').replace(/\/$/, '');
+    if (!name || name === '.folder') continue;
+
+    const fullPath = dirPath ? `${dirPath}/${name}` : name;
+
+    if (item.IsDirectory) {
+      const children = await listBunnyStorageRecursive(fullPath);
+      nodes.push({ name, path: fullPath, isDirectory: true, size: 0, children });
+    } else {
+      nodes.push({ name, path: fullPath, isDirectory: false, size: item.Length || 0 });
+    }
+  }
+
+  return nodes;
+}
+
+/**
+ * Download a file from Bunny CDN and return its content as a string.
+ */
+export async function downloadBunnyFile(filePath: string): Promise<string> {
+  const { config } = require('../config');
+  const url = `${config.bunny.storageUrl}/${config.bunny.storageZone}/${filePath}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { AccessKey: config.bunny.storageKey },
+  });
+  if (!res.ok) throw new Error(`Bunny download failed: ${res.status}`);
+  return res.text();
+}
+
 export async function deleteImage(path: string, fullCdnUrl?: string): Promise<void> {
   // Purge CDN edge cache first (best-effort), then delete from storage
   if (fullCdnUrl) await purgeBunnyCdn(fullCdnUrl);
