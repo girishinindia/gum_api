@@ -162,11 +162,16 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'Sub-category not found', 404);
   if (old.deleted_at) return err(res, 'Sub-category is already in trash', 400);
 
+  const now = new Date().toISOString();
+
   const { data, error: e } = await supabase
     .from('sub_categories')
-    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .update({ deleted_at: now, is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade soft-delete to sub-category translations
+  await supabase.from('sub_category_translations').update({ deleted_at: now, is_active: false }).eq('sub_category_id', id).is('deleted_at', null);
 
   await clearCache(old.category_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_category_soft_deleted', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
@@ -186,6 +191,9 @@ export async function restore(req: Request, res: Response) {
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
+  // Cascade restore to sub-category translations
+  await supabase.from('sub_category_translations').update({ deleted_at: null, is_active: true }).eq('sub_category_id', id).not('deleted_at', 'is', null);
+
   await clearCache(old.category_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_category_restored', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
   return ok(res, data, 'Sub-category restored');
@@ -198,6 +206,9 @@ export async function remove(req: Request, res: Response) {
   if (!old) return err(res, 'Sub-category not found', 404);
 
   if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
+
+  // Cascade: delete translations first to avoid FK constraint
+  await supabase.from('sub_category_translations').delete().eq('sub_category_id', id);
 
   const { error: e } = await supabase.from('sub_categories').delete().eq('id', id);
   if (e) return err(res, e.message, 500);

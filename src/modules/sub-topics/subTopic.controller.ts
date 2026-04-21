@@ -179,13 +179,18 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'Sub-topic not found', 404);
   if (old.deleted_at) return err(res, 'Sub-topic is already in trash', 400);
 
+  const now = new Date().toISOString();
+
   const { data, error: e } = await supabase
     .from('sub_topics')
-    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .update({ deleted_at: now, is_active: false })
     .eq('id', id)
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade soft-delete to sub-topic translations
+  await supabase.from('sub_topic_translations').update({ deleted_at: now, is_active: false }).eq('sub_topic_id', id).is('deleted_at', null);
 
   await clearCache(old.topic_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_topic_soft_deleted', targetType: 'sub_topic', targetId: id, targetName: old.slug, ip: getClientIp(req) });
@@ -206,6 +211,9 @@ export async function restore(req: Request, res: Response) {
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade restore to sub-topic translations
+  await supabase.from('sub_topic_translations').update({ deleted_at: null, is_active: true }).eq('sub_topic_id', id).not('deleted_at', 'is', null);
 
   await clearCache(old.topic_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_topic_restored', targetType: 'sub_topic', targetId: id, targetName: old.slug, ip: getClientIp(req) });

@@ -144,11 +144,24 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'Category not found', 404);
   if (old.deleted_at) return err(res, 'Category is already in trash', 400);
 
+  const now = new Date().toISOString();
+
   const { data, error: e } = await supabase
     .from('categories')
-    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .update({ deleted_at: now, is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade soft-delete to category translations
+  await supabase.from('category_translations').update({ deleted_at: now, is_active: false }).eq('category_id', id).is('deleted_at', null);
+
+  // Cascade soft-delete to child sub-categories and their translations
+  const { data: childSubs } = await supabase.from('sub_categories').select('id').eq('category_id', id).is('deleted_at', null);
+  if (childSubs && childSubs.length > 0) {
+    const subIds = childSubs.map((s: any) => s.id);
+    await supabase.from('sub_category_translations').update({ deleted_at: now, is_active: false }).in('sub_category_id', subIds).is('deleted_at', null);
+    await supabase.from('sub_categories').update({ deleted_at: now, is_active: false }).eq('category_id', id).is('deleted_at', null);
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'category_soft_deleted', targetType: 'category', targetId: id, targetName: old.code, ip: getClientIp(req) });
@@ -167,6 +180,9 @@ export async function restore(req: Request, res: Response) {
     .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade restore to category translations
+  await supabase.from('category_translations').update({ deleted_at: null, is_active: true }).eq('category_id', id).not('deleted_at', 'is', null);
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'category_restored', targetType: 'category', targetId: id, targetName: old.code, ip: getClientIp(req) });

@@ -131,11 +131,40 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'Subject not found', 404);
   if (old.deleted_at) return err(res, 'Subject is already in trash', 400);
 
+  const now = new Date().toISOString();
+
   const { data, error: e } = await supabase
     .from('subjects')
-    .update({ deleted_at: new Date().toISOString(), is_active: false })
+    .update({ deleted_at: now, is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade soft-delete to subject translations
+  await supabase.from('subject_translations').update({ deleted_at: now, is_active: false }).eq('subject_id', id).is('deleted_at', null);
+
+  // Cascade soft-delete to child chapters and their translations
+  const { data: childChapters } = await supabase.from('chapters').select('id').eq('subject_id', id).is('deleted_at', null);
+  if (childChapters && childChapters.length > 0) {
+    const cIds = childChapters.map((c: any) => c.id);
+    await supabase.from('chapter_translations').update({ deleted_at: now, is_active: false }).in('chapter_id', cIds).is('deleted_at', null);
+    await supabase.from('chapters').update({ deleted_at: now, is_active: false }).eq('subject_id', id).is('deleted_at', null);
+
+    // Cascade to topics under those chapters
+    const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds).is('deleted_at', null);
+    if (childTopics && childTopics.length > 0) {
+      const tIds = childTopics.map((t: any) => t.id);
+      await supabase.from('topic_translations').update({ deleted_at: now, is_active: false }).in('topic_id', tIds).is('deleted_at', null);
+      await supabase.from('topics').update({ deleted_at: now, is_active: false }).in('chapter_id', cIds).is('deleted_at', null);
+
+      // Cascade to sub-topics under those topics
+      const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds).is('deleted_at', null);
+      if (childSubTopics && childSubTopics.length > 0) {
+        const stIds = childSubTopics.map((st: any) => st.id);
+        await supabase.from('sub_topic_translations').update({ deleted_at: now, is_active: false }).in('sub_topic_id', stIds).is('deleted_at', null);
+        await supabase.from('sub_topics').update({ deleted_at: now, is_active: false }).in('topic_id', tIds).is('deleted_at', null);
+      }
+    }
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'subject_soft_deleted', targetType: 'subject', targetId: id, targetName: old.code, ip: getClientIp(req) });
@@ -154,6 +183,9 @@ export async function restore(req: Request, res: Response) {
     .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade restore to subject translations
+  await supabase.from('subject_translations').update({ deleted_at: null, is_active: true }).eq('subject_id', id).not('deleted_at', 'is', null);
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'subject_restored', targetType: 'subject', targetId: id, targetName: old.code, ip: getClientIp(req) });
