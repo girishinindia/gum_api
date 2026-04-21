@@ -64,12 +64,12 @@ function getGemini(): GoogleGenerativeAI {
 }
 
 // ─── Unified AI call ───
-async function callAI(provider: AIProvider, systemPrompt: string, userContent: string): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+async function callAI(provider: AIProvider, systemPrompt: string, userContent: string, maxTokens: number = 8192): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   if (provider === 'anthropic') {
     const client = getAnthropic();
     const msg = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 8192,
+      max_tokens: maxTokens,
       messages: [{ role: 'user', content: `${systemPrompt}\n\n${userContent}\n\nRespond with ONLY valid JSON.` }],
     });
     const text = msg.content.find(b => b.type === 'text')?.text || '{}';
@@ -81,7 +81,7 @@ async function callAI(provider: AIProvider, systemPrompt: string, userContent: s
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.3,
-      max_tokens: 8192,
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
@@ -98,7 +98,7 @@ async function callAI(provider: AIProvider, systemPrompt: string, userContent: s
       model: 'gemini-2.5-flash',
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 8192,
+        maxOutputTokens: maxTokens,
         responseMimeType: 'application/json',
       },
     });
@@ -302,8 +302,9 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source content:\n${JSON.stringify(sourceContent)}`;
     }
 
-    // Call AI (single call for all languages!)
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    // Call AI (single call for all languages!) — scale tokens by language count
+    const bulkTokens = Math.max(8192, missingLangs.length * 3072);
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkTokens);
 
     let allTranslations: any;
     try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
@@ -581,7 +582,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source content:\n${JSON.stringify(sourceContent)}`;
     }
 
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    const bulkTokens = Math.max(8192, missingLangs.length * 3072);
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkTokens);
 
     let allTranslations: any;
     try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
@@ -838,7 +840,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
 
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    const bulkTokens = Math.max(8192, missingLangs.length * 4096);
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkTokens);
     let allTranslations: any;
     try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
 
@@ -1022,7 +1025,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
 
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    const bulkTokens = Math.max(8192, missingLangs.length * 4096);
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkTokens);
     let allTranslations: any;
     try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
 
@@ -1206,7 +1210,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
 
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    const bulkTokens = Math.max(8192, missingLangs.length * 4096);
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkTokens);
     let allTranslations: any;
     try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
 
@@ -1388,39 +1393,102 @@ USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
 
-    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
-    let allTranslations: any;
-    try { allTranslations = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+    // Use higher token limit for bulk translations (14 fields × N languages)
+    const bulkMaxTokens = Math.max(8192, missingLangs.length * 4096);
+
+    // Try bulk AI call with retry on invalid JSON
+    let allTranslations: any = null;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkMaxTokens);
+        totalInputTokens += inputTokens;
+        totalOutputTokens += outputTokens;
+        allTranslations = parseJSON(text);
+        break; // Success
+      } catch (parseErr) {
+        console.error(`Bulk translation attempt ${attempt + 1} failed (JSON parse):`, parseErr);
+        if (attempt === 1) allTranslations = null; // Give up after 2 attempts
+      }
+    }
 
     const results: any[] = [];
-    for (const lang of missingLangs) {
-      const translated = allTranslations[lang.iso_code];
-      if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation for this language' }); continue; }
 
-      const record: any = {
-        sub_topic_id, language_id: lang.id,
-        ...extractMaterialFields(translated, MATERIAL_FIELDS_SUB_TOPIC),
-        is_active: true, deleted_at: null, updated_by: userId,
-      };
+    // If bulk AI failed entirely, fall back to one-by-one translation
+    if (!allTranslations) {
+      console.log('Bulk translation JSON parse failed, falling back to per-language translation...');
+      for (const lang of missingLangs) {
+        try {
+          const singleJsonSpec = buildMaterialJsonSpec(MATERIAL_FIELDS_SUB_TOPIC);
+          const singleSystemPrompt = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate the English content below into ${lang.name} (${lang.iso_code}).
+OUTPUT — return ONLY valid JSON: ${singleJsonSpec}
+RULES: Translate EXACTLY with same meaning. Write in a natural, human way.
+MOST IMPORTANT: Do NOT write in pure ${lang.name}. Keep technical/brand English words in English script. Example: "HTML5 की Fundamentals सीखें।"
+USER INSTRUCTIONS: ${userPrompt}`;
+          const sourceContent: any = {};
+          for (const f of MATERIAL_FIELDS_SUB_TOPIC) sourceContent[f] = englishSource?.[f] || '';
+          const singleUserContent = `English source:\n${JSON.stringify(sourceContent)}`;
+          const { text: singleText, inputTokens: sIn, outputTokens: sOut } = await callAI(provider, singleSystemPrompt, singleUserContent);
+          totalInputTokens += sIn;
+          totalOutputTokens += sOut;
+          const translated = parseJSON(singleText);
 
-      const softDeletedId = softDeletedMap.get(lang.id);
-      let saved: any, saveErr: any;
-      if (softDeletedId) {
-        const r2 = await supabase.from('sub_topic_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
-        saved = r2.data; saveErr = r2.error;
-      } else {
-        const r2 = await supabase.from('sub_topic_translations').insert({ ...record, created_by: userId }).select().single();
-        saved = r2.data; saveErr = r2.error;
+          const record: any = {
+            sub_topic_id, language_id: lang.id,
+            ...extractMaterialFields(translated, MATERIAL_FIELDS_SUB_TOPIC),
+            is_active: true, deleted_at: null, updated_by: userId,
+          };
+          const softDeletedId = softDeletedMap.get(lang.id);
+          let saved: any, saveErr: any;
+          if (softDeletedId) {
+            const r2 = await supabase.from('sub_topic_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+            saved = r2.data; saveErr = r2.error;
+          } else {
+            const r2 = await supabase.from('sub_topic_translations').insert({ ...record, created_by: userId }).select().single();
+            saved = r2.data; saveErr = r2.error;
+          }
+          results.push(saveErr
+            ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+            : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+        } catch (langErr: any) {
+          console.error(`Per-language translation failed for ${lang.iso_code}:`, langErr);
+          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
+        }
       }
+    } else {
+      // Bulk AI succeeded — process each language from the combined response
+      for (const lang of missingLangs) {
+        const translated = allTranslations[lang.iso_code];
+        if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation for this language' }); continue; }
 
-      results.push(saveErr
-        ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
-        : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+        const record: any = {
+          sub_topic_id, language_id: lang.id,
+          ...extractMaterialFields(translated, MATERIAL_FIELDS_SUB_TOPIC),
+          is_active: true, deleted_at: null, updated_by: userId,
+        };
+
+        const softDeletedId = softDeletedMap.get(lang.id);
+        let saved: any, saveErr: any;
+        if (softDeletedId) {
+          const r2 = await supabase.from('sub_topic_translations').update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+          saved = r2.data; saveErr = r2.error;
+        } else {
+          const r2 = await supabase.from('sub_topic_translations').insert({ ...record, created_by: userId }).select().single();
+          saved = r2.data; saveErr = r2.error;
+        }
+
+        results.push(saveErr
+          ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+          : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+      }
     }
 
     logAdmin({ actorId: userId, action: 'ai_bulk_translation_generated', targetType: 'sub_topic_translation', targetId: Number(sub_topic_id), targetName: `${subTopic.slug} → ${missingLangs.length} languages (${provider})`, ip: getClientIp(req) });
     const successCount = results.filter(r => r.status === 'success').length;
-    return ok(res, { results, provider, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens } }, `Bulk generation complete: ${successCount}/${results.length} succeeded`);
+    return ok(res, { results, provider, usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens } }, `Bulk generation complete: ${successCount}/${results.length} succeeded`);
   } catch (error: any) {
     console.error('AI bulkGenerateSubTopicTranslations error:', error);
     return err(res, error.message || 'Bulk generation failed', 500);
