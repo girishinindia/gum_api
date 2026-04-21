@@ -3520,7 +3520,9 @@ export async function translatePage(req: Request, res: Response) {
       .eq('for_material', true)
       .order('id');
 
-    const targetLangs = (allLangs || []).filter(l => l.iso_code !== 'en');
+    // skip_language: ISO code of a language to skip (e.g. source language when reverse-translating)
+    const skipLanguage = req.body.skip_language || null;
+    const targetLangs = (allLangs || []).filter(l => l.iso_code !== 'en' && l.iso_code !== skipLanguage);
     if (targetLangs.length === 0) return err(res, 'No target languages found for translation', 400);
 
     // Get context about the subject/chapter/topic for better translation
@@ -3642,5 +3644,94 @@ Return ONLY the complete translated HTML document, nothing else.`;
   } catch (error: any) {
     console.error('Translate page error:', error);
     return err(res, error.message || 'Page translation failed', 500);
+  }
+}
+
+// ─── Reverse Translate HTML Page to English ───
+
+/**
+ * POST /ai/reverse-translate-page
+ * Takes an HTML file in any language and translates it to English.
+ * Returns the English HTML as a string (not uploaded to CDN — caller decides what to do with it).
+ *
+ * Body (multipart): file (HTML), source_language (ISO code like 'gu', 'hi'), provider (optional)
+ */
+export async function reverseTranslatePage(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const { source_language, provider: reqProvider } = req.body;
+    if (!source_language) return err(res, 'source_language (ISO code) is required', 400);
+
+    const file = (req as any).file;
+    if (!file) return err(res, 'HTML file is required', 400);
+    const origName = (file.originalname || '').toLowerCase();
+    if (!origName.endsWith('.html') && !origName.endsWith('.htm')) return err(res, 'Only .html/.htm files are allowed', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const htmlContent = file.buffer.toString('utf-8');
+    if (!htmlContent || htmlContent.length < 50) return err(res, 'HTML file has insufficient content', 400);
+
+    // Look up the source language name
+    const { data: sourceLang } = await supabase
+      .from('languages')
+      .select('id, name, native_name, iso_code')
+      .eq('iso_code', source_language)
+      .eq('is_active', true)
+      .single();
+
+    const sourceLangName = sourceLang?.name || source_language;
+    const sourceLangNative = sourceLang?.native_name || source_language;
+
+    const systemPrompt = `You are an expert translator. Translate the following HTML page from ${sourceLangName} (${sourceLangNative}) to English.
+
+CRITICAL RULES:
+1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
+2. Only translate the visible text content between HTML tags.
+3. Keep ALL technical terms, programming keywords, and code that are already in English — do NOT change them.
+4. Keep brand names and product names in English.
+5. Keep code snippets, code examples, and inline code EXACTLY as they are.
+6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
+7. Do NOT add any explanation, comments, or wrapper — return ONLY the translated HTML.
+8. Produce natural, clear, professional English. The translated text should read like it was originally written in English.
+9. Do NOT translate alt attributes of images if they contain technical terms.
+
+Return ONLY the complete translated HTML document in English, nothing else.`;
+
+    const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
+    const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
+
+    // Clean up AI response
+    let translatedHtml = aiResult.text.trim();
+    if (translatedHtml.startsWith('```html')) {
+      translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
+    } else if (translatedHtml.startsWith('```')) {
+      translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+
+    if (!translatedHtml || translatedHtml.length < 50) {
+      return err(res, 'AI returned empty or too short translation', 500);
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'page_reverse_translated',
+      targetType: 'html_page',
+      targetId: 0,
+      targetName: file.originalname || 'unknown',
+      ip: getClientIp(req),
+      metadata: { provider, source_language, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens },
+    });
+
+    return ok(res, {
+      english_html: translatedHtml,
+      original_filename: file.originalname,
+      source_language,
+      tokens: { input: aiResult.inputTokens, output: aiResult.outputTokens },
+    }, 'Reverse translation to English completed');
+  } catch (error: any) {
+    console.error('Reverse translate page error:', error);
+    return err(res, error.message || 'Reverse translation failed', 500);
   }
 }

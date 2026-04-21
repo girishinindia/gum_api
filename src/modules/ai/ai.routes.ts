@@ -49,6 +49,9 @@ r.post('/auto-sub-topics', requirePermission('ai', 'create'), htmlUpload.single(
 // Translate HTML page to all languages
 r.post('/translate-page', requirePermission('ai', 'create'), htmlUpload.single('file'), ctrl.translatePage);
 
+// Reverse translate HTML page to English (from any language)
+r.post('/reverse-translate-page', requirePermission('ai', 'create'), htmlUpload.single('file'), ctrl.reverseTranslatePage);
+
 // Import material tree from TXT file
 const txtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { const ext = file.originalname.toLowerCase(); if (ext.endsWith('.txt') || ext.endsWith('.csv')) cb(null, true); else cb(new Error('Only .txt or .csv files are allowed')); } });
 r.post('/import-material-tree', requirePermission('ai', 'create'), txtUpload.single('file'), ctrl.importMaterialTree);
