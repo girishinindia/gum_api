@@ -33,7 +33,7 @@ function parseMultipartBody(req: Request): any {
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
 
-  let q = supabase.from('sub_topics').select('*, topics(slug, chapter_id)', { count: 'exact' });
+  let q = supabase.from('sub_topics').select('*, topics(slug, chapter_id, chapters(subject_id))', { count: 'exact' });
 
   // Search
   if (search) q = q.ilike('slug', `%${search}%`);
@@ -46,7 +46,27 @@ export async function list(req: Request, res: Response) {
   }
 
   // Filters
-  if (req.query.topic_id) q = q.eq('topic_id', parseInt(req.query.topic_id as string));
+  if (req.query.topic_id) {
+    q = q.eq('topic_id', parseInt(req.query.topic_id as string));
+  } else if (req.query.chapter_id) {
+    // Get topic IDs for this chapter, then filter sub-topics
+    const { data: chTopics } = await supabase.from('topics').select('id').eq('chapter_id', parseInt(req.query.chapter_id as string)).is('deleted_at', null);
+    const topicIds = (chTopics || []).map((t: any) => t.id);
+    if (topicIds.length > 0) q = q.in('topic_id', topicIds);
+    else q = q.eq('topic_id', -1); // no match
+  } else if (req.query.subject_id) {
+    // Get chapter IDs for subject, then topic IDs for those chapters
+    const { data: subChapters } = await supabase.from('chapters').select('id').eq('subject_id', parseInt(req.query.subject_id as string)).is('deleted_at', null);
+    const chapterIds = (subChapters || []).map((c: any) => c.id);
+    if (chapterIds.length > 0) {
+      const { data: subTopicsList } = await supabase.from('topics').select('id').in('chapter_id', chapterIds).is('deleted_at', null);
+      const topicIds = (subTopicsList || []).map((t: any) => t.id);
+      if (topicIds.length > 0) q = q.in('topic_id', topicIds);
+      else q = q.eq('topic_id', -1);
+    } else {
+      q = q.eq('topic_id', -1);
+    }
+  }
   if (req.query.difficulty_level) q = q.eq('difficulty_level', req.query.difficulty_level);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
@@ -62,7 +82,7 @@ export async function list(req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase
     .from('sub_topics')
-    .select('*, topics(slug, chapter_id)')
+    .select('*, topics(slug, chapter_id, chapters(subject_id))')
     .eq('id', req.params.id)
     .single();
   if (e || !data) return err(res, 'Sub-topic not found', 404);
@@ -88,7 +108,7 @@ export async function create(req: Request, res: Response) {
   const { data, error: e } = await supabase
     .from('sub_topics')
     .insert(body)
-    .select('*, topics(slug, chapter_id)')
+    .select('*, topics(slug, chapter_id, chapters(subject_id))')
     .single();
   if (e) {
     if (e.code === '23505') return err(res, 'Sub-topic slug already exists', 409);
@@ -128,7 +148,7 @@ export async function update(req: Request, res: Response) {
     .from('sub_topics')
     .update(updates)
     .eq('id', id)
-    .select('*, topics(slug, chapter_id)')
+    .select('*, topics(slug, chapter_id, chapters(subject_id))')
     .single();
   if (e) {
     if (e.code === '23505') return err(res, 'Sub-topic slug already exists', 409);
@@ -202,11 +222,11 @@ export async function remove(req: Request, res: Response) {
     try { await deleteVideoFromStream(old.video_id); } catch {}
   }
 
+  // Delete child translations first to avoid FK constraint
+  await supabase.from('sub_topic_translations').delete().eq('sub_topic_id', id);
+
   const { error: e } = await supabase.from('sub_topics').delete().eq('id', id);
-  if (e) {
-    if (e.code === '23503') return err(res, 'Cannot delete: translations still reference this sub-topic', 409);
-    return err(res, e.message, 500);
-  }
+  if (e) return err(res, e.message, 500);
 
   await clearCache(old.topic_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_topic_deleted', targetType: 'sub_topic', targetId: id, targetName: old.slug, ip: getClientIp(req) });
@@ -241,7 +261,7 @@ export async function uploadVideo(req: Request, res: Response) {
       updated_by: req.user!.id,
     };
 
-    const { data, error: e } = await supabase.from('sub_topics').update(updates).eq('id', id).select('*, topics(slug, chapter_id)').single();
+    const { data, error: e } = await supabase.from('sub_topics').update(updates).eq('id', id).select('*, topics(slug, chapter_id, chapters(subject_id))').single();
     if (e) return err(res, e.message, 500);
 
     await clearCache(st.topic_id);
@@ -272,7 +292,7 @@ export async function deleteVideo(req: Request, res: Response) {
     video_source: null,
     youtube_url: null,
     updated_by: req.user!.id,
-  }).eq('id', id).select('*, topics(slug, chapter_id)').single();
+  }).eq('id', id).select('*, topics(slug, chapter_id, chapters(subject_id))').single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(st.topic_id);

@@ -181,11 +181,17 @@ export async function remove(req: Request, res: Response) {
 
   if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
 
-  const { error: e } = await supabase.from('categories').delete().eq('id', id);
-  if (e) {
-    if (e.code === '23503') return err(res, 'Cannot delete: sub-categories or translations still reference this category', 409);
-    return err(res, e.message, 500);
+  // Cascade: delete child sub-categories (and their translations), then category translations
+  const { data: childSubs } = await supabase.from('sub_categories').select('id').eq('category_id', id);
+  if (childSubs && childSubs.length > 0) {
+    const subIds = childSubs.map((s: any) => s.id);
+    await supabase.from('sub_category_translations').delete().in('sub_category_id', subIds);
+    await supabase.from('sub_categories').delete().eq('category_id', id);
   }
+  await supabase.from('category_translations').delete().eq('category_id', id);
+
+  const { error: e } = await supabase.from('categories').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'category_deleted', targetType: 'category', targetId: id, targetName: old.code, ip: getClientIp(req) });

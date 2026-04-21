@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
 import * as ctrl from './ai.controller';
@@ -40,5 +41,13 @@ r.post('/update-master-data', requirePermission('ai', 'update'), ctrl.updateMast
 
 // Resume content (headline + bio)
 r.post('/generate-resume-content', requirePermission('ai', 'create'), ctrl.generateResumeContent);
+
+// Auto sub-topics from HTML file
+const htmlUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { const ext = file.originalname.toLowerCase(); if (ext.endsWith('.html') || ext.endsWith('.htm')) cb(null, true); else cb(new Error('Only HTML files are allowed')); } });
+r.post('/auto-sub-topics', requirePermission('ai', 'create'), htmlUpload.single('file'), ctrl.autoSubTopics);
+
+// Import material tree from TXT file
+const txtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { const ext = file.originalname.toLowerCase(); if (ext.endsWith('.txt') || ext.endsWith('.csv')) cb(null, true); else cb(new Error('Only .txt or .csv files are allowed')); } });
+r.post('/import-material-tree', requirePermission('ai', 'create'), txtUpload.single('file'), ctrl.importMaterialTree);
 
 export default r;

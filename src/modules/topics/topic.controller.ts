@@ -5,7 +5,8 @@ import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { createBunnyFolders, deleteBunnyFolder } from '../../services/storage.service';
 
 const CACHE_KEY = 'topics:all';
 const clearCache = async (chapterId?: number) => {
@@ -74,14 +75,26 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: topic:activate required to create inactive', 403);
   }
 
-  // Verify chapter exists if chapter_id is provided
+  // Verify chapter exists if chapter_id is provided; also fetch parent slugs for folder path
+  let subjectSlug: string | null = null;
+  let chapterSlug: string | null = null;
   if (body.chapter_id) {
-    const { data: chapter } = await supabase.from('chapters').select('id').eq('id', body.chapter_id).single();
+    const { data: chapter } = await supabase
+      .from('chapters')
+      .select('id, slug, subject_id, subjects(slug)')
+      .eq('id', body.chapter_id)
+      .single();
     if (!chapter) return err(res, 'Chapter not found', 404);
+    chapterSlug = chapter.slug;
+    subjectSlug = (chapter as any).subjects?.slug || null;
   }
 
   // Set audit field
   body.created_by = req.user!.id;
+
+  // Auto-generate slug from slug field or name-like field
+  const slugSource = body.slug || body.code || body.name || `topic-${body.chapter_id || 0}`;
+  body.slug = await generateUniqueSlug(supabase, 'topics', slugSource);
 
   const { data, error: e } = await supabase
     .from('topics')
@@ -91,6 +104,25 @@ export async function create(req: Request, res: Response) {
   if (e) {
     if (e.code === '23505') return err(res, 'Topic slug already exists', 409);
     return err(res, e.message, 500);
+  }
+
+  // Create Bunny folders: materials/<subject>/<chapter>/<topic>/ + resources/ + language folders
+  if (subjectSlug && chapterSlug) {
+    const basePath = `materials/${subjectSlug}/${chapterSlug}/${data.slug}`;
+    const folders = [basePath, `${basePath}/resources`];
+
+    // Fetch all active languages for language subfolders
+    const { data: languages } = await supabase
+      .from('languages')
+      .select('iso_code')
+      .eq('is_active', true);
+    if (languages) {
+      for (const lang of languages) {
+        folders.push(`${basePath}/${lang.iso_code}`);
+      }
+    }
+
+    createBunnyFolders(folders).catch(() => {});
   }
 
   await clearCache(body.chapter_id);
@@ -221,14 +253,31 @@ export async function restore(req: Request, res: Response) {
 // DELETE /topics/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('topics').select('slug, chapter_id').eq('id', id).single();
+  const { data: old } = await supabase.from('topics').select('slug, chapter_id, chapters(slug, subjects(slug))').eq('id', id).single();
   if (!old) return err(res, 'Topic not found', 404);
 
-  const { error: e } = await supabase.from('topics').delete().eq('id', id);
-  if (e) {
-    if (e.code === '23503') return err(res, 'Cannot delete: translations still reference this topic', 409);
-    return err(res, e.message, 500);
+  // Delete Bunny CDN folder for this topic (materials/<subject-slug>/<chapter-slug>/<topic-slug>/)
+  const subjectSlug = (old as any).chapters?.subjects?.slug;
+  const chapterSlug = (old as any).chapters?.slug;
+  if (subjectSlug && chapterSlug && old.slug) {
+    try {
+      await deleteBunnyFolder(`materials/${subjectSlug}/${chapterSlug}/${old.slug}`);
+    } catch (bunnyErr) {
+      console.error(`Failed to delete Bunny folder for topic ${old.slug}:`, bunnyErr);
+    }
   }
+
+  // Delete child sub-topics translations, sub-topics, and topic translations first
+  const { data: childSubTopics } = await supabase.from('sub_topics').select('id').eq('topic_id', id);
+  if (childSubTopics && childSubTopics.length > 0) {
+    const stIds = childSubTopics.map((st: any) => st.id);
+    await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
+    await supabase.from('sub_topics').delete().eq('topic_id', id);
+  }
+  await supabase.from('topic_translations').delete().eq('topic_id', id);
+
+  const { error: e } = await supabase.from('topics').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
 
   await clearCache(old.chapter_id);
   logAdmin({

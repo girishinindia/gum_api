@@ -134,13 +134,21 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: sub_topic_translation:activate required to create inactive', 403);
   }
 
-  // Verify sub-topic exists (include parent hierarchy for structured data)
-  const { data: subTopic } = await supabase.from('sub_topics').select('id, slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id))').eq('id', body.sub_topic_id).single();
+  // Verify sub-topic exists (include parent hierarchy for structured data + folder path)
+  const { data: subTopic } = await supabase.from('sub_topics').select('id, slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))').eq('id', body.sub_topic_id).single();
   if (!subTopic) return err(res, 'Sub-topic not found', 404);
 
   // Verify language exists and for_material = true
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).eq('for_material', true).single();
   if (!lang) return err(res, 'Language not found or not available for material', 404);
+
+  // Build material folder path from parent chain
+  const parentTopic = (subTopic as any).topics;
+  const parentChapter = parentTopic?.chapters;
+  const parentSubject = parentChapter?.subjects;
+  const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
+    ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
+    : null;
 
   // Set audit field
   body.created_by = req.user!.id;
@@ -180,17 +188,18 @@ export async function create(req: Request, res: Response) {
     uploadedUrls.push(body.video_thumbnail);
   }
 
-  // Process page file (HTML upload)
+  // Process page file (HTML upload) — use structured folder path when available
   if (files?.page_file?.[0]) {
     const slug = (body.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
+    const path = materialBasePath
+      ? `${materialBasePath}/${lang.iso_code}/${slug}-${Date.now()}.html`
+      : `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
     body.page = await uploadRawFile(files.page_file[0].buffer, path);
     uploadedUrls.push(body.page);
   }
 
   // Auto-generate structured_data if empty/null
   if (!body.structured_data || (Array.isArray(body.structured_data) && body.structured_data.length === 0)) {
-    const parentTopic = (subTopic as any).topics;
     body.structured_data = generateStructuredData({
       name: body.name,
       shortIntro: body.short_intro,
@@ -278,6 +287,31 @@ export async function update(req: Request, res: Response) {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   let mediaUploaded = false;
 
+  // Build material folder path for structured file uploads
+  let updateMaterialBasePath: string | null = null;
+  let updateLangIso: string | null = resolvedLangIso || null;
+  if (files?.page_file?.[0]) {
+    const subTopicId = updates.sub_topic_id || old.sub_topic_id;
+    const { data: stData } = await supabase
+      .from('sub_topics')
+      .select('slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+      .eq('id', subTopicId)
+      .single();
+    if (stData) {
+      const t = (stData as any).topics;
+      const c = t?.chapters;
+      const s = c?.subjects;
+      if (s?.slug && c?.slug && t?.slug) {
+        updateMaterialBasePath = `materials/${s.slug}/${c.slug}/${t.slug}`;
+      }
+    }
+    if (!updateLangIso) {
+      const langId = updates.language_id || old.language_id;
+      const { data: langData } = await supabase.from('languages').select('iso_code').eq('id', langId).single();
+      updateLangIso = langData?.iso_code || null;
+    }
+  }
+
   // Process main image (800x800)
   if (files?.image_file?.[0]) {
     const slug = (updates.name || old.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
@@ -314,10 +348,12 @@ export async function update(req: Request, res: Response) {
     mediaUploaded = true;
   }
 
-  // Process page file (HTML upload)
+  // Process page file (HTML upload) — use structured folder path when available
   if (files?.page_file?.[0]) {
     const slug = (updates.name || old.name || 'subtopic-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
+    const path = (updateMaterialBasePath && updateLangIso)
+      ? `${updateMaterialBasePath}/${updateLangIso}/${slug}-${Date.now()}.html`
+      : `sub-topic-translations/pages/${slug}-${Date.now()}.html`;
     updates.page = await uploadRawFile(files.page_file[0].buffer, path);
     if (old.page) { try { await deleteImage(extractBunnyPath(old.page), old.page); } catch {} }
     mediaUploaded = true;
@@ -408,20 +444,46 @@ export async function coverage(req: Request, res: Response) {
 
   const { data: translations, error: transErr } = await supabase
     .from('sub_topic_translations')
-    .select('sub_topic_id, language_id')
+    .select('sub_topic_id, language_id, page, video_title, video_description')
     .is('deleted_at', null);
   if (transErr) return err(res, transErr.message, 500);
 
   const transMap = new Map<number, Set<number>>();
+  // Track page files and video info per sub-topic per language
+  const pageMap = new Map<number, Map<number, boolean>>();
+  const videoMap = new Map<number, Map<number, boolean>>();
   for (const t of (translations || [])) {
     if (!transMap.has(t.sub_topic_id)) transMap.set(t.sub_topic_id, new Set());
     transMap.get(t.sub_topic_id)!.add(t.language_id);
+
+    if (!pageMap.has(t.sub_topic_id)) pageMap.set(t.sub_topic_id, new Map());
+    pageMap.get(t.sub_topic_id)!.set(t.language_id, !!t.page);
+
+    if (!videoMap.has(t.sub_topic_id)) videoMap.set(t.sub_topic_id, new Map());
+    videoMap.get(t.sub_topic_id)!.set(t.language_id, !!(t.video_title || t.video_description));
+  }
+
+  // Also get sub-topic level video info (bunny/youtube)
+  const { data: subTopicVideoData } = await supabase
+    .from('sub_topics')
+    .select('id, video_source, video_url, youtube_url, video_status')
+    .eq('is_active', true)
+    .is('deleted_at', null);
+  const subTopicVideoMap = new Map<number, { video_source?: string; has_video: boolean }>();
+  for (const st of (subTopicVideoData || [])) {
+    subTopicVideoMap.set(st.id, {
+      video_source: st.video_source || undefined,
+      has_video: !!(st.video_url || st.youtube_url),
+    });
   }
 
   const result = (subTopics || []).map((st: any) => {
     const translatedLangIds = transMap.get(st.id) || new Set();
     const missingLangs = (activeLangs || []).filter(l => !translatedLangIds.has(l.id));
     const translatedLangs = (activeLangs || []).filter(l => translatedLangIds.has(l.id));
+    const stPages = pageMap.get(st.id);
+    const pagesWithFile = stPages ? Array.from(stPages.values()).filter(v => v).length : 0;
+    const stVideo = subTopicVideoMap.get(st.id);
     return {
       sub_topic_id: st.id,
       sub_topic_slug: st.slug,
@@ -432,6 +494,9 @@ export async function coverage(req: Request, res: Response) {
       is_complete: missingLangs.length === 0,
       translated_languages: translatedLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code })),
       missing_languages: missingLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code, native_name: l.native_name })),
+      pages_uploaded: pagesWithFile,
+      video_source: stVideo?.video_source || null,
+      has_video: stVideo?.has_video || false,
     };
   });
 

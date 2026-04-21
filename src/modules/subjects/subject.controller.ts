@@ -5,7 +5,8 @@ import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
 
 const CACHE_KEY = 'subjects:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -63,11 +64,21 @@ export async function create(req: Request, res: Response) {
   // Set audit field
   body.created_by = req.user!.id;
 
+  // Auto-generate slug from code or slug field if not provided
+  if (!body.slug && body.code) {
+    body.slug = await generateUniqueSlug(supabase, 'subjects', body.code);
+  } else if (body.slug) {
+    body.slug = await generateUniqueSlug(supabase, 'subjects', body.slug);
+  }
+
   const { data, error: e } = await supabase.from('subjects').insert(body).select().single();
   if (e) {
     if (e.code === '23505') return err(res, 'Subject code or slug already exists', 409);
     return err(res, e.message, 500);
   }
+
+  // Create Bunny folder: materials/<subject-slug>/
+  createBunnyFolder(`materials/${data.slug}`).catch(() => {});
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'subject_created', targetType: 'subject', targetId: data.id, targetName: data.code, ip: getClientIp(req) });
@@ -152,14 +163,41 @@ export async function restore(req: Request, res: Response) {
 // DELETE /subjects/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('subjects').select('code').eq('id', id).single();
+  const { data: old } = await supabase.from('subjects').select('code, slug').eq('id', id).single();
   if (!old) return err(res, 'Subject not found', 404);
 
-  const { error: e } = await supabase.from('subjects').delete().eq('id', id);
-  if (e) {
-    if (e.code === '23503') return err(res, 'Cannot delete: chapters or translations still reference this subject', 409);
-    return err(res, e.message, 500);
+  // Delete Bunny CDN folder for this subject (materials/<slug>/)
+  if (old.slug) {
+    try {
+      await deleteBunnyFolder(`materials/${old.slug}`);
+    } catch (bunnyErr) {
+      console.error(`Failed to delete Bunny folder for subject ${old.slug}:`, bunnyErr);
+    }
   }
+
+  // Cascade: delete entire tree under this subject
+  const { data: childChapters } = await supabase.from('chapters').select('id').eq('subject_id', id);
+  if (childChapters && childChapters.length > 0) {
+    const cIds = childChapters.map((c: any) => c.id);
+    const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds);
+    if (childTopics && childTopics.length > 0) {
+      const tIds = childTopics.map((t: any) => t.id);
+      const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
+      if (childSubTopics && childSubTopics.length > 0) {
+        const stIds = childSubTopics.map((st: any) => st.id);
+        await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
+        await supabase.from('sub_topics').delete().in('topic_id', tIds);
+      }
+      await supabase.from('topic_translations').delete().in('topic_id', tIds);
+      await supabase.from('topics').delete().in('chapter_id', cIds);
+    }
+    await supabase.from('chapter_translations').delete().in('chapter_id', cIds);
+    await supabase.from('chapters').delete().eq('subject_id', id);
+  }
+  await supabase.from('subject_translations').delete().eq('subject_id', id);
+
+  const { error: e } = await supabase.from('subjects').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'subject_deleted', targetType: 'subject', targetId: id, targetName: old.code, ip: getClientIp(req) });

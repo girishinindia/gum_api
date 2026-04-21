@@ -5,7 +5,8 @@ import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
 
 const CACHE_KEY = 'chapters:all';
 const clearCache = async (subjectId?: number) => {
@@ -68,12 +69,16 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: chapter:activate required to create inactive', 403);
   }
 
-  // Verify subject exists
-  const { data: subject } = await supabase.from('subjects').select('id').eq('id', body.subject_id).single();
+  // Verify subject exists and get its slug for folder path
+  const { data: subject } = await supabase.from('subjects').select('id, slug').eq('id', body.subject_id).single();
   if (!subject) return err(res, 'Subject not found', 404);
 
   // Set audit field
   body.created_by = req.user!.id;
+
+  // Auto-generate slug from slug field or a name-like field
+  const slugSource = body.slug || body.code || body.name || `chapter-${body.subject_id}`;
+  body.slug = await generateUniqueSlug(supabase, 'chapters', slugSource);
 
   const { data, error: e } = await supabase
     .from('chapters')
@@ -84,6 +89,9 @@ export async function create(req: Request, res: Response) {
     if (e.code === '23505') return err(res, 'Chapter slug already exists for this subject', 409);
     return err(res, e.message, 500);
   }
+
+  // Create Bunny folder: materials/<subject-slug>/<chapter-slug>/
+  createBunnyFolder(`materials/${subject.slug}/${data.slug}`).catch(() => {});
 
   await clearCache(body.subject_id);
   logAdmin({
@@ -214,14 +222,36 @@ export async function restore(req: Request, res: Response) {
 // DELETE /chapters/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('chapters').select('slug, subject_id').eq('id', id).single();
+  const { data: old } = await supabase.from('chapters').select('slug, subject_id, subjects(slug)').eq('id', id).single();
   if (!old) return err(res, 'Chapter not found', 404);
 
-  const { error: e } = await supabase.from('chapters').delete().eq('id', id);
-  if (e) {
-    if (e.code === '23503') return err(res, 'Cannot delete: topics or translations still reference this chapter', 409);
-    return err(res, e.message, 500);
+  // Delete Bunny CDN folder for this chapter (materials/<subject-slug>/<chapter-slug>/)
+  const subjectSlug = (old as any).subjects?.slug;
+  if (subjectSlug && old.slug) {
+    try {
+      await deleteBunnyFolder(`materials/${subjectSlug}/${old.slug}`);
+    } catch (bunnyErr) {
+      console.error(`Failed to delete Bunny folder for chapter ${old.slug}:`, bunnyErr);
+    }
   }
+
+  // Cascade: delete child topics (and their sub-topics/translations), then chapter translations
+  const { data: childTopics } = await supabase.from('topics').select('id').eq('chapter_id', id);
+  if (childTopics && childTopics.length > 0) {
+    const tIds = childTopics.map((t: any) => t.id);
+    const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
+    if (childSubTopics && childSubTopics.length > 0) {
+      const stIds = childSubTopics.map((st: any) => st.id);
+      await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
+      await supabase.from('sub_topics').delete().in('topic_id', tIds);
+    }
+    await supabase.from('topic_translations').delete().in('topic_id', tIds);
+    await supabase.from('topics').delete().eq('chapter_id', id);
+  }
+  await supabase.from('chapter_translations').delete().eq('chapter_id', id);
+
+  const { error: e } = await supabase.from('chapters').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
 
   await clearCache(old.subject_id);
   logAdmin({

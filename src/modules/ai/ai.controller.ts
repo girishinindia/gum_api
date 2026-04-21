@@ -5,7 +5,11 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { uploadRawFile, createBunnyFolder, createBunnyFolders } from '../../services/storage.service';
+import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
+import { matchSubject, matchChapter, matchTopic } from '../../services/materialMatcher.service';
+import { generateMaterialData, type MaterialTreeInput } from '../../services/materialAiGenerator.service';
 
 // ─── Rate limiter (in-memory, per user) ───
 const rateLimits = new Map<number, { count: number; resetAt: number }>();
@@ -157,7 +161,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual SEO translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated. Tags comma-separated. Maintain tone and intent.
+RULES: Keep JSON keys in English. Tags comma-separated. Maintain tone and intent. Write in a natural, human way.
+MOST IMPORTANT: Do NOT write in pure ${targetLang}. MUST keep technical English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "Web Development की Fundamentals सीखें" NOT "वेब डेवलपमेंट की मूल बातें". Keep subject/technical/brand words in English as they are.
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -443,7 +448,8 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual SEO translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated. Tags comma-separated. Maintain tone and intent.
+RULES: Keep JSON keys in English. Tags comma-separated. Maintain tone and intent. Write in a natural, human way.
+MOST IMPORTANT: Do NOT write in pure ${targetLang}. MUST keep technical English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "Web Development की Fundamentals सीखें" NOT "वेब डेवलपमेंट की मूल बातें". Keep subject/technical/brand words in English as they are.
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -714,7 +720,7 @@ export async function generateSubjectTranslation(req: Request, res: Response) {
 
     if (isEnglish) {
       systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
-Generate comprehensive English content for the subject. Fill ALL fields.
+Generate comprehensive English content for the subject. Write in a natural, human way — not robotic or overly formal. Fill ALL fields.
 - name: Full name of the subject
 - short_intro: 1-2 sentence engaging introduction
 - long_intro: 3-5 sentence detailed introduction covering scope and importance
@@ -731,7 +737,17 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual educational translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+RULES:
+- Keep JSON keys in English.
+- Write in a natural, human way — not robotic or overly formal.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure ${targetLang}. You MUST use common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development के लिए Semantic Elements और Multimedia Integration को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें सीखें। आधुनिक वेब डेवलपमेंट की नींव..." — This is WRONG because technical words are transliterated.
+The output should be a MIX of regional language and English technical words written in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -778,7 +794,7 @@ export async function bulkGenerateSubjectTranslations(req: Request, res: Respons
 
     if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
 
-    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const userPrompt = prompt || 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
     const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
     let englishSource: any = null;
     if (hasEnglish) {
@@ -798,7 +814,8 @@ export async function bulkGenerateSubjectTranslations(req: Request, res: Respons
 TASK: Generate comprehensive English content for the subject below, then translate into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences. Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+RULES: name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences. Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+MOST IMPORTANT: Do NOT write in pure regional languages. MUST keep technical English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।" NOT "एचटीएमएल5 की मूल बातें।"
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify({ code: subject.code, slug: subject.slug, name: subject.name || subject.code, description: subject.description || '' });
     } else {
@@ -808,7 +825,15 @@ USER INSTRUCTIONS: ${userPrompt}`;
 TASK: Translate English content into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+RULES: Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure regional languages. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development में Semantic Elements और Forms को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+The output should be a MIX of regional language and English technical words in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
@@ -878,7 +903,7 @@ export async function generateChapterTranslation(req: Request, res: Response) {
 
     if (isEnglish) {
       systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
-Generate comprehensive English content for the chapter. Fill ALL fields.
+Generate comprehensive English content for the chapter. Write in a natural, human way — not robotic or overly formal. Fill ALL fields.
 - name: Full name of the chapter
 - short_intro: 1-2 sentence engaging introduction
 - long_intro: 3-5 sentence detailed introduction
@@ -897,7 +922,17 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual educational translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+RULES:
+- Keep JSON keys in English.
+- Write in a natural, human way — not robotic or overly formal.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure ${targetLang}. You MUST use common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development के लिए Semantic Elements और Multimedia Integration को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें सीखें। आधुनिक वेब डेवलपमेंट की नींव..." — This is WRONG because technical words are transliterated.
+The output should be a MIX of regional language and English technical words written in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -943,7 +978,7 @@ export async function bulkGenerateChapterTranslations(req: Request, res: Respons
 
     if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
 
-    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const userPrompt = prompt || 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
     const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
     let englishSource: any = null;
     if (hasEnglish) {
@@ -963,7 +998,8 @@ export async function bulkGenerateChapterTranslations(req: Request, res: Respons
 TASK: Generate comprehensive English content for the chapter below, then translate into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: name = full chapter name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Keep technical terms in English. Use ISO code as key.
+RULES: name = full chapter name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Use ISO code as key. Write in a natural, human way.
+MOST IMPORTANT — STRICTLY FOLLOW: Do NOT write in pure regional languages. MUST keep technical/subject/brand English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।" NOT "एचटीएमएल5 की मूल बातें।"
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify({ code: chapter.code || '', slug: chapter.slug, name: chapter.name || chapter.code, parent_subject: chapter.subjects?.code || '' });
     } else {
@@ -973,7 +1009,15 @@ USER INSTRUCTIONS: ${userPrompt}`;
 TASK: Translate English content into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+RULES: Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure regional languages. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development में Semantic Elements और Forms को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+The output should be a MIX of regional language and English technical words in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
@@ -1043,7 +1087,7 @@ export async function generateTopicTranslation(req: Request, res: Response) {
 
     if (isEnglish) {
       systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
-Generate comprehensive English content for the topic. Fill ALL fields.
+Generate comprehensive English content for the topic. Write in a natural, human way — not robotic or overly formal. Fill ALL fields.
 - name: Full name of the topic
 - short_intro: 1-2 sentence engaging introduction
 - long_intro: 3-5 sentence detailed introduction
@@ -1062,7 +1106,17 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual educational translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+RULES:
+- Keep JSON keys in English.
+- Write in a natural, human way — not robotic or overly formal.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure ${targetLang}. You MUST use common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development के लिए Semantic Elements और Multimedia Integration को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें सीखें। आधुनिक वेब डेवलपमेंट की नींव..." — This is WRONG because technical words are transliterated.
+The output should be a MIX of regional language and English technical words written in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -1108,7 +1162,7 @@ export async function bulkGenerateTopicTranslations(req: Request, res: Response)
 
     if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
 
-    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const userPrompt = prompt || 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
     const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
     let englishSource: any = null;
     if (hasEnglish) {
@@ -1128,7 +1182,8 @@ export async function bulkGenerateTopicTranslations(req: Request, res: Response)
 TASK: Generate comprehensive English content for the topic below, then translate into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: name = full topic name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Keep technical terms in English. Use ISO code as key.
+RULES: name = full topic name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve. Translate EXACTLY. Use ISO code as key. Write in a natural, human way.
+MOST IMPORTANT — STRICTLY FOLLOW: Do NOT write in pure regional languages. MUST keep technical/subject/brand English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।" NOT "एचटीएमएल5 की मूल बातें।"
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify({ code: topic.code || '', slug: topic.slug, name: topic.name || topic.code, parent_chapter: topic.chapters?.code || '', parent_subject: topic.chapters?.subjects?.code || '' });
     } else {
@@ -1138,7 +1193,15 @@ USER INSTRUCTIONS: ${userPrompt}`;
 TASK: Translate English content into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+RULES: Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure regional languages. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development में Semantic Elements और Forms को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+The output should be a MIX of regional language and English technical words in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
@@ -1208,7 +1271,7 @@ export async function generateSubTopicTranslation(req: Request, res: Response) {
 
     if (isEnglish) {
       systemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
-Generate comprehensive English content for the sub-topic. Fill ALL fields.
+Generate comprehensive English content for the sub-topic. Write in a natural, human way — not robotic or overly formal. Fill ALL fields.
 - name: Full name of the sub-topic
 - short_intro: 1-2 sentence engaging introduction
 - long_intro: 3-5 sentence detailed introduction covering scope and importance
@@ -1225,7 +1288,17 @@ USER INSTRUCTIONS: ${userPrompt}`;
 
       systemPrompt = `You are a professional multilingual educational translator.
 Translate English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
-RULES: Keep JSON keys in English. Keep technical/brand words in English if they sound strange translated.
+RULES:
+- Keep JSON keys in English.
+- Write in a natural, human way — not robotic or overly formal.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure ${targetLang}. You MUST use common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development के लिए Semantic Elements और Multimedia Integration को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें सीखें। आधुनिक वेब डेवलपमेंट की नींव..." — This is WRONG because technical words are transliterated.
+The output should be a MIX of regional language and English technical words written in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify(sourceContent);
     }
@@ -1271,7 +1344,7 @@ export async function bulkGenerateSubTopicTranslations(req: Request, res: Respon
 
     if (missingLangs.length === 0) return ok(res, { results: [], message: 'All languages already have translations' });
 
-    const userPrompt = prompt || 'Create content in English with a natural human writing style. Translate exactly with the same meaning for other languages.';
+    const userPrompt = prompt || 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
     const hasEnglish = !missingLangs.find(l => l.iso_code === 'en');
     let englishSource: any = null;
     if (hasEnglish) {
@@ -1291,7 +1364,8 @@ export async function bulkGenerateSubTopicTranslations(req: Request, res: Respon
 TASK: Generate comprehensive English content for the sub-topic below, then translate into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: name = full sub-topic name; short_intro = 1-2 sentences; long_intro = 3-5 sentences. Translate EXACTLY. Keep technical terms in English. Use ISO code as key.
+RULES: name = full sub-topic name; short_intro = 1-2 sentences; long_intro = 3-5 sentences. Translate EXACTLY. Use ISO code as key. Write in a natural, human way.
+MOST IMPORTANT — STRICTLY FOLLOW: Do NOT write in pure regional languages. MUST keep technical/subject/brand English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।" NOT "एचटीएमएल5 की मूल बातें।"
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = JSON.stringify({ slug: subTopic.slug, difficulty_level: subTopic.difficulty_level || '', estimated_minutes: subTopic.estimated_minutes || '' });
     } else {
@@ -1301,7 +1375,15 @@ USER INSTRUCTIONS: ${userPrompt}`;
 TASK: Translate English content into ALL specified languages.
 OUTPUT — return ONLY valid JSON: { "hi": ${jsonSpec}, ... }
 LANGUAGES: ${langList}
-RULES: Translate EXACTLY with same meaning. Keep technical terms in English. Use ISO code as key.
+RULES: Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure regional languages. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development में Semantic Elements और Forms को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+The output should be a MIX of regional language and English technical words in English script.
+
 USER INSTRUCTIONS: ${userPrompt}`;
       userContent = `English source:\n${JSON.stringify(sourceContent)}`;
     }
@@ -2725,5 +2807,534 @@ ${generateMode === 'update' && profile?.bio ? `\nCurrent bio: "${profile.bio}"` 
   } catch (error: any) {
     console.error('AI generateResumeContent error:', error);
     return err(res, error.message || 'Resume content generation failed', 500);
+  }
+}
+
+// ─── Auto Sub Topics from HTML file ───
+export async function autoSubTopics(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, language_id, prompt, provider: reqProvider } = req.body;
+    if (!topic_id) return err(res, 'topic_id is required', 400);
+    if (!language_id) return err(res, 'language_id is required', 400);
+
+    const file = (req as any).file;
+    if (!file) return err(res, 'HTML file is required', 400);
+    const origName = (file.originalname || '').toLowerCase();
+    if (!origName.endsWith('.html') && !origName.endsWith('.htm')) return err(res, 'Only .html/.htm files are allowed', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Strip HTML helper
+    function stripHtml(html: string): string {
+      return html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    const htmlContent = file.buffer.toString('utf-8');
+    const plainText = stripHtml(htmlContent);
+    if (!plainText || plainText.length < 50) return err(res, 'HTML file has insufficient text content', 400);
+
+    // Look up topic with parent chain for folder path
+    const { data: topic } = await supabase
+      .from('topics')
+      .select('id, slug, chapter_id, chapters(slug, subject_id, subjects(slug))')
+      .eq('id', topic_id)
+      .single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    // Build Bunny folder path from parent slugs
+    const chapterData = (topic as any).chapters;
+    const subjectSlug = chapterData?.subjects?.slug;
+    const chapterSlug = chapterData?.slug;
+    const materialBasePath = (subjectSlug && chapterSlug)
+      ? `materials/${subjectSlug}/${chapterSlug}/${topic.slug}`
+      : null;
+
+    // Look up language
+    const { data: language } = await supabase.from('languages').select('id, iso_code, name').eq('id', language_id).single();
+    if (!language) return err(res, 'Language not found', 404);
+
+    const userPrompt = prompt || 'Analyze the content and break it into logical sub-topics for an educational platform.';
+
+    const systemPrompt = `You are an expert educational content analyst for GrowUpMore — an online learning platform.
+Analyze the provided text content and generate a SINGLE sub-topic representing this content as a learning unit.
+
+Language: ${language.name} (${language.iso_code})
+Topic slug: ${topic.slug}
+
+Return ONLY a valid JSON object (no markdown, no code blocks, NOT an array — a single object).
+The object must have these exact fields:
+- "name": concise sub-topic title (in ${language.name})
+- "slug": URL-friendly lowercase slug (English, kebab-case, max 80 chars)
+- "short_intro": 1-2 sentence summary (in ${language.name}, max 300 chars)
+- "long_intro": 2-4 sentence detailed description (in ${language.name}, max 1000 chars)
+- "tags": array of 3-6 relevant keyword strings (in ${language.name})
+- "difficulty_level": one of "beginner","intermediate","advanced","expert","all_levels"
+- "estimated_minutes": number (estimated learning time)
+- "video_title": engaging video title (in ${language.name}, max 100 chars)
+- "video_description": video description (in ${language.name}, max 200 chars)
+- "meta_title": SEO title (50-60 chars, in ${language.name})
+- "meta_description": SEO description (150-160 chars, in ${language.name})
+- "meta_keywords": comma-separated SEO keywords (in ${language.name})
+- "og_title": Open Graph title (in ${language.name})
+- "og_description": Open Graph description (100-150 chars, in ${language.name})
+- "twitter_title": Twitter card title (in ${language.name})
+- "twitter_description": Twitter description (70-100 chars, in ${language.name})
+- "focus_keyword": primary SEO keyword (in ${language.name})
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+If the language is not English, do NOT write everything in pure ${language.name}. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+
+USER INSTRUCTIONS: ${userPrompt}`;
+
+    const userContent = plainText.length > 15000 ? plainText.slice(0, 15000) : plainText;
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+
+    let subTopicsData: any[];
+    try {
+      const parsed = parseJSON(text);
+      // AI returns a single object; wrap in array for consistent processing
+      subTopicsData = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return err(res, 'AI returned invalid JSON. Please try again.', 500);
+    }
+
+    if (!subTopicsData.length || !subTopicsData[0].name) return err(res, 'AI did not generate a sub-topic. Please try again.', 500);
+
+    // Get current max display_order for this topic
+    const { data: existingSubTopics } = await supabase
+      .from('sub_topics')
+      .select('id, slug, display_order')
+      .eq('topic_id', topic_id)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: false })
+      .limit(1);
+
+    let displayOrder = (existingSubTopics?.[0]?.display_order || 0) + 1;
+
+    let createdSubTopics = 0;
+    let updatedSubTopics = 0;
+    let createdTranslations = 0;
+    let updatedTranslations = 0;
+    const resultDetails: any[] = [];
+
+    for (const st of subTopicsData) {
+      const slug = (st.slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+      if (!slug) continue;
+
+      // Check if sub_topic with this slug exists under this topic
+      const { data: existingSt } = await supabase
+        .from('sub_topics')
+        .select('id, slug')
+        .eq('topic_id', topic_id)
+        .eq('slug', slug)
+        .is('deleted_at', null)
+        .single();
+
+      let subTopicId: number;
+
+      if (existingSt) {
+        subTopicId = existingSt.id;
+        updatedSubTopics++;
+      } else {
+        const difficultyLevel = ['beginner', 'intermediate', 'advanced', 'expert', 'all_levels'].includes(st.difficulty_level)
+          ? st.difficulty_level : 'all_levels';
+        const estimatedMinutes = typeof st.estimated_minutes === 'number' ? st.estimated_minutes : 30;
+
+        const { data: newSt, error: stErr } = await supabase
+          .from('sub_topics')
+          .insert({
+            topic_id,
+            slug,
+            display_order: displayOrder++,
+            difficulty_level: difficultyLevel,
+            estimated_minutes: estimatedMinutes,
+            is_active: true,
+            created_by: userId,
+          })
+          .select('id')
+          .single();
+
+        if (stErr || !newSt) {
+          console.error('Failed to create sub_topic:', stErr);
+          continue;
+        }
+        subTopicId = newSt.id;
+        createdSubTopics++;
+      }
+
+      // Check if translation exists
+      const { data: existingTrans } = await supabase
+        .from('sub_topic_translations')
+        .select('id')
+        .eq('sub_topic_id', subTopicId)
+        .eq('language_id', language_id)
+        .is('deleted_at', null)
+        .single();
+
+      // Upload HTML file to Bunny storage using proper folder structure
+      let pageUrl: string | undefined;
+      try {
+        const pagePath = materialBasePath
+          ? `${materialBasePath}/${language.iso_code}/${slug}-${Date.now()}.html`
+          : `sub-topic-translations/pages/${slug}-${language.iso_code}-${Date.now()}.html`;
+        pageUrl = await uploadRawFile(file.buffer, pagePath);
+      } catch (uploadErr) {
+        console.error('Failed to upload page file to storage:', uploadErr);
+      }
+
+      const translationData: any = {
+        sub_topic_id: subTopicId,
+        language_id: Number(language_id),
+        name: st.name || slug,
+        short_intro: st.short_intro || '',
+        long_intro: st.long_intro || '',
+        tags: Array.isArray(st.tags) ? st.tags : (st.tags ? [st.tags] : []),
+        video_title: st.video_title || '',
+        video_description: st.video_description || '',
+        meta_title: st.meta_title || '',
+        meta_description: st.meta_description || '',
+        meta_keywords: st.meta_keywords || '',
+        og_title: st.og_title || '',
+        og_description: st.og_description || '',
+        twitter_title: st.twitter_title || '',
+        twitter_description: st.twitter_description || '',
+        focus_keyword: st.focus_keyword || '',
+        is_active: true,
+        created_by: userId,
+      };
+      if (pageUrl) translationData.page = pageUrl;
+
+      if (existingTrans) {
+        const { error: updErr } = await supabase
+          .from('sub_topic_translations')
+          .update({ ...translationData, updated_by: userId })
+          .eq('id', existingTrans.id);
+
+        if (updErr) console.error('Failed to update translation:', updErr);
+        else updatedTranslations++;
+      } else {
+        const { error: insErr } = await supabase
+          .from('sub_topic_translations')
+          .insert(translationData);
+
+        if (insErr) console.error('Failed to create translation:', insErr);
+        else createdTranslations++;
+      }
+
+      resultDetails.push({
+        sub_topic_id: subTopicId,
+        slug,
+        name: st.name || slug,
+        is_new: !existingSt,
+        translation_action: existingTrans ? 'updated' : 'created',
+        page_url: pageUrl || null,
+      });
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'ai_content_generated',
+      targetType: 'topic',
+      targetId: topic_id,
+      targetName: `Auto sub-topics for topic ${topic.slug} (${language.iso_code}, ${provider})`,
+      ip: getClientIp(req),
+    });
+
+    return ok(res, {
+      created_sub_topics: createdSubTopics,
+      updated_sub_topics: updatedSubTopics,
+      created_translations: createdTranslations,
+      updated_translations: updatedTranslations,
+      sub_topics: resultDetails,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, 'Sub-topics generated successfully');
+  } catch (error: any) {
+    console.error('AI autoSubTopics error:', error);
+    return err(res, error.message || 'Auto sub-topics generation failed', 500);
+  }
+}
+
+// ─── Import Material Tree from TXT file ───
+export async function importMaterialTree(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const file = (req as any).file;
+    if (!file) return err(res, 'TXT file is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(req.body?.provider)) ? req.body.provider : 'gemini';
+    const generateTranslations = req.body?.generate_translations !== 'false'; // default true
+
+    // Parse the tab-indented file
+    const content = file.buffer.toString('utf-8');
+    const parsed = parseMaterialTree(content);
+
+    if (parsed.errors.length > 0) {
+      return err(res, `File parsing errors: ${parsed.errors.join('; ')}`, 400);
+    }
+    if (parsed.subjects.length === 0) {
+      return err(res, 'No subjects found in file', 400);
+    }
+
+    const summary = treeSummary(parsed);
+
+    // Fetch active languages for translations and folder creation
+    const { data: languages } = await supabase
+      .from('languages')
+      .select('id, iso_code, name')
+      .eq('is_active', true)
+      .eq('for_material', true);
+    const activeLangs = languages || [];
+
+    // ─── Phase 1: Match existing & create new records ───
+    const report = {
+      created: { subjects: 0, chapters: 0, topics: 0 },
+      skipped: { subjects: 0, chapters: 0, topics: 0 },
+      errors: [] as string[],
+      details: [] as any[],
+    };
+
+    // Build tree input for AI generator (tracks what's new vs existing)
+    const aiTree: MaterialTreeInput = { subjects: [] };
+
+    for (const parsedSubject of parsed.subjects) {
+      const subjectMatch = await matchSubject(parsedSubject.name);
+      let subjectId: number;
+      let subjectSlug: string;
+      let subjectIsNew = false;
+
+      if (subjectMatch.found) {
+        subjectId = subjectMatch.id!;
+        subjectSlug = subjectMatch.slug!;
+        report.skipped.subjects++;
+        report.details.push({ type: 'subject', name: parsedSubject.name, action: 'skipped', id: subjectId });
+      } else {
+        // Create new subject
+        const slug = await generateUniqueSlug(supabase, 'subjects', parsedSubject.name);
+        const code = parsedSubject.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20);
+        const { data: newSubject, error: subErr } = await supabase
+          .from('subjects')
+          .insert({
+            code,
+            slug,
+            is_active: true,
+            display_order: 1,
+            sort_order: 1,
+            created_by: userId,
+          })
+          .select()
+          .single();
+
+        if (subErr || !newSubject) {
+          report.errors.push(`Failed to create subject "${parsedSubject.name}": ${subErr?.message || 'Unknown error'}`);
+          continue;
+        }
+
+        subjectId = newSubject.id;
+        subjectSlug = newSubject.slug;
+        subjectIsNew = true;
+        report.created.subjects++;
+        report.details.push({ type: 'subject', name: parsedSubject.name, action: 'created', id: subjectId, slug });
+
+        // Create Bunny folder
+        createBunnyFolder(`materials/${slug}`).catch(() => {});
+      }
+
+      const aiSubject: any = { name: parsedSubject.name, isNew: subjectIsNew, chapters: [] };
+
+      // Process chapters
+      for (let ci = 0; ci < parsedSubject.chapters.length; ci++) {
+        const parsedChapter = parsedSubject.chapters[ci];
+        const chapterMatch = await matchChapter(parsedChapter.name, subjectId);
+        let chapterId: number;
+        let chapterSlug: string;
+        let chapterIsNew = false;
+
+        if (chapterMatch.found) {
+          chapterId = chapterMatch.id!;
+          chapterSlug = chapterMatch.slug!;
+          report.skipped.chapters++;
+          report.details.push({ type: 'chapter', name: parsedChapter.name, action: 'skipped', id: chapterId, parent: parsedSubject.name });
+        } else {
+          // Create new chapter
+          const slug = await generateUniqueSlug(supabase, 'chapters', parsedChapter.name);
+          const { data: newChapter, error: chErr } = await supabase
+            .from('chapters')
+            .insert({
+              slug,
+              subject_id: subjectId,
+              is_active: true,
+              display_order: ci + 1,
+              sort_order: ci + 1,
+              created_by: userId,
+            })
+            .select()
+            .single();
+
+          if (chErr || !newChapter) {
+            report.errors.push(`Failed to create chapter "${parsedChapter.name}": ${chErr?.message || 'Unknown error'}`);
+            continue;
+          }
+
+          chapterId = newChapter.id;
+          chapterSlug = newChapter.slug;
+          chapterIsNew = true;
+          report.created.chapters++;
+          report.details.push({ type: 'chapter', name: parsedChapter.name, action: 'created', id: chapterId, slug, parent: parsedSubject.name });
+
+          // Create Bunny folder
+          createBunnyFolder(`materials/${subjectSlug}/${slug}`).catch(() => {});
+        }
+
+        const aiChapter: any = { name: parsedChapter.name, isNew: chapterIsNew, topics: [] };
+
+        // Process topics
+        for (let ti = 0; ti < parsedChapter.topics.length; ti++) {
+          const parsedTopic = parsedChapter.topics[ti];
+          const topicMatch = await matchTopic(parsedTopic.name, chapterId);
+
+          if (topicMatch.found) {
+            report.skipped.topics++;
+            report.details.push({ type: 'topic', name: parsedTopic.name, action: 'skipped', id: topicMatch.id, parent: parsedChapter.name });
+            aiChapter.topics.push({ name: parsedTopic.name, isNew: false });
+          } else {
+            // Create new topic
+            const slug = await generateUniqueSlug(supabase, 'topics', parsedTopic.name);
+            const { data: newTopic, error: tErr } = await supabase
+              .from('topics')
+              .insert({
+                slug,
+                chapter_id: chapterId,
+                is_active: true,
+                display_order: ti + 1,
+                sort_order: ti + 1,
+                created_by: userId,
+              })
+              .select()
+              .single();
+
+            if (tErr || !newTopic) {
+              report.errors.push(`Failed to create topic "${parsedTopic.name}": ${tErr?.message || 'Unknown error'}`);
+              aiChapter.topics.push({ name: parsedTopic.name, isNew: false });
+              continue;
+            }
+
+            report.created.topics++;
+            report.details.push({ type: 'topic', name: parsedTopic.name, action: 'created', id: newTopic.id, slug, parent: parsedChapter.name });
+            aiChapter.topics.push({ name: parsedTopic.name, isNew: true });
+
+            // Create Bunny folders: topic + resources + language subfolders
+            const basePath = `materials/${subjectSlug}/${chapterSlug}/${slug}`;
+            const folders = [basePath, `${basePath}/resources`];
+            for (const lang of activeLangs) {
+              folders.push(`${basePath}/${lang.iso_code}`);
+            }
+            createBunnyFolders(folders).catch(() => {});
+          }
+        }
+
+        aiSubject.chapters.push(aiChapter);
+      }
+
+      aiTree.subjects.push(aiSubject);
+    }
+
+    // ─── Phase 2: Generate AI translations for all new items ───
+    let aiGenerated = false;
+    if (generateTranslations && activeLangs.length > 0) {
+      const totalNew = report.created.subjects + report.created.chapters + report.created.topics;
+      if (totalNew > 0) {
+        try {
+          const aiData = await generateMaterialData(
+            aiTree,
+            activeLangs.map(l => ({ iso_code: l.iso_code, name: l.name })),
+            provider,
+          );
+
+          // Insert translations for new subjects
+          for (const detail of report.details) {
+            if (detail.action !== 'created') continue;
+
+            const aiEntry =
+              detail.type === 'subject' ? aiData.subjects[detail.name] :
+              detail.type === 'chapter' ? aiData.chapters[detail.name] :
+              detail.type === 'topic' ? aiData.topics[detail.name] : null;
+
+            if (!aiEntry || !aiEntry.translations) continue;
+
+            // Update subject with AI-generated fields
+            if (detail.type === 'subject' && 'difficulty_level' in aiEntry) {
+              await supabase.from('subjects').update({
+                difficulty_level: (aiEntry as any).difficulty_level,
+                estimated_hours: (aiEntry as any).estimated_hours,
+              }).eq('id', detail.id);
+            }
+
+            // Insert translations for each language
+            for (const lang of activeLangs) {
+              const trans = aiEntry.translations[lang.iso_code];
+              if (!trans) continue;
+
+              const tableName =
+                detail.type === 'subject' ? 'subject_translations' :
+                detail.type === 'chapter' ? 'chapter_translations' :
+                'topic_translations';
+
+              const fkField =
+                detail.type === 'subject' ? 'subject_id' :
+                detail.type === 'chapter' ? 'chapter_id' :
+                'topic_id';
+
+              const translationRecord: any = {
+                [fkField]: detail.id,
+                language_id: lang.id,
+                name: trans.name || detail.name,
+                short_intro: trans.short_intro || '',
+                long_intro: trans.long_intro || '',
+                is_active: true,
+                created_by: userId,
+              };
+
+              const { error: transErr } = await supabase.from(tableName).insert(translationRecord);
+              if (transErr) {
+                console.error(`Failed to insert ${tableName} for ${detail.name}/${lang.iso_code}:`, transErr.message);
+              }
+            }
+          }
+          aiGenerated = true;
+        } catch (aiErr: any) {
+          console.error('AI translation generation failed:', aiErr);
+          report.errors.push(`AI translation generation failed: ${aiErr.message}. Records were created without translations.`);
+        }
+      }
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'material_tree_imported',
+      targetType: 'material',
+      targetId: 0,
+      targetName: `Imported ${report.created.subjects}S/${report.created.chapters}C/${report.created.topics}T (skipped ${report.skipped.subjects}S/${report.skipped.chapters}C/${report.skipped.topics}T)`,
+      ip: getClientIp(req),
+    });
+
+    return ok(res, {
+      parsed: summary,
+      report,
+      ai_translations_generated: aiGenerated,
+      provider,
+    }, 'Material tree imported successfully');
+  } catch (error: any) {
+    console.error('Import material tree error:', error);
+    return err(res, error.message || 'Material tree import failed', 500);
   }
 }

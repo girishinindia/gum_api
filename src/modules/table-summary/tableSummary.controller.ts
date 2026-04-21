@@ -9,6 +9,11 @@ import { ok, err } from '../../utils/response';
 export async function list(req: Request, res: Response) {
   const tableName = req.query.table_name as string | undefined;
 
+  // Auto-sync the requested table(s) so counts are always fresh
+  if (tableName) {
+    try { await supabase.rpc('udf_sync_table_summary', { p_table_name: tableName }); } catch {}
+  }
+
   let q = supabase.from('table_summary').select('*');
 
   if (tableName) {
