@@ -11,7 +11,7 @@ import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCo
 import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
-import { matchSubject, matchChapter, matchTopic } from '../../services/materialMatcher.service';
+import { matchSubject, matchChapter, matchTopic, matchSubTopic } from '../../services/materialMatcher.service';
 import { generateMaterialData, type MaterialTreeInput } from '../../services/materialAiGenerator.service';
 
 // ─── Rate limiter (in-memory, per user) ───
@@ -3230,8 +3230,8 @@ export async function importMaterialTree(req: Request, res: Response) {
 
     // ─── Phase 1: Match existing & create new records ───
     const report = {
-      created: { subjects: 0, chapters: 0, topics: 0 },
-      skipped: { subjects: 0, chapters: 0, topics: 0 },
+      created: { subjects: 0, chapters: 0, topics: 0, sub_topics: 0 },
+      skipped: { subjects: 0, chapters: 0, topics: 0, sub_topics: 0 },
       errors: [] as string[],
       details: [] as any[],
     };
@@ -3334,11 +3334,15 @@ export async function importMaterialTree(req: Request, res: Response) {
         for (let ti = 0; ti < parsedChapter.topics.length; ti++) {
           const parsedTopic = parsedChapter.topics[ti];
           const topicMatch = await matchTopic(parsedTopic.name, chapterId);
+          let topicId: number;
+          let topicSlug: string;
+          let topicIsNew = false;
 
           if (topicMatch.found) {
+            topicId = topicMatch.id!;
+            topicSlug = topicMatch.slug!;
             report.skipped.topics++;
             report.details.push({ type: 'topic', name: parsedTopic.name, action: 'skipped', id: topicMatch.id, parent: parsedChapter.name });
-            aiChapter.topics.push({ name: parsedTopic.name, isNew: false });
           } else {
             // Create new topic
             const slug = await generateUniqueSlug(supabase, 'topics', parsedTopic.name);
@@ -3361,9 +3365,11 @@ export async function importMaterialTree(req: Request, res: Response) {
               continue;
             }
 
+            topicId = newTopic.id;
+            topicSlug = newTopic.slug;
+            topicIsNew = true;
             report.created.topics++;
             report.details.push({ type: 'topic', name: parsedTopic.name, action: 'created', id: newTopic.id, slug, parent: parsedChapter.name });
-            aiChapter.topics.push({ name: parsedTopic.name, isNew: true });
 
             // Create Bunny folders: topic + resources + language subfolders
             const basePath = `materials/${subjectSlug}/${chapterSlug}/${slug}`;
@@ -3373,6 +3379,49 @@ export async function importMaterialTree(req: Request, res: Response) {
             }
             createBunnyFolders(folders).catch(() => {});
           }
+
+          const aiTopic: any = { name: parsedTopic.name, isNew: topicIsNew, subTopics: [] };
+
+          // Process sub-topics
+          if (parsedTopic.subTopics && parsedTopic.subTopics.length > 0) {
+            for (let sti = 0; sti < parsedTopic.subTopics.length; sti++) {
+              const parsedSubTopic = parsedTopic.subTopics[sti];
+              const stMatch = await matchSubTopic(parsedSubTopic.name, topicId);
+
+              if (stMatch.found) {
+                report.skipped.sub_topics++;
+                report.details.push({ type: 'sub_topic', name: parsedSubTopic.name, action: 'skipped', id: stMatch.id, parent: parsedTopic.name });
+                aiTopic.subTopics.push({ name: parsedSubTopic.name, isNew: false });
+              } else {
+                // Create new sub-topic
+                const stSlug = await generateUniqueSlug(supabase, 'sub_topics', parsedSubTopic.name);
+                const { data: newSubTopic, error: stErr } = await supabase
+                  .from('sub_topics')
+                  .insert({
+                    slug: stSlug,
+                    topic_id: topicId,
+                    is_active: true,
+                    display_order: sti + 1,
+                    sort_order: sti + 1,
+                    created_by: userId,
+                  })
+                  .select()
+                  .single();
+
+                if (stErr || !newSubTopic) {
+                  report.errors.push(`Failed to create sub-topic "${parsedSubTopic.name}": ${stErr?.message || 'Unknown error'}`);
+                  aiTopic.subTopics.push({ name: parsedSubTopic.name, isNew: false });
+                  continue;
+                }
+
+                report.created.sub_topics++;
+                report.details.push({ type: 'sub_topic', name: parsedSubTopic.name, action: 'created', id: newSubTopic.id, slug: stSlug, parent: parsedTopic.name });
+                aiTopic.subTopics.push({ name: parsedSubTopic.name, isNew: true });
+              }
+            }
+          }
+
+          aiChapter.topics.push(aiTopic);
         }
 
         aiSubject.chapters.push(aiChapter);
@@ -3384,7 +3433,7 @@ export async function importMaterialTree(req: Request, res: Response) {
     // ─── Phase 2: Generate AI translations for all new items ───
     let aiGenerated = false;
     if (generateTranslations && activeLangs.length > 0) {
-      const totalNew = report.created.subjects + report.created.chapters + report.created.topics;
+      const totalNew = report.created.subjects + report.created.chapters + report.created.topics + report.created.sub_topics;
       if (totalNew > 0) {
         try {
           const aiData = await generateMaterialData(
@@ -3400,7 +3449,8 @@ export async function importMaterialTree(req: Request, res: Response) {
             const aiEntry =
               detail.type === 'subject' ? aiData.subjects[detail.name] :
               detail.type === 'chapter' ? aiData.chapters[detail.name] :
-              detail.type === 'topic' ? aiData.topics[detail.name] : null;
+              detail.type === 'topic' ? aiData.topics[detail.name] :
+              detail.type === 'sub_topic' ? aiData.sub_topics[detail.name] : null;
 
             if (!aiEntry || !aiEntry.translations) continue;
 
@@ -3420,12 +3470,14 @@ export async function importMaterialTree(req: Request, res: Response) {
               const tableName =
                 detail.type === 'subject' ? 'subject_translations' :
                 detail.type === 'chapter' ? 'chapter_translations' :
-                'topic_translations';
+                detail.type === 'topic' ? 'topic_translations' :
+                'sub_topic_translations';
 
               const fkField =
                 detail.type === 'subject' ? 'subject_id' :
                 detail.type === 'chapter' ? 'chapter_id' :
-                'topic_id';
+                detail.type === 'topic' ? 'topic_id' :
+                'sub_topic_id';
 
               const translationRecord: any = {
                 [fkField]: detail.id,
@@ -3456,7 +3508,7 @@ export async function importMaterialTree(req: Request, res: Response) {
       action: 'material_tree_imported',
       targetType: 'material',
       targetId: 0,
-      targetName: `Imported ${report.created.subjects}S/${report.created.chapters}C/${report.created.topics}T (skipped ${report.skipped.subjects}S/${report.skipped.chapters}C/${report.skipped.topics}T)`,
+      targetName: `Imported ${report.created.subjects}S/${report.created.chapters}C/${report.created.topics}T/${report.created.sub_topics}ST (skipped ${report.skipped.subjects}S/${report.skipped.chapters}C/${report.skipped.topics}T/${report.skipped.sub_topics}ST)`,
       ip: getClientIp(req),
     });
 

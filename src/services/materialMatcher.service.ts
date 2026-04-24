@@ -1,6 +1,6 @@
 /**
  * Material Matcher Service
- * Checks whether subjects, chapters, or topics already exist in the database.
+ * Checks whether subjects, chapters, topics, or sub-topics already exist in the database.
  * Used by the import-material-tree feature to skip existing items.
  */
 
@@ -108,6 +108,41 @@ export async function matchTopic(name: string, chapterId: number): Promise<Match
     for (const t of allTopics) {
       if (t.slug === slug || t.slug === name.trim().toLowerCase()) {
         return { found: true, id: t.id, slug: t.slug };
+      }
+    }
+  }
+
+  return { found: false };
+}
+
+/**
+ * Try to match a sub-topic by slug within a parent topic.
+ */
+export async function matchSubTopic(name: string, topicId: number): Promise<MatchResult> {
+  const slug = toSlug(name);
+
+  const { data } = await supabase
+    .from('sub_topics')
+    .select('id, slug')
+    .eq('topic_id', topicId)
+    .eq('slug', slug)
+    .is('deleted_at', null)
+    .limit(1)
+    .single();
+
+  if (data) return { found: true, id: data.id, slug: data.slug };
+
+  // Also try name-based match
+  const { data: allSubTopics } = await supabase
+    .from('sub_topics')
+    .select('id, slug')
+    .eq('topic_id', topicId)
+    .is('deleted_at', null);
+
+  if (allSubTopics) {
+    for (const st of allSubTopics) {
+      if (st.slug === slug || st.slug === name.trim().toLowerCase()) {
+        return { found: true, id: st.id, slug: st.slug };
       }
     }
   }

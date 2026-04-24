@@ -1,24 +1,33 @@
 /**
  * Material Tree Parser
- * Parses tab-indented text files into a subject→chapter→topic tree.
+ * Parses tab-indented text files into a subject→chapter→topic→sub-topic tree.
  *
  * Format:
  *   0 tabs = Subject name
  *   1 tab  = Chapter name (under the subject above)
  *   2 tabs = Topic name   (under the chapter above)
+ *   3 tabs = Sub-Topic name (under the topic above)
  *
  * Example:
  *   Machine Learning
  *   \tIntroduction to ML
  *   \t\tWhat is ML
+ *   \t\t\tDefinition of ML
+ *   \t\t\tHistory of ML
  *   \t\tTypes of ML
  *   \tSupervised Learning
  *   \t\tLinear Regression
  */
 
+export interface ParsedSubTopic {
+  name: string;
+  line: number;
+}
+
 export interface ParsedTopic {
   name: string;
   line: number;
+  subTopics: ParsedSubTopic[];
 }
 
 export interface ParsedChapter {
@@ -45,6 +54,7 @@ export function parseMaterialTree(content: string): ParseResult {
 
   let currentSubject: ParsedSubject | null = null;
   let currentChapter: ParsedChapter | null = null;
+  let currentTopic: ParsedTopic | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -70,12 +80,10 @@ export function parseMaterialTree(content: string): ParseResult {
         k++;
       }
       // Detect indent size: 2 or 4 spaces per level
-      if (spaces >= 8) tabs = 2;
-      else if (spaces >= 4) tabs = 1;        // could be 1 tab (4-space) or 2 tabs (2-space)
+      if (spaces >= 12) tabs = 3;
+      else if (spaces >= 8) tabs = 2;
+      else if (spaces >= 4) tabs = 1;
       else if (spaces >= 2) tabs = 1;
-      // Refine: check all lines to detect indent style
-      // For simplicity, use >= thresholds
-      // 8+ spaces = 2 levels, 4-7 = 1 level, 2-3 = 1 level
       j = k; // move past spaces
     }
 
@@ -86,6 +94,7 @@ export function parseMaterialTree(content: string): ParseResult {
       // Subject
       currentSubject = { name, line: lineNum, chapters: [] };
       currentChapter = null;
+      currentTopic = null;
       subjects.push(currentSubject);
     } else if (tabs === 1) {
       // Chapter
@@ -94,6 +103,7 @@ export function parseMaterialTree(content: string): ParseResult {
         continue;
       }
       currentChapter = { name, line: lineNum, topics: [] };
+      currentTopic = null;
       currentSubject.chapters.push(currentChapter);
     } else if (tabs === 2) {
       // Topic
@@ -101,9 +111,17 @@ export function parseMaterialTree(content: string): ParseResult {
         errors.push(`Line ${lineNum}: Topic "${name}" has no parent chapter`);
         continue;
       }
-      currentChapter.topics.push({ name, line: lineNum });
+      currentTopic = { name, line: lineNum, subTopics: [] };
+      currentChapter.topics.push(currentTopic);
+    } else if (tabs === 3) {
+      // Sub-Topic
+      if (!currentTopic) {
+        errors.push(`Line ${lineNum}: Sub-topic "${name}" has no parent topic`);
+        continue;
+      }
+      currentTopic.subTopics.push({ name, line: lineNum });
     } else {
-      errors.push(`Line ${lineNum}: Too many indent levels (max 2 tabs). Got ${tabs} tabs for "${name}"`);
+      errors.push(`Line ${lineNum}: Too many indent levels (max 3 tabs). Got ${tabs} tabs for "${name}"`);
     }
   }
 
@@ -122,18 +140,24 @@ export function treeSummary(result: ParseResult): {
   totalSubjects: number;
   totalChapters: number;
   totalTopics: number;
+  totalSubTopics: number;
 } {
   let totalChapters = 0;
   let totalTopics = 0;
+  let totalSubTopics = 0;
   for (const s of result.subjects) {
     totalChapters += s.chapters.length;
     for (const c of s.chapters) {
       totalTopics += c.topics.length;
+      for (const t of c.topics) {
+        totalSubTopics += t.subTopics.length;
+      }
     }
   }
   return {
     totalSubjects: result.subjects.length,
     totalChapters,
     totalTopics,
+    totalSubTopics,
   };
 }

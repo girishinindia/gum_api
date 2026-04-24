@@ -156,6 +156,10 @@ export interface GeneratedTopicData {
   translations: Record<string, GeneratedTranslation>;
 }
 
+export interface GeneratedSubTopicData {
+  translations: Record<string, GeneratedTranslation>;
+}
+
 export interface MaterialTreeInput {
   subjects: Array<{
     name: string;
@@ -166,6 +170,10 @@ export interface MaterialTreeInput {
       topics: Array<{
         name: string;
         isNew: boolean;
+        subTopics?: Array<{
+          name: string;
+          isNew: boolean;
+        }>;
       }>;
     }>;
   }>;
@@ -175,6 +183,7 @@ export interface GeneratedMaterialData {
   subjects: Record<string, GeneratedSubjectData>;
   chapters: Record<string, GeneratedChapterData>;
   topics: Record<string, GeneratedTopicData>;
+  sub_topics: Record<string, GeneratedSubTopicData>;
 }
 
 /**
@@ -184,10 +193,10 @@ function buildSystemPrompt(langList: string): string {
   return `You are an expert educational content creator for GrowUpMore — an online learning platform.
 Generate translations for NEW educational items in these languages: ${langList}
 
-Return JSON with keys: "subjects", "chapters", "topics". Each maps item names to data.
+Return JSON with keys: "subjects", "chapters", "topics", "sub_topics". Each maps item names to data.
 
 For SUBJECTS: { "difficulty_level": "beginner"|"intermediate"|"advanced"|"expert"|"all_levels", "estimated_hours": number, "translations": { "<iso_code>": { "name": "...", "short_intro": "1-2 sentences (max 300 chars)", "long_intro": "2-4 sentences (max 1000 chars)" } } }
-For CHAPTERS/TOPICS: same but without difficulty_level and estimated_hours.
+For CHAPTERS/TOPICS/SUB_TOPICS: same but without difficulty_level and estimated_hours.
 
 ONLY generate these 3 fields per translation: name, short_intro, long_intro. Nothing else.
 
@@ -210,6 +219,7 @@ function buildUserContent(
   subjects: string[],
   chapters: Array<{ name: string; parentSubject: string }>,
   topics: Array<{ name: string; parentChapter: string; parentSubject: string }>,
+  subTopics: Array<{ name: string; parentTopic: string; parentChapter: string; parentSubject: string }>,
   langList: string,
   langCodes: string[],
 ): string {
@@ -239,6 +249,14 @@ function buildUserContent(
     userContent += '\n';
   }
 
+  if (subTopics.length > 0) {
+    userContent += 'NEW SUB-TOPICS:\n';
+    for (const st of subTopics) {
+      userContent += `- "${st.name}" (under topic: ${st.parentTopic}, chapter: ${st.parentChapter}, subject: ${st.parentSubject})\n`;
+    }
+    userContent += '\n';
+  }
+
   userContent += `\nLanguages to generate for: ${langList}\nLanguage ISO codes: ${langCodes.join(', ')}`;
   return userContent;
 }
@@ -247,25 +265,30 @@ function buildUserContent(
  * Split items into batches that fit within the provider's max output tokens.
  * Returns arrays of batches, each batch containing its subset of subjects, chapters, topics.
  */
+type SubTopicEntry = { name: string; parentTopic: string; parentChapter: string; parentSubject: string };
+
 function splitIntoBatches(
   newSubjects: string[],
   newChapters: Array<{ name: string; parentSubject: string }>,
   newTopics: Array<{ name: string; parentChapter: string; parentSubject: string }>,
+  newSubTopics: SubTopicEntry[],
   langCount: number,
   provider: AIProvider,
 ): Array<{
   subjects: string[];
   chapters: Array<{ name: string; parentSubject: string }>;
   topics: Array<{ name: string; parentChapter: string; parentSubject: string }>;
+  subTopics: SubTopicEntry[];
 }> {
   const maxTokens = Math.floor(MAX_OUTPUT_TOKENS[provider] * SAFETY_MARGIN);
 
   // Check if everything fits in one call
-  const totalEstimate = estimateOutputTokens(newSubjects.length, newChapters.length, newTopics.length, langCount);
+  const totalItems = newSubjects.length + newChapters.length + newTopics.length + newSubTopics.length;
+  const totalEstimate = estimateOutputTokens(newSubjects.length, newChapters.length, newTopics.length + newSubTopics.length, langCount);
 
   if (totalEstimate <= maxTokens) {
-    console.log(`[MaterialAI] All ${newSubjects.length}S + ${newChapters.length}C + ${newTopics.length}T fit in one call (~${totalEstimate} tokens, max ${maxTokens})`);
-    return [{ subjects: newSubjects, chapters: newChapters, topics: newTopics }];
+    console.log(`[MaterialAI] All ${newSubjects.length}S + ${newChapters.length}C + ${newTopics.length}T + ${newSubTopics.length}ST fit in one call (~${totalEstimate} tokens, max ${maxTokens})`);
+    return [{ subjects: newSubjects, chapters: newChapters, topics: newTopics, subTopics: newSubTopics }];
   }
 
   console.log(`[MaterialAI] Estimated ${totalEstimate} tokens exceeds max ${maxTokens} — splitting into batches...`);
@@ -274,33 +297,37 @@ function splitIntoBatches(
   const tokensPerSubject = langCount * TOKENS_PER_ITEM_PER_LANG + TOKENS_OVERHEAD_PER_ITEM + TOKENS_SUBJECT_EXTRA;
   const tokensPerChapter = langCount * TOKENS_PER_ITEM_PER_LANG + TOKENS_OVERHEAD_PER_ITEM;
   const tokensPerTopic = langCount * TOKENS_PER_ITEM_PER_LANG + TOKENS_OVERHEAD_PER_ITEM;
+  const tokensPerSubTopic = langCount * TOKENS_PER_ITEM_PER_LANG + TOKENS_OVERHEAD_PER_ITEM;
 
   // Flatten all items into a weighted list, then greedily pack batches
   type ItemEntry =
     | { type: 'subject'; tokens: number; data: string }
     | { type: 'chapter'; tokens: number; data: { name: string; parentSubject: string } }
-    | { type: 'topic'; tokens: number; data: { name: string; parentChapter: string; parentSubject: string } };
+    | { type: 'topic'; tokens: number; data: { name: string; parentChapter: string; parentSubject: string } }
+    | { type: 'subTopic'; tokens: number; data: SubTopicEntry };
 
   const allItems: ItemEntry[] = [
     ...newSubjects.map(s => ({ type: 'subject' as const, tokens: tokensPerSubject, data: s })),
     ...newChapters.map(c => ({ type: 'chapter' as const, tokens: tokensPerChapter, data: c })),
     ...newTopics.map(t => ({ type: 'topic' as const, tokens: tokensPerTopic, data: t })),
+    ...newSubTopics.map(st => ({ type: 'subTopic' as const, tokens: tokensPerSubTopic, data: st })),
   ];
 
   const batches: Array<{
     subjects: string[];
     chapters: Array<{ name: string; parentSubject: string }>;
     topics: Array<{ name: string; parentChapter: string; parentSubject: string }>;
+    subTopics: SubTopicEntry[];
   }> = [];
 
-  let currentBatch = { subjects: [] as string[], chapters: [] as typeof newChapters, topics: [] as typeof newTopics };
+  let currentBatch = { subjects: [] as string[], chapters: [] as typeof newChapters, topics: [] as typeof newTopics, subTopics: [] as SubTopicEntry[] };
   let currentTokens = TOKENS_JSON_WRAPPER;
 
   for (const item of allItems) {
-    // If adding this item would exceed limit, push current batch and start new one
-    if (currentTokens + item.tokens > maxTokens && (currentBatch.subjects.length + currentBatch.chapters.length + currentBatch.topics.length) > 0) {
+    const batchSize = currentBatch.subjects.length + currentBatch.chapters.length + currentBatch.topics.length + currentBatch.subTopics.length;
+    if (currentTokens + item.tokens > maxTokens && batchSize > 0) {
       batches.push(currentBatch);
-      currentBatch = { subjects: [], chapters: [], topics: [] };
+      currentBatch = { subjects: [], chapters: [], topics: [], subTopics: [] };
       currentTokens = TOKENS_JSON_WRAPPER;
     }
 
@@ -308,18 +335,21 @@ function splitIntoBatches(
       currentBatch.subjects.push(item.data as string);
     } else if (item.type === 'chapter') {
       currentBatch.chapters.push(item.data as { name: string; parentSubject: string });
-    } else {
+    } else if (item.type === 'topic') {
       currentBatch.topics.push(item.data as { name: string; parentChapter: string; parentSubject: string });
+    } else {
+      currentBatch.subTopics.push(item.data as SubTopicEntry);
     }
     currentTokens += item.tokens;
   }
 
   // Push the last batch
-  if (currentBatch.subjects.length + currentBatch.chapters.length + currentBatch.topics.length > 0) {
+  const lastBatchSize = currentBatch.subjects.length + currentBatch.chapters.length + currentBatch.topics.length + currentBatch.subTopics.length;
+  if (lastBatchSize > 0) {
     batches.push(currentBatch);
   }
 
-  console.log(`[MaterialAI] Split into ${batches.length} batches: ${batches.map((b, i) => `Batch ${i + 1}: ${b.subjects.length}S + ${b.chapters.length}C + ${b.topics.length}T`).join(', ')}`);
+  console.log(`[MaterialAI] Split into ${batches.length} batches: ${batches.map((b, i) => `Batch ${i + 1}: ${b.subjects.length}S + ${b.chapters.length}C + ${b.topics.length}T + ${b.subTopics.length}ST`).join(', ')}`);
   return batches;
 }
 
@@ -332,12 +362,13 @@ export async function generateMaterialData(
   languages: Array<{ iso_code: string; name: string }>,
   provider: AIProvider = 'gemini',
 ): Promise<GeneratedMaterialData> {
-  const result: GeneratedMaterialData = { subjects: {}, chapters: {}, topics: {} };
+  const result: GeneratedMaterialData = { subjects: {}, chapters: {}, topics: {}, sub_topics: {} };
 
   // Collect all NEW items
   const newSubjects: string[] = [];
   const newChapters: Array<{ name: string; parentSubject: string }> = [];
   const newTopics: Array<{ name: string; parentChapter: string; parentSubject: string }> = [];
+  const newSubTopics: SubTopicEntry[] = [];
 
   for (const subject of tree.subjects) {
     if (subject.isNew) newSubjects.push(subject.name);
@@ -345,11 +376,16 @@ export async function generateMaterialData(
       if (chapter.isNew) newChapters.push({ name: chapter.name, parentSubject: subject.name });
       for (const topic of chapter.topics) {
         if (topic.isNew) newTopics.push({ name: topic.name, parentChapter: chapter.name, parentSubject: subject.name });
+        if (topic.subTopics) {
+          for (const st of topic.subTopics) {
+            if (st.isNew) newSubTopics.push({ name: st.name, parentTopic: topic.name, parentChapter: chapter.name, parentSubject: subject.name });
+          }
+        }
       }
     }
   }
 
-  const totalNew = newSubjects.length + newChapters.length + newTopics.length;
+  const totalNew = newSubjects.length + newChapters.length + newTopics.length + newSubTopics.length;
   if (totalNew === 0) return result;
 
   const langList = languages.map(l => `${l.name} (${l.iso_code})`).join(', ');
@@ -357,14 +393,14 @@ export async function generateMaterialData(
   const systemPrompt = buildSystemPrompt(langList);
 
   // Split into batches based on estimated token usage
-  const batches = splitIntoBatches(newSubjects, newChapters, newTopics, languages.length, provider);
+  const batches = splitIntoBatches(newSubjects, newChapters, newTopics, newSubTopics, languages.length, provider);
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     const batchLabel = batches.length > 1 ? ` [Batch ${i + 1}/${batches.length}]` : '';
-    console.log(`[MaterialAI]${batchLabel} Generating for ${batch.subjects.length}S + ${batch.chapters.length}C + ${batch.topics.length}T across ${languages.length} languages...`);
+    console.log(`[MaterialAI]${batchLabel} Generating for ${batch.subjects.length}S + ${batch.chapters.length}C + ${batch.topics.length}T + ${batch.subTopics.length}ST across ${languages.length} languages...`);
 
-    const userContent = buildUserContent(batch.subjects, batch.chapters, batch.topics, langList, langCodes);
+    const userContent = buildUserContent(batch.subjects, batch.chapters, batch.topics, batch.subTopics, langList, langCodes);
 
     try {
       const raw = await callAI(provider, systemPrompt, userContent);
@@ -373,11 +409,11 @@ export async function generateMaterialData(
       if (parsed.subjects) Object.assign(result.subjects, parsed.subjects);
       if (parsed.chapters) Object.assign(result.chapters, parsed.chapters);
       if (parsed.topics) Object.assign(result.topics, parsed.topics);
+      if (parsed.sub_topics) Object.assign(result.sub_topics, parsed.sub_topics);
 
-      console.log(`[MaterialAI]${batchLabel} Success — got ${Object.keys(parsed.subjects || {}).length}S + ${Object.keys(parsed.chapters || {}).length}C + ${Object.keys(parsed.topics || {}).length}T`);
+      console.log(`[MaterialAI]${batchLabel} Success — got ${Object.keys(parsed.subjects || {}).length}S + ${Object.keys(parsed.chapters || {}).length}C + ${Object.keys(parsed.topics || {}).length}T + ${Object.keys(parsed.sub_topics || {}).length}ST`);
     } catch (e) {
       console.error(`[MaterialAI]${batchLabel} AI generation failed:`, e);
-      // Fall back: create basic translations from names for this batch's items
       for (const name of batch.subjects) {
         result.subjects[name] = buildFallbackSubject(name, langCodes);
       }
@@ -386,6 +422,9 @@ export async function generateMaterialData(
       }
       for (const t of batch.topics) {
         result.topics[t.name] = buildFallbackItem(t.name, langCodes);
+      }
+      for (const st of batch.subTopics) {
+        result.sub_topics[st.name] = buildFallbackItem(st.name, langCodes);
       }
     }
   }
