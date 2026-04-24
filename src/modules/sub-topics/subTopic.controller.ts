@@ -6,7 +6,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { uploadVideoToStream, deleteVideoFromStream, getVideoStatus } from '../../services/video.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -104,6 +104,10 @@ export async function create(req: Request, res: Response) {
 
   // Set audit field
   body.created_by = req.user!.id;
+
+  // Auto-generate slug if not provided
+  const slugSource = body.slug || body.code || body.name || `sub-topic-${body.topic_id || 0}`;
+  body.slug = await generateUniqueSlug(supabase, 'sub_topics', slugSource);
 
   const { data, error: e } = await supabase
     .from('sub_topics')

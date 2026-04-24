@@ -59,4 +59,10 @@ r.post('/import-material-tree', requirePermission('ai', 'create'), txtUpload.sin
 // Import from CDN — scan Bunny storage and create missing DB records
 r.post('/import-from-cdn', requirePermission('ai', 'create'), ctrl.importFromCdn);
 
+// Scaffold CDN folder structure from .txt course file
+r.post('/scaffold-cdn', requirePermission('ai', 'create'), ctrl.scaffoldCdn);
+
+// Check video transcoding status
+r.post('/check-video-status', requirePermission('ai', 'create'), ctrl.checkVideoStatus);
+
 export default r;

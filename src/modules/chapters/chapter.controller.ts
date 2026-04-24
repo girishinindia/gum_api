@@ -49,7 +49,33 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+
+  // Fetch English translation names for all chapters in this page
+  const chapterIds = (data || []).map((c: any) => c.id);
+  let englishNameMap: Record<number, string> = {};
+  if (chapterIds.length > 0) {
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (enLang) {
+      const { data: enTranslations } = await supabase
+        .from('chapter_translations')
+        .select('chapter_id, name')
+        .in('chapter_id', chapterIds)
+        .eq('language_id', enLang.id)
+        .is('deleted_at', null);
+      if (enTranslations) {
+        for (const t of enTranslations) {
+          englishNameMap[t.chapter_id] = t.name;
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map((c: any) => ({
+    ...c,
+    english_name: englishNameMap[c.id] || null,
+  }));
+
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

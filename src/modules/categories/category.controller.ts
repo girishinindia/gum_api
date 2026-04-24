@@ -30,7 +30,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('categories').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,slug.ilike.%${search}%`);
+  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -48,7 +48,33 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+
+  // Fetch English translation names
+  const catIds = (data || []).map((c: any) => c.id);
+  let englishNameMap: Record<number, string> = {};
+  if (catIds.length > 0) {
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (enLang) {
+      const { data: enTranslations } = await supabase
+        .from('category_translations')
+        .select('category_id, name')
+        .in('category_id', catIds)
+        .eq('language_id', enLang.id)
+        .is('deleted_at', null);
+      if (enTranslations) {
+        for (const t of enTranslations) {
+          englishNameMap[t.category_id] = t.name;
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map((c: any) => ({
+    ...c,
+    english_name: englishNameMap[c.id] || null,
+  }));
+
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

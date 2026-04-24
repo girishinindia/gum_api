@@ -342,7 +342,7 @@ export async function coverage(req: Request, res: Response) {
   // Get all active categories
   const { data: cats, error: catErr } = await supabase
     .from('categories')
-    .select('id, code, slug, name')
+    .select('id, code, slug')
     .eq('is_active', true)
     .order('code');
   if (catErr) return err(res, catErr.message, 500);
@@ -369,7 +369,7 @@ export async function coverage(req: Request, res: Response) {
       category_id: cat.id,
       category_code: cat.code,
       category_slug: cat.slug,
-      category_name: cat.name,
+      category_name: cat.code,
       total_languages: totalLangs,
       translated_count: translatedLangs.length,
       missing_count: missingLangs.length,

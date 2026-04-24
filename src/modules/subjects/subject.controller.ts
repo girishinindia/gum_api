@@ -45,7 +45,33 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+
+  // Fetch English translation names for all subjects in this page
+  const subjectIds = (data || []).map((s: any) => s.id);
+  let englishNameMap: Record<number, string> = {};
+  if (subjectIds.length > 0) {
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (enLang) {
+      const { data: enTranslations } = await supabase
+        .from('subject_translations')
+        .select('subject_id, name')
+        .in('subject_id', subjectIds)
+        .eq('language_id', enLang.id)
+        .is('deleted_at', null);
+      if (enTranslations) {
+        for (const t of enTranslations) {
+          englishNameMap[t.subject_id] = t.name;
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map((s: any) => ({
+    ...s,
+    english_name: englishNameMap[s.id] || null,
+  }));
+
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

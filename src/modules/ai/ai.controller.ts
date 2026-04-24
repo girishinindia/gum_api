@@ -6,7 +6,9 @@ import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
+import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, listBunnyStorage, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
+import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus } from '../../services/video.service';
+import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
 import { matchSubject, matchChapter, matchTopic } from '../../services/materialMatcher.service';
@@ -196,7 +198,7 @@ Generate comprehensive English content for the category. Fill ALL fields.
 OUTPUT — return ONLY valid JSON:
 {"name":"","description":"2-3 sentences","is_new_title":"","tags":"comma-separated 5-8 tags","meta_title":"50-60 chars","meta_description":"150-160 chars","meta_keywords":"8-12 keywords","og_title":"","og_description":"100-150 chars","twitter_title":"","twitter_description":"70-100 chars","focus_keyword":""}
 USER INSTRUCTIONS: ${userPrompt}`;
-      userContent = JSON.stringify({ code: category.code, slug: category.slug, name: category.name || category.code, description: category.description || '' });
+      userContent = JSON.stringify({ code: category.code, slug: category.slug });
     } else {
       const { data: enTrans } = await supabase.from('category_translations').select('*, languages!inner(iso_code)').eq('category_id', category_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
       const source = enTrans?.[0];
@@ -316,7 +318,7 @@ RULES:
 
 USER INSTRUCTIONS: ${userPrompt}`;
 
-      userContent = JSON.stringify({ code: category.code, slug: category.slug, name: category.name || category.code, description: category.description || '' });
+      userContent = JSON.stringify({ code: category.code, slug: category.slug });
     } else {
       // English exists — translate to missing languages only
       const sourceContent = {
@@ -484,7 +486,7 @@ Generate comprehensive English content for the sub-category. Fill ALL fields.
 OUTPUT — return ONLY valid JSON:
 {"name":"","description":"2-3 sentences","is_new_title":"","tags":"comma-separated 5-8 tags","meta_title":"50-60 chars","meta_description":"150-160 chars","meta_keywords":"8-12 keywords","og_title":"","og_description":"100-150 chars","twitter_title":"","twitter_description":"70-100 chars","focus_keyword":""}
 USER INSTRUCTIONS: ${userPrompt}`;
-      userContent = JSON.stringify({ code: subCat.code, slug: subCat.slug, parent_category: subCat.categories?.code || '', name: subCat.name || subCat.code, description: subCat.description || '' });
+      userContent = JSON.stringify({ code: subCat.code, slug: subCat.slug, parent_category: subCat.categories?.code || '' });
     } else {
       const { data: enTrans } = await supabase.from('sub_category_translations').select('*, languages!inner(iso_code)').eq('sub_category_id', sub_category_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
       const source = enTrans?.[0];
@@ -597,7 +599,7 @@ RULES:
 
 USER INSTRUCTIONS: ${userPrompt}`;
 
-      userContent = JSON.stringify({ code: subCat.code, slug: subCat.slug, parent_category: parentCategory, name: subCat.name || subCat.code, description: subCat.description || '' });
+      userContent = JSON.stringify({ code: subCat.code, slug: subCat.slug, parent_category: parentCategory });
     } else {
       const sourceContent = {
         name: englishSource?.name || '', description: englishSource?.description || '',
@@ -2005,7 +2007,7 @@ async function fetchMasterContext(module: MasterModule) {
   }
   // For sub_categories, fetch categories so AI can assign valid category_id
   if (module === 'sub_categories') {
-    const { data } = await supabase.from('categories').select('id, name, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
+    const { data } = await supabase.from('categories').select('id, code, slug').eq('is_active', true).is('deleted_at', null).order('display_order');
     ctx.categories = data || [];
   }
   // For branches, fetch countries, states, cities for location + users for manager
@@ -2127,7 +2129,8 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
   if (module === 'states') selectCols = 'name, state_code';
   if (module === 'cities') selectCols = 'name';
   if (module === 'social_medias') selectCols = 'name, code';
-  if (module === 'categories' || module === 'sub_categories') selectCols = 'name, code, slug';
+  if (module === 'categories') selectCols = 'code, slug';
+  if (module === 'sub_categories') selectCols = 'code, slug';
   if (module === 'branches') selectCols = 'name, code';
   if (module === 'departments') selectCols = 'name, code';
   if (module === 'branch_departments') selectCols = 'branch_id, department_id';
@@ -2143,8 +2146,10 @@ async function fetchExistingMasterRecords(module: MasterModule): Promise<string>
 
   // Build compact list
   let items: string[];
-  if (module === 'categories' || module === 'sub_categories') {
-    items = data.map((r: any) => `${r.name || r.code} (${r.code})`);
+  if (module === 'categories') {
+    items = data.map((r: any) => `${r.code} (${r.slug})`);
+  } else if (module === 'sub_categories') {
+    items = data.map((r: any) => `${r.code} (${r.slug})`);
   } else if (module === 'languages') {
     items = data.map((r: any) => `${r.name} (${r.iso_code || ''})`);
   } else if (module === 'countries') {
@@ -2371,9 +2376,9 @@ Use ONLY the available state IDs for state_id. Generate cities that belong to th
       return {
         system: `${base}
 FIELDS per record:
-- name: (REQUIRED, 1-200 chars) human-readable category name e.g. "Programming", "Data Science", "Web Development"
 - code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "programming", "data-science"
 - slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
+NOTE: "name" is NOT a field in categories table — names are stored in category_translations table.
 - display_order: sequential integer starting from 1
 - is_new: boolean (true for recently added categories)
 - new_until: date string "YYYY-MM-DD" or null
@@ -2385,7 +2390,7 @@ FIELDS per record:
 - robots_directive: "index, follow"
 - sort_order: sequential number
 Do NOT include: image (uploaded separately). Generate categories for an Indian educational platform.`,
-        user: `Generate ${count} categories for course/content categories. Each must have a name, code, and slug. Examples: name="Programming" code="programming" slug="programming", name="Web Development" code="web-development" slug="web-development", name="Data Science" code="data-science" slug="data-science", name="Machine Learning" code="machine-learning" slug="machine-learning", etc.`,
+        user: `Generate ${count} categories for course/content categories. Each must have a code and slug (name is stored in the translations table, not in the categories table). Examples: code="programming" slug="programming", code="web-development" slug="web-development", code="data-science" slug="data-science", code="machine-learning" slug="machine-learning", etc.`,
       };
 
     case 'sub_categories':
@@ -2393,9 +2398,9 @@ Do NOT include: image (uploaded separately). Generate categories for an Indian e
         system: `${base}
 FIELDS per record:
 - category_id: (REQUIRED) must be a valid ID from available categories below
-- name: (REQUIRED, 1-200 chars) human-readable sub-category name e.g. "React", "Python Basics", "AWS"
 - code: (REQUIRED, 1-100 chars) unique lowercase code e.g. "react", "python-basics"
 - slug: (REQUIRED, 1-200 chars) URL-friendly slug, usually same as code
+NOTE: "name" is NOT a field in sub_categories table — names are stored in sub_category_translations table.
 - display_order: sequential integer starting from 1
 - is_new: boolean (true for recently added)
 - new_until: date string "YYYY-MM-DD" or null
@@ -2408,9 +2413,9 @@ FIELDS per record:
 - sort_order: sequential number
 Do NOT include: image (uploaded separately).
 
-Available categories (use ONLY these IDs for category_id): ${JSON.stringify(context.categories?.map((c: any) => ({ id: c.id, name: c.name, code: c.code })) || [])}
+Available categories (use ONLY these IDs for category_id): ${JSON.stringify(context.categories?.map((c: any) => ({ id: c.id, code: c.code, slug: c.slug })) || [])}
 Assign each sub-category to its most relevant parent category.`,
-        user: `Generate ${count} sub-categories. Each must have category_id, name, code, and slug. Map each to the correct parent category from the available list. Examples: name="React" code="react" slug="react" (under web-development), name="Python" code="python" slug="python" (under programming), name="AWS" code="aws" slug="aws" (under cloud-computing), etc.`,
+        user: `Generate ${count} sub-categories. Each must have category_id, code, and slug (name is stored in the translations table, not in the sub_categories table). Map each to the correct parent category from the available list. Examples: code="react" slug="react" (under web-development), code="python" slug="python" (under programming), code="aws" slug="aws" (under cloud-computing), etc.`,
       };
 
     case 'branches':
@@ -3752,285 +3757,629 @@ export async function importFromCdn(req: Request, res: Response) {
     const userId = (req as any).user?.id;
     if (!userId) return err(res, 'Unauthorized', 401);
 
-    const { provider = 'gemini', generate_seo = false } = req.body;
+    const {
+      provider = 'gemini',
+      generate_seo = false,
+      upload_videos = true,
+      sync_mode = 'create_only',   // 'create_only' | 'sync' | 'dry_run'
+      auto_delete = false,          // only applies in sync mode
+    } = req.body;
 
-    // Fetch active languages
+    const isDryRun = sync_mode === 'dry_run';
+    const isSync = sync_mode === 'sync' || isDryRun;
+
+    // ─── Fetch active languages ───
     const { data: languages } = await supabase
       .from('languages')
       .select('id, name, iso_code, is_active')
       .eq('is_active', true)
       .order('id');
-
     if (!languages?.length) return err(res, 'No active languages found', 400);
 
     const langByIso = new Map(languages.map(l => [l.iso_code, l]));
-    const englishLang = languages.find(l => l.iso_code === 'en');
 
-    // Fetch existing records for lookup
-    const [subjectsRes, chaptersRes, topicsRes] = await Promise.all([
-      supabase.from('subjects').select('id, slug, name').eq('is_deleted', false),
-      supabase.from('chapters').select('id, slug, name, subject_id').eq('is_deleted', false),
-      supabase.from('topics').select('id, slug, name, chapter_id').eq('is_deleted', false),
+    // ─── Fetch existing DB records for lookup ───
+    const [subjectsRes, chaptersRes, topicsRes, subTopicsRes] = await Promise.all([
+      supabase.from('subjects').select('id, code, slug').is('deleted_at', null),
+      supabase.from('chapters').select('id, slug, subject_id, sort_order, display_order').is('deleted_at', null),
+      supabase.from('topics').select('id, slug, chapter_id, sort_order, display_order').is('deleted_at', null),
+      supabase.from('sub_topics').select('id, slug, topic_id, sort_order, display_order, video_id, video_source').is('deleted_at', null),
     ]);
 
-    const existingSubjects = new Map((subjectsRes.data || []).map(s => [s.slug, s]));
-    const existingChapters = new Map((chaptersRes.data || []).map(c => [`${c.subject_id}:${c.slug}`, c]));
-    const existingTopics = new Map((topicsRes.data || []).map(t => [`${t.chapter_id}:${t.slug}`, t]));
+    const existingSubjectsBySlug = new Map<string, any>((subjectsRes.data || []).map((s: any) => [s.slug, s]));
+    const existingSubjectsByCode = new Map<string, any>((subjectsRes.data || []).map((s: any) => [(s.code || '').toLowerCase(), s]));
+    const existingChapters = new Map<string, any>((chaptersRes.data || []).map((c: any) => [`${c.subject_id}:${c.slug}`, c]));
+    const existingTopics = new Map<string, any>((topicsRes.data || []).map((t: any) => [`${t.chapter_id}:${t.slug}`, t]));
+    const existingSubTopics = new Map<string, any>((subTopicsRes.data || []).map((st: any) => [`${st.topic_id}:${st.slug}`, st]));
 
-    // Scan CDN
-    const cdnTree = await listBunnyStorageRecursive('materials');
+    // Build lookup by parent ID for sync deletions
+    const chaptersBySubject = new Map<number, any[]>();
+    for (const c of chaptersRes.data || []) {
+      const list = chaptersBySubject.get(c.subject_id) || [];
+      list.push(c);
+      chaptersBySubject.set(c.subject_id, list);
+    }
+    const topicsByChapter = new Map<number, any[]>();
+    for (const t of topicsRes.data || []) {
+      const list = topicsByChapter.get(t.chapter_id) || [];
+      list.push(t);
+      topicsByChapter.set(t.chapter_id, list);
+    }
+    const subTopicsByTopic = new Map<number, any[]>();
+    for (const st of subTopicsRes.data || []) {
+      const list = subTopicsByTopic.get(st.topic_id) || [];
+      list.push(st);
+      subTopicsByTopic.set(st.topic_id, list);
+    }
 
     const report = {
-      subjects: { found: 0, created: 0, existing: 0 },
-      chapters: { found: 0, created: 0, existing: 0 },
-      topics: { found: 0, created: 0, existing: 0 },
-      sub_topics: { found: 0, created: 0, existing: 0 },
-      translations: { found: 0, created: 0, existing: 0, updated: 0 },
+      sync_mode,
+      subjects: { found: 0, created: 0, existing: 0, updated: 0 },
+      chapters: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
+      topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
+      sub_topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
+      translations: { found: 0, created: 0, existing: 0, updated: 0, deactivated: 0 },
+      videos: { found: 0, matched: 0, uploaded: 0, replaced: 0, status_checked: 0, now_ready: 0, errors: 0 },
       errors: [] as string[],
     };
 
-    // Level 1: Subjects
-    for (const subjectNode of cdnTree) {
-      if (!subjectNode.isDirectory) continue;
+    // ─── Phase 1: Scan CDN root, find course folders + .txt files ───
+    const rootItems = await listBunnyStorageRecursive('');
+
+    const rootFolders = rootItems.filter(n => n.isDirectory && n.name.toLowerCase() !== 'assets' && n.name.toLowerCase() !== 'materials');
+
+    for (const courseFolder of rootFolders) {
+      const children = courseFolder.children || [];
+      const txtFileName = `${courseFolder.name}.txt`;
+      const txtNode = children.find(n => !n.isDirectory && n.name === txtFileName);
+
+      if (!txtNode) {
+        report.errors.push(`Course folder "${courseFolder.name}" has no matching .txt file (expected "${txtFileName}")`);
+        continue;
+      }
+
+      let txtContent: string;
+      try {
+        txtContent = await downloadBunnyFile(txtNode.path);
+      } catch (e: any) {
+        report.errors.push(`Failed to download "${txtNode.path}": ${e.message}`);
+        continue;
+      }
+
+      const parseResult = parseCourseStructure(txtContent);
+      if (parseResult.errors.length > 0) {
+        report.errors.push(...parseResult.errors.map(e => `[${courseFolder.name}] ${e}`));
+      }
+      if (!parseResult.course) {
+        report.errors.push(`Failed to parse course structure from "${txtNode.path}"`);
+        continue;
+      }
+
+      const parsedCourse = parseResult.course;
       report.subjects.found++;
 
-      const subjectSlug = subjectNode.name;
-      let subject = existingSubjects.get(subjectSlug);
+      // ─── Phase 2: Create/find Subject ───
+      const subjectSlug = nameToSlug(parsedCourse.name);
+      const subjectCode = parsedCourse.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+      let subject = existingSubjectsBySlug.get(subjectSlug)
+        || existingSubjectsByCode.get(subjectCode.toLowerCase());
 
       if (!subject) {
-        // Create subject
-        const name = subjectSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-        const newSlug = await generateUniqueSlug(supabase, 'subjects', name);
-        const { data: created, error: createErr } = await supabase
-          .from('subjects')
-          .insert({ name, slug: newSlug, description: `Imported from CDN: ${subjectSlug}`, is_active: true, sort_order: 0 })
-          .select('id, slug, name')
-          .single();
+        if (!isDryRun) {
+          const newSlug = await generateUniqueSlug(supabase, 'subjects', subjectSlug);
+          const { data: created, error: createErr } = await supabase
+            .from('subjects')
+            .insert({ code: subjectCode, slug: newSlug, is_active: true, display_order: 1, sort_order: 1, created_by: userId })
+            .select('id, code, slug')
+            .single();
 
-        if (createErr || !created) {
-          report.errors.push(`Failed to create subject "${subjectSlug}": ${createErr?.message}`);
-          continue;
+          if (createErr || !created) {
+            report.errors.push(`Failed to create subject "${parsedCourse.name}": ${createErr?.message}`);
+            continue;
+          }
+          subject = created;
+          existingSubjectsBySlug.set(newSlug, created);
+          existingSubjectsByCode.set(subjectCode.toLowerCase(), created);
         }
-        subject = created;
-        existingSubjects.set(newSlug, created);
         report.subjects.created++;
       } else {
         report.subjects.existing++;
       }
 
-      // Level 2: Chapters
-      const chapterNodes = subjectNode.children || [];
-      for (const chapterNode of chapterNodes) {
-        if (!chapterNode.isDirectory) continue;
+      if (!subject && isDryRun) {
+        // In dry run, create a placeholder for further processing
+        subject = { id: -1, slug: subjectSlug, code: subjectCode };
+      }
+
+      const courseCdnChildren = children.filter(n => n.isDirectory && n.name.toLowerCase() !== 'assets');
+
+      // ─── Create Bunny Stream collection hierarchy for this course ───
+      let streamCollections = new Map<string, string>();
+      if (upload_videos && !isDryRun) {
+        try {
+          streamCollections = await createCourseCollections(
+            parsedCourse.name,
+            parsedCourse.chapters.map(ch => ({
+              name: ch.name,
+              topics: ch.topics.map(tp => ({ name: tp.name })),
+            }))
+          );
+        } catch (collErr: any) {
+          report.errors.push(`Failed to create Stream collections: ${collErr.message}`);
+        }
+      }
+
+      // ─── Track which DB IDs are "seen" in the .txt (for sync deletions) ───
+      const seenChapterIds = new Set<number>();
+      const seenTopicIds = new Set<number>();
+      const seenSubTopicIds = new Set<number>();
+
+      // ─── Phase 2b: Create/Update Chapters, Topics, Sub-Topics from .txt ───
+      for (const parsedChapter of parsedCourse.chapters) {
         report.chapters.found++;
 
-        const chapterSlug = chapterNode.name;
-        const chapterKey = `${subject.id}:${chapterSlug}`;
-        let chapter = existingChapters.get(chapterKey);
+        const chapterSlug = nameToSlug(parsedChapter.name);
 
-        if (!chapter) {
-          const name = chapterSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-          const newSlug = await generateUniqueSlug(supabase, 'chapters', name);
-          const { data: created, error: createErr } = await supabase
-            .from('chapters')
-            .insert({ name, slug: newSlug, subject_id: subject.id, description: `Imported from CDN: ${chapterSlug}`, is_active: true, sort_order: 0 })
-            .select('id, slug, name, subject_id')
-            .single();
+        // Match: by slug (primary), then fuzzy ilike, then by position (rename detection)
+        let chapter = existingChapters.get(`${subject.id}:${chapterSlug}`);
 
-          if (createErr || !created) {
-            report.errors.push(`Failed to create chapter "${chapterSlug}" under subject "${subject.name}": ${createErr?.message}`);
-            continue;
+        // Fuzzy match by slug prefix
+        if (!chapter && isSync) {
+          const subjectChapters = chaptersBySubject.get(subject.id) || [];
+          // Try fuzzy slug match
+          const fuzzy = subjectChapters.find(c => c.slug.startsWith(chapterSlug.slice(0, 10)));
+          if (fuzzy) chapter = fuzzy;
+          // Try position-based match (rename detection)
+          if (!chapter) {
+            const byPos = subjectChapters.find(c => c.sort_order === parsedChapter.order);
+            if (byPos) chapter = byPos;
           }
-          chapter = created;
-          existingChapters.set(`${subject.id}:${newSlug}`, created);
-          report.chapters.created++;
-        } else {
-          report.chapters.existing++;
         }
 
-        // Level 3: Topics
-        const topicNodes = chapterNode.children || [];
-        for (const topicNode of topicNodes) {
-          if (!topicNode.isDirectory) continue;
-          report.topics.found++;
-
-          const topicSlug = topicNode.name;
-          const topicKey = `${chapter.id}:${topicSlug}`;
-          let topic = existingTopics.get(topicKey);
-
-          if (!topic) {
-            const name = topicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-            const newSlug = await generateUniqueSlug(supabase, 'topics', name);
+        if (!chapter) {
+          if (!isDryRun) {
+            const newSlug = await generateUniqueSlug(supabase, 'chapters', chapterSlug);
             const { data: created, error: createErr } = await supabase
-              .from('topics')
-              .insert({ name, slug: newSlug, chapter_id: chapter.id, description: `Imported from CDN: ${topicSlug}`, is_active: true, sort_order: 0 })
-              .select('id, slug, name, chapter_id')
+              .from('chapters')
+              .insert({
+                slug: newSlug,
+                subject_id: subject.id,
+                is_active: true,
+                display_order: parsedChapter.order,
+                sort_order: parsedChapter.order,
+                created_by: userId,
+              })
+              .select('id, slug, subject_id, sort_order, display_order')
               .single();
 
             if (createErr || !created) {
-              report.errors.push(`Failed to create topic "${topicSlug}" under chapter "${chapter.name}": ${createErr?.message}`);
+              report.errors.push(`Failed to create chapter "${parsedChapter.name}": ${createErr?.message}`);
               continue;
             }
-            topic = created;
-            existingTopics.set(`${chapter.id}:${newSlug}`, created);
-            report.topics.created++;
-
-            // Create CDN folders for the topic
-            const basePath = `materials/${subject.slug || subjectSlug}/${chapter.slug || chapterSlug}/${newSlug}`;
-            await createBunnyFolders([basePath, `${basePath}/resources`]);
-            for (const lang of languages) {
-              await createBunnyFolder(`${basePath}/${lang.iso_code}`);
+            chapter = created;
+            existingChapters.set(`${subject.id}:${newSlug}`, created);
+            const list = chaptersBySubject.get(subject.id) || [];
+            list.push(created);
+            chaptersBySubject.set(subject.id, list);
+          }
+          report.chapters.created++;
+        } else {
+          // Sync mode: update sort_order if changed
+          if (isSync && (chapter.sort_order !== parsedChapter.order || chapter.display_order !== parsedChapter.order)) {
+            if (!isDryRun) {
+              await supabase.from('chapters').update({
+                sort_order: parsedChapter.order,
+                display_order: parsedChapter.order,
+              }).eq('id', chapter.id);
             }
+            report.chapters.updated++;
           } else {
+            report.chapters.unchanged++;
+          }
+          report.chapters.existing++;
+        }
+
+        if (!chapter && isDryRun) {
+          chapter = { id: -1, slug: chapterSlug, subject_id: subject.id, sort_order: parsedChapter.order };
+        }
+
+        if (chapter.id > 0) seenChapterIds.add(chapter.id);
+
+        // Match chapter to CDN folder
+        const chapterCdnFolder = courseCdnChildren.find(n => namesMatch(n.name, parsedChapter.name));
+        const chapterCdnChildren_items = chapterCdnFolder?.children?.filter(
+          n => n.isDirectory && n.name.toLowerCase() !== 'assets'
+        ) || [];
+
+        for (const parsedTopic of parsedChapter.topics) {
+          report.topics.found++;
+
+          const topicSlug = nameToSlug(parsedTopic.name);
+
+          let topic = existingTopics.get(`${chapter.id}:${topicSlug}`);
+
+          // Fuzzy match for sync
+          if (!topic && isSync && chapter.id > 0) {
+            const chapterTopics = topicsByChapter.get(chapter.id) || [];
+            const fuzzy = chapterTopics.find(t => t.slug.startsWith(topicSlug.slice(0, 10)));
+            if (fuzzy) topic = fuzzy;
+            if (!topic) {
+              const byPos = chapterTopics.find(t => t.sort_order === parsedTopic.order);
+              if (byPos) topic = byPos;
+            }
+          }
+
+          if (!topic) {
+            if (!isDryRun) {
+              const newSlug = await generateUniqueSlug(supabase, 'topics', topicSlug);
+              const { data: created, error: createErr } = await supabase
+                .from('topics')
+                .insert({
+                  slug: newSlug,
+                  chapter_id: chapter.id,
+                  is_active: true,
+                  display_order: parsedTopic.order,
+                  sort_order: parsedTopic.order,
+                  created_by: userId,
+                })
+                .select('id, slug, chapter_id, sort_order, display_order')
+                .single();
+
+              if (createErr || !created) {
+                report.errors.push(`Failed to create topic "${parsedTopic.name}": ${createErr?.message}`);
+                continue;
+              }
+              topic = created;
+              existingTopics.set(`${chapter.id}:${newSlug}`, created);
+              const list = topicsByChapter.get(chapter.id) || [];
+              list.push(created);
+              topicsByChapter.set(chapter.id, list);
+            }
+            report.topics.created++;
+          } else {
+            if (isSync && (topic.sort_order !== parsedTopic.order || topic.display_order !== parsedTopic.order)) {
+              if (!isDryRun) {
+                await supabase.from('topics').update({
+                  sort_order: parsedTopic.order,
+                  display_order: parsedTopic.order,
+                }).eq('id', topic.id);
+              }
+              report.topics.updated++;
+            } else {
+              report.topics.unchanged++;
+            }
             report.topics.existing++;
           }
 
-          // Level 4: Language folders → files (sub-topics)
-          const langFolderNodes = topicNode.children || [];
-          for (const langFolderNode of langFolderNodes) {
-            if (!langFolderNode.isDirectory) continue;
-            if (langFolderNode.name === 'resources') continue; // skip resources folder
+          if (!topic && isDryRun) {
+            topic = { id: -1, slug: topicSlug, chapter_id: chapter.id, sort_order: parsedTopic.order };
+          }
 
-            const langIso = langFolderNode.name;
-            const lang = langByIso.get(langIso);
-            if (!lang) {
-              report.errors.push(`Unknown language ISO "${langIso}" in ${topicNode.path}`);
-              continue;
-            }
+          if (topic.id > 0) seenTopicIds.add(topic.id);
 
-            const fileNodes = langFolderNode.children || [];
-            for (const fileNode of fileNodes) {
-              if (fileNode.isDirectory) continue;
-              if (!fileNode.name.endsWith('.html') && !fileNode.name.endsWith('.htm')) continue;
+          // Create/update sub-topics from parsed data
+          const subTopicDbMap = new Map<string, { id: number; slug: string }>();
 
-              report.translations.found++;
+          for (const parsedST of parsedTopic.subTopics) {
+            const stSlug = nameToSlug(parsedST.name);
 
-              // Derive sub-topic slug from filename
-              // e.g. "my-page.html" → "my-page", "my-page_gu.html" → "my-page"
-              let baseName = fileNode.name.replace(/\.(html|htm)$/i, '');
-              // Strip language suffix if present (e.g. _gu, _hi, _en)
-              baseName = baseName.replace(/_[a-z]{2,3}$/, '');
+            let subTopic = existingSubTopics.get(`${topic.id}:${stSlug}`);
 
-              const subTopicSlug = baseName;
-
-              // Check if sub-topic exists
-              const { data: existingST } = await supabase
+            if (!subTopic && topic.id > 0) {
+              // Fuzzy match by ilike
+              const { data: fuzzyMatch } = await supabase
                 .from('sub_topics')
-                .select('id, slug')
+                .select('id, slug, sort_order, display_order, video_id, video_source')
                 .eq('topic_id', topic.id)
-                .eq('is_deleted', false)
-                .ilike('slug', `%${subTopicSlug}%`)
+                .is('deleted_at', null)
+                .ilike('slug', `${stSlug}%`)
                 .limit(1);
 
-              let subTopicId: number;
+              if (fuzzyMatch?.length) {
+                subTopic = fuzzyMatch[0];
+                existingSubTopics.set(`${topic.id}:${subTopic.slug}`, subTopic);
+              }
+            }
 
-              if (existingST?.length) {
-                subTopicId = existingST[0].id;
-                report.sub_topics.existing++;
-              } else {
-                report.sub_topics.found++;
-                // Create sub-topic
-                const stName = subTopicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                const stSlug = await generateUniqueSlug(supabase, 'sub_topics', stName);
+            // Position-based match for sync (rename detection)
+            if (!subTopic && isSync && topic.id > 0) {
+              const topicSTs = subTopicsByTopic.get(topic.id) || [];
+              const byPos = topicSTs.find(st => st.sort_order === parsedST.order);
+              if (byPos) {
+                subTopic = byPos;
+                existingSubTopics.set(`${topic.id}:${byPos.slug}`, byPos);
+              }
+            }
 
-                let description = `Imported from CDN: ${subTopicSlug}`;
-                let metaTitle = stName;
-                let metaDescription = '';
-                let metaKeywords = '';
-
-                // Optionally AI-generate SEO data
-                if (generate_seo && langIso === 'en') {
-                  try {
-                    const htmlContent = await downloadBunnyFile(fileNode.path);
-                    if (htmlContent && htmlContent.length > 100) {
-                      const seoPrompt = `Analyze this HTML educational page and generate SEO metadata. Return JSON:
-{
-  "title": "concise descriptive title",
-  "description": "2-3 sentence description of the content",
-  "meta_title": "SEO optimized title (max 60 chars)",
-  "meta_description": "SEO meta description (max 160 chars)",
-  "meta_keywords": "comma separated keywords"
-}`;
-                      const seoResult = await callAI(provider as AIProvider, seoPrompt, htmlContent.substring(0, 5000), 1024);
-                      const parsed = parseJSON(seoResult.text);
-                      if (parsed) {
-                        description = parsed.description || description;
-                        metaTitle = parsed.meta_title || metaTitle;
-                        metaDescription = parsed.meta_description || '';
-                        metaKeywords = parsed.meta_keywords || '';
-                      }
-                    }
-                  } catch (seoErr: any) {
-                    report.errors.push(`SEO generation failed for ${fileNode.path}: ${seoErr.message}`);
-                  }
-                }
-
-                const { data: createdST, error: stErr } = await supabase
+            if (!subTopic) {
+              report.sub_topics.found++;
+              if (!isDryRun) {
+                const newSlug = await generateUniqueSlug(supabase, 'sub_topics', stSlug);
+                const { data: created, error: stErr } = await supabase
                   .from('sub_topics')
                   .insert({
-                    name: stName,
-                    slug: stSlug,
+                    slug: newSlug,
                     topic_id: topic.id,
-                    description,
-                    meta_title: metaTitle,
-                    meta_description: metaDescription,
-                    meta_keywords: metaKeywords,
+                    display_order: parsedST.order,
+                    sort_order: parsedST.order,
+                    difficulty_level: 'all_levels',
+                    estimated_minutes: 30,
                     is_active: true,
-                    sort_order: 0,
+                    created_by: userId,
                   })
                   .select('id, slug')
                   .single();
 
-                if (stErr || !createdST) {
-                  report.errors.push(`Failed to create sub-topic "${subTopicSlug}" under topic "${topic.name}": ${stErr?.message}`);
+                if (stErr || !created) {
+                  report.errors.push(`Failed to create sub-topic "${parsedST.name}": ${stErr?.message}`);
                   continue;
                 }
-                subTopicId = createdST.id;
-                report.sub_topics.created++;
+                subTopic = created;
+                existingSubTopics.set(`${topic.id}:${newSlug}`, created);
+                const list = subTopicsByTopic.get(topic.id) || [];
+                list.push(created);
+                subTopicsByTopic.set(topic.id, list);
               }
-
-              // Create or update sub-topic translation
-              const cdnUrl = `${config.bunny.cdnUrl}/${fileNode.path}`;
-              const { data: existingTrans } = await supabase
-                .from('sub_topic_translations')
-                .select('id, page')
-                .eq('sub_topic_id', subTopicId)
-                .eq('language_id', lang.id)
-                .eq('is_deleted', false)
-                .limit(1);
-
-              if (existingTrans?.length) {
-                // Update with CDN URL if page is different
-                if (existingTrans[0].page !== cdnUrl) {
-                  await supabase
-                    .from('sub_topic_translations')
-                    .update({ page: cdnUrl })
-                    .eq('id', existingTrans[0].id);
-                  report.translations.updated++;
-                } else {
-                  report.translations.existing++;
+              report.sub_topics.created++;
+            } else {
+              // Sync mode: update sort_order if changed
+              if (isSync && (subTopic.sort_order !== parsedST.order || subTopic.display_order !== parsedST.order)) {
+                if (!isDryRun) {
+                  await supabase.from('sub_topics').update({
+                    sort_order: parsedST.order,
+                    display_order: parsedST.order,
+                  }).eq('id', subTopic.id);
                 }
+                report.sub_topics.updated++;
               } else {
-                // Create translation
-                let transName = subTopicSlug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                if (langIso !== 'en') transName = `${transName} (${lang.name})`;
+                report.sub_topics.unchanged++;
+              }
+              report.sub_topics.existing++;
+            }
 
-                const { error: transErr } = await supabase
-                  .from('sub_topic_translations')
-                  .insert({
-                    sub_topic_id: subTopicId,
-                    language_id: lang.id,
-                    name: transName,
-                    description: `Imported from CDN`,
-                    page: cdnUrl,
-                    is_active: true,
-                    sort_order: 0,
-                  });
+            if (!subTopic && isDryRun) {
+              subTopic = { id: -1, slug: stSlug };
+            }
 
-                if (transErr) {
-                  report.errors.push(`Failed to create translation for "${subTopicSlug}" in ${langIso}: ${transErr.message}`);
-                } else {
+            if (subTopic.id > 0) seenSubTopicIds.add(subTopic.id);
+
+            subTopicDbMap.set(parsedST.name.toLowerCase(), { id: subTopic.id, slug: subTopic.slug });
+          }
+
+          // ─── Phase 3: Scan CDN topic folder for language files ───
+          const topicCdnFolder = chapterCdnChildren_items.find(n => namesMatch(n.name, parsedTopic.name));
+
+          if (topicCdnFolder) {
+            const topicChildren = topicCdnFolder.children || [];
+            // Track which translation keys are "seen" on CDN
+            const seenTransKeys = new Set<string>();
+
+            for (const childNode of topicChildren) {
+              if (!childNode.isDirectory) continue;
+              const folderName = childNode.name.toLowerCase();
+
+              if (folderName === 'assets' || folderName === 'videos') continue;
+
+              const lang = langByIso.get(folderName);
+              if (!lang) continue;
+
+              const langFiles = (childNode.children || []).filter(
+                f => !f.isDirectory && (f.name.endsWith('.html') || f.name.endsWith('.htm'))
+              );
+
+              for (const fileNode of langFiles) {
+                report.translations.found++;
+
+                const fileBaseName = fileNode.name.replace(/\.(html|htm)$/i, '');
+                const normalized = normalizeCdnName(fileBaseName);
+
+                let matchedST: { id: number; slug: string } | undefined;
+
+                matchedST = subTopicDbMap.get(normalized);
+
+                if (!matchedST) {
+                  for (const [txtName, stRecord] of subTopicDbMap) {
+                    if (normalized.replace(/[^a-z0-9]/g, '') === txtName.replace(/[^a-z0-9]/g, '')) {
+                      matchedST = stRecord;
+                      break;
+                    }
+                  }
+                }
+
+                if (!matchedST) {
+                  report.errors.push(`No matching sub-topic for file "${fileNode.name}" in ${topicCdnFolder.name}/${folderName}/`);
+                  continue;
+                }
+
+                seenTransKeys.add(`${matchedST.id}:${lang.id}`);
+
+                const cdnUrl = `${config.bunny.cdnUrl}/${fileNode.path}`;
+                if (isDryRun) {
                   report.translations.created++;
+                  continue;
+                }
+
+                const { data: existingTrans } = await supabase
+                  .from('sub_topic_translations')
+                  .select('id, page')
+                  .eq('sub_topic_id', matchedST.id)
+                  .eq('language_id', lang.id)
+                  .is('deleted_at', null)
+                  .limit(1);
+
+                if (existingTrans?.length) {
+                  if (existingTrans[0].page !== cdnUrl) {
+                    await supabase
+                      .from('sub_topic_translations')
+                      .update({ page: cdnUrl })
+                      .eq('id', existingTrans[0].id);
+                    report.translations.updated++;
+                  } else {
+                    report.translations.existing++;
+                  }
+                } else {
+                  const transName = [...subTopicDbMap.entries()].find(
+                    ([, v]) => v.id === matchedST!.id
+                  )?.[0] || matchedST.slug.replace(/-/g, ' ');
+
+                  const { error: transErr } = await supabase
+                    .from('sub_topic_translations')
+                    .insert({
+                      sub_topic_id: matchedST.id,
+                      language_id: lang.id,
+                      name: transName,
+                      page: cdnUrl,
+                      is_active: true,
+                      created_by: userId,
+                    });
+
+                  if (transErr) {
+                    report.errors.push(`Failed to create translation for "${fileNode.name}" in ${folderName}: ${transErr.message}`);
+                  } else {
+                    report.translations.created++;
+                  }
+                }
+              }
+            }
+
+            // ─── Sync: Deactivate translations that are no longer on CDN ───
+            if (isSync && !isDryRun) {
+              for (const [, stRec] of subTopicDbMap) {
+                if (stRec.id <= 0) continue;
+                const { data: allTrans } = await supabase
+                  .from('sub_topic_translations')
+                  .select('id, language_id')
+                  .eq('sub_topic_id', stRec.id)
+                  .eq('is_active', true)
+                  .is('deleted_at', null);
+
+                for (const t of allTrans || []) {
+                  if (!seenTransKeys.has(`${stRec.id}:${t.language_id}`)) {
+                    if (auto_delete) {
+                      await supabase.from('sub_topic_translations')
+                        .update({ is_active: false })
+                        .eq('id', t.id);
+                    }
+                    report.translations.deactivated++;
+                  }
+                }
+              }
+            }
+
+            // ─── Phase 4: Scan videos/ folder and fetch into Bunny Stream ───
+            if (upload_videos) {
+              const videosFolder = topicChildren.find(
+                n => n.isDirectory && n.name.toLowerCase() === 'videos'
+              );
+
+              if (videosFolder) {
+                const videoExts = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
+                const videoFiles = (videosFolder.children || []).filter(
+                  f => !f.isDirectory && videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
+                );
+
+                const topicCollName = buildCollectionName(parsedCourse.name, parsedChapter.name, parsedTopic.name);
+                const topicCollId = streamCollections.get(topicCollName);
+
+                for (const videoNode of videoFiles) {
+                  report.videos.found++;
+
+                  const videoBaseName = videoNode.name.replace(/\.\w+$/i, '');
+                  const normalizedVideo = normalizeCdnName(videoBaseName);
+
+                  let matchedST: { id: number; slug: string } | undefined;
+                  matchedST = subTopicDbMap.get(normalizedVideo);
+
+                  if (!matchedST) {
+                    for (const [txtName, stRecord] of subTopicDbMap) {
+                      if (normalizedVideo.replace(/[^a-z0-9]/g, '') === txtName.replace(/[^a-z0-9]/g, '')) {
+                        matchedST = stRecord;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (!matchedST) {
+                    report.errors.push(`No matching sub-topic for video "${videoNode.name}" in ${videosFolder.path}`);
+                    continue;
+                  }
+
+                  report.videos.matched++;
+
+                  if (isDryRun) {
+                    report.videos.uploaded++;
+                    continue;
+                  }
+
+                  // Check if sub-topic already has a video
+                  const { data: existingST } = await supabase
+                    .from('sub_topics')
+                    .select('video_id, video_source')
+                    .eq('id', matchedST.id)
+                    .single();
+
+                  if (existingST?.video_id && existingST?.video_source === 'bunny') {
+                    // In sync mode, allow re-upload (replacement)
+                    if (!isSync) continue;
+                    // Skip if not explicitly replacing
+                    report.videos.matched--;
+                    continue;
+                  }
+
+                  // Fetch video into Bunny Stream directly from CDN storage URL
+                  try {
+                    const storageUrl = buildStorageUrl(videoNode.path);
+                    const videoTitle = `${matchedST.slug}-${matchedST.id}`;
+                    await fetchVideoFromUrl(storageUrl, videoTitle, topicCollId);
+
+                    await supabase
+                      .from('sub_topics')
+                      .update({
+                        video_source: 'bunny_pending',
+                      })
+                      .eq('id', matchedST.id);
+
+                    report.videos.uploaded++;
+                  } catch (videoErr: any) {
+                    report.videos.errors++;
+                    report.errors.push(`Failed to fetch video "${videoNode.name}": ${videoErr.message}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ─── Phase 5: Sync deletions (soft delete items not in .txt) ───
+      if (isSync && subject.id > 0) {
+        const subjectChapters = chaptersBySubject.get(subject.id) || [];
+        for (const ch of subjectChapters) {
+          if (!seenChapterIds.has(ch.id)) {
+            if (auto_delete && !isDryRun) {
+              await supabase.from('chapters').update({ deleted_at: new Date().toISOString() }).eq('id', ch.id);
+            }
+            report.chapters.deleted++;
+          }
+          // Check topics within seen chapters
+          if (seenChapterIds.has(ch.id)) {
+            const chTopics = topicsByChapter.get(ch.id) || [];
+            for (const tp of chTopics) {
+              if (!seenTopicIds.has(tp.id)) {
+                if (auto_delete && !isDryRun) {
+                  await supabase.from('topics').update({ deleted_at: new Date().toISOString() }).eq('id', tp.id);
+                }
+                report.topics.deleted++;
+              }
+              if (seenTopicIds.has(tp.id)) {
+                const tpSTs = subTopicsByTopic.get(tp.id) || [];
+                for (const st of tpSTs) {
+                  if (!seenSubTopicIds.has(st.id)) {
+                    if (auto_delete && !isDryRun) {
+                      await supabase.from('sub_topics').update({ deleted_at: new Date().toISOString() }).eq('id', st.id);
+                    }
+                    report.sub_topics.deleted++;
+                  }
                 }
               }
             }
@@ -4039,19 +4388,190 @@ export async function importFromCdn(req: Request, res: Response) {
       }
     }
 
+    // Clean up collection cache after import
+    clearCollectionCache();
+
     logAdmin({
       actorId: userId,
       action: 'ai_content_generated',
       targetType: 'cdn_import',
       targetId: 0,
-      targetName: 'Import from CDN',
+      targetName: `Import from CDN (${sync_mode})`,
       ip: getClientIp(req),
       metadata: { report },
     });
 
-    return ok(res, { report }, 'CDN import completed');
+    return ok(res, { report }, isDryRun ? 'Dry run completed — no changes made' : 'CDN import completed');
   } catch (error: any) {
     console.error('Import from CDN error:', error);
     return err(res, error.message || 'CDN import failed', 500);
+  }
+}
+
+/**
+ * Scaffold CDN folder structure from a .txt course file.
+ * Creates all folders on Bunny CDN following the naming convention.
+ */
+export async function scaffoldCdn(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) return err(res, 'Unauthorized', 401);
+
+    const { txt_content } = req.body;
+    if (!txt_content) return err(res, 'txt_content is required', 400);
+
+    // Fetch active languages for creating language folders
+    const { data: languages } = await supabase
+      .from('languages')
+      .select('iso_code')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .order('id');
+
+    const langCodes = (languages || []).map(l => l.iso_code);
+    if (!langCodes.length) langCodes.push('en'); // fallback
+
+    // Parse the .txt content
+    const parseResult = parseCourseStructure(txt_content);
+    if (!parseResult.course) {
+      return err(res, `Failed to parse: ${parseResult.errors.join('; ')}`, 400);
+    }
+
+    // Build all CDN folder paths
+    const { buildCdnPaths } = require('../../utils/courseParser');
+    const paths = buildCdnPaths(parseResult.course, langCodes);
+
+    // Create folders in batches
+    const batchSize = 10;
+    let created = 0;
+    for (let i = 0; i < paths.length; i += batchSize) {
+      const batch = paths.slice(i, i + batchSize);
+      await createBunnyFolders(batch);
+      created += batch.length;
+    }
+
+    // Also create the .txt file on CDN
+    const courseFolderName = buildCourseFolderName(parseResult.course.name);
+    const txtPath = `${courseFolderName}/${courseFolderName}.txt`;
+    await uploadRawFile(Buffer.from(txt_content, 'utf-8'), txtPath);
+
+    // Create matching Bunny Stream collection hierarchy for videos
+    let streamCollectionsCreated = 0;
+    try {
+      const collections = await createCourseCollections(
+        parseResult.course.name,
+        parseResult.course.chapters.map(ch => ({
+          name: ch.name,
+          topics: ch.topics.map(tp => ({ name: tp.name })),
+        }))
+      );
+      streamCollectionsCreated = collections.size;
+      clearCollectionCache();
+    } catch (collErr: any) {
+      // Non-fatal — CDN folders are created, Stream collections failed
+      console.warn('Stream collection creation failed:', collErr.message);
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'cdn_scaffold_created',
+      targetType: 'cdn_import',
+      targetId: 0,
+      targetName: `Scaffold: ${parseResult.course.name}`,
+      ip: getClientIp(req),
+      metadata: { folders: created, course: parseResult.course.name, streamCollections: streamCollectionsCreated },
+    });
+
+    return ok(res, {
+      course: parseResult.course.name,
+      folders_created: created,
+      stream_collections_created: streamCollectionsCreated,
+      txt_uploaded: txtPath,
+      folder_paths: paths,
+    }, 'CDN structure scaffolded');
+  } catch (error: any) {
+    console.error('Scaffold CDN error:', error);
+    return err(res, error.message || 'CDN scaffold failed', 500);
+  }
+}
+
+/**
+ * Check status of pending Bunny Stream videos.
+ * Finds all sub-topics with video_source = 'bunny_pending',
+ * queries Stream for their status, and updates records that are now ready.
+ */
+export async function checkVideoStatus(req: Request, res: Response) {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) return err(res, 'Unauthorized', 401);
+
+    // Find all sub-topics with pending videos
+    const { data: pendingSTs, error: fetchErr } = await supabase
+      .from('sub_topics')
+      .select('id, slug, video_id, video_source')
+      .eq('video_source', 'bunny_pending')
+      .is('deleted_at', null);
+
+    if (fetchErr) return err(res, fetchErr.message, 500);
+    if (!pendingSTs?.length) return ok(res, { checked: 0, ready: 0, still_pending: 0, failed: 0 }, 'No pending videos');
+
+    const report = { checked: 0, ready: 0, still_pending: 0, failed: 0, errors: [] as string[] };
+
+    for (const st of pendingSTs) {
+      report.checked++;
+
+      if (!st.video_id) {
+        report.still_pending++;
+        continue;
+      }
+
+      try {
+        const status = await getVideoStatus(st.video_id);
+        // Bunny Stream status codes: 0=created, 1=uploaded, 2=processing, 3=transcoding, 4=finished, 5=error
+        if (status.status === 4) {
+          // Video is ready
+          const libId = config.bunny.streamLibraryId;
+          const embedUrl = `https://iframe.mediadelivery.net/embed/${libId}/${st.video_id}`;
+          const thumbnailUrl = config.bunny.streamCdn
+            ? `${config.bunny.streamCdn}/${st.video_id}/thumbnail.jpg`
+            : `https://vz-cdn.b-cdn.net/${st.video_id}/thumbnail.jpg`;
+
+          await supabase.from('sub_topics').update({
+            video_source: 'bunny',
+            video_url: embedUrl,
+            thumbnail_url: thumbnailUrl,
+          }).eq('id', st.id);
+
+          report.ready++;
+        } else if (status.status === 5) {
+          // Video failed
+          await supabase.from('sub_topics').update({
+            video_source: 'bunny_error',
+          }).eq('id', st.id);
+          report.failed++;
+          report.errors.push(`Video for sub-topic "${st.slug}" failed transcoding`);
+        } else {
+          report.still_pending++;
+        }
+      } catch (e: any) {
+        report.still_pending++;
+        report.errors.push(`Failed to check status for "${st.slug}": ${e.message}`);
+      }
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'video_status_check',
+      targetType: 'cdn_import',
+      targetId: 0,
+      targetName: 'Check Video Status',
+      ip: getClientIp(req),
+      metadata: { report },
+    });
+
+    return ok(res, { report }, `Checked ${report.checked} videos: ${report.ready} ready, ${report.still_pending} pending, ${report.failed} failed`);
+  } catch (error: any) {
+    console.error('Check video status error:', error);
+    return err(res, error.message || 'Video status check failed', 500);
   }
 }

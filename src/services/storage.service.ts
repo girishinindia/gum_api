@@ -1,5 +1,8 @@
 import sharp from 'sharp';
-import { uploadToBunny, deleteFromBunny, deleteBunnyDirectory, listBunnyStorage, purgeBunnyCdn } from '../config/bunny';
+import { uploadToBunny, deleteFromBunny, deleteBunnyDirectory, listBunnyStorage as _listBunnyStorage, purgeBunnyCdn } from '../config/bunny';
+
+// Re-export flat listing for use by other modules
+export const listBunnyStorage = _listBunnyStorage;
 
 /**
  * Create a "folder" on Bunny storage by uploading a zero-byte placeholder.
@@ -115,6 +118,22 @@ export async function downloadBunnyFile(filePath: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`Bunny download failed: ${res.status}`);
   return res.text();
+}
+
+/**
+ * Download a file from Bunny CDN and return its content as a Buffer (binary).
+ * Used for downloading video files to re-upload to Bunny Stream.
+ */
+export async function downloadBunnyFileBuffer(filePath: string): Promise<Buffer> {
+  const { config } = require('../config');
+  const url = `${config.bunny.storageUrl}/${config.bunny.storageZone}/${filePath}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { AccessKey: config.bunny.storageKey },
+  });
+  if (!res.ok) throw new Error(`Bunny binary download failed: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }
 
 export async function deleteImage(path: string, fullCdnUrl?: string): Promise<void> {
