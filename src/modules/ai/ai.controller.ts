@@ -3402,7 +3402,6 @@ export async function importMaterialTree(req: Request, res: Response) {
                     topic_id: topicId,
                     is_active: true,
                     display_order: sti + 1,
-                    sort_order: sti + 1,
                     created_by: userId,
                   })
                   .select()
@@ -3835,7 +3834,7 @@ export async function importFromCdn(req: Request, res: Response) {
       supabase.from('subjects').select('id, code, slug').is('deleted_at', null),
       supabase.from('chapters').select('id, slug, subject_id, sort_order, display_order').is('deleted_at', null),
       supabase.from('topics').select('id, slug, chapter_id, sort_order, display_order').is('deleted_at', null),
-      supabase.from('sub_topics').select('id, slug, topic_id, sort_order, display_order, video_id, video_source').is('deleted_at', null),
+      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_source').is('deleted_at', null),
     ]);
 
     const existingSubjectsBySlug = new Map<string, any>((subjectsRes.data || []).map((s: any) => [s.slug, s]));
@@ -4121,7 +4120,7 @@ export async function importFromCdn(req: Request, res: Response) {
               // Fuzzy match by ilike
               const { data: fuzzyMatch } = await supabase
                 .from('sub_topics')
-                .select('id, slug, sort_order, display_order, video_id, video_source')
+                .select('id, slug, display_order, video_id, video_source')
                 .eq('topic_id', topic.id)
                 .is('deleted_at', null)
                 .ilike('slug', `${stSlug}%`)
@@ -4136,7 +4135,7 @@ export async function importFromCdn(req: Request, res: Response) {
             // Position-based match for sync (rename detection)
             if (!subTopic && isSync && topic.id > 0) {
               const topicSTs = subTopicsByTopic.get(topic.id) || [];
-              const byPos = topicSTs.find(st => st.sort_order === parsedST.order);
+              const byPos = topicSTs.find(st => st.display_order === parsedST.order);
               if (byPos) {
                 subTopic = byPos;
                 existingSubTopics.set(`${topic.id}:${byPos.slug}`, byPos);
@@ -4153,7 +4152,6 @@ export async function importFromCdn(req: Request, res: Response) {
                     slug: newSlug,
                     topic_id: topic.id,
                     display_order: parsedST.order,
-                    sort_order: parsedST.order,
                     difficulty_level: 'all_levels',
                     estimated_minutes: 30,
                     is_active: true,
@@ -4175,10 +4173,9 @@ export async function importFromCdn(req: Request, res: Response) {
               report.sub_topics.created++;
             } else {
               // Sync mode: update sort_order if changed
-              if (isSync && (subTopic.sort_order !== parsedST.order || subTopic.display_order !== parsedST.order)) {
+              if (isSync && subTopic.display_order !== parsedST.order) {
                 if (!isDryRun) {
                   await supabase.from('sub_topics').update({
-                    sort_order: parsedST.order,
                     display_order: parsedST.order,
                   }).eq('id', subTopic.id);
                 }
