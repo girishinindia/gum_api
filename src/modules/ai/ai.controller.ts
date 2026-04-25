@@ -3470,12 +3470,12 @@ USER INSTRUCTIONS: ${userPrompt}`;
         } catch {}
       }
 
-      // Upload HTML file to Bunny storage using original filename
+      // Upload HTML file to Bunny storage using original filename (include sub-topic slug in path)
       let pageUrl: string | undefined;
       try {
         const originalName = file.originalname || `${slug}.html`;
         const pagePath = materialBasePath
-          ? `${materialBasePath}/${language.iso_code}/${originalName}`
+          ? `${materialBasePath}/${slug}/${language.iso_code}/${originalName}`
           : `sub-topic-translations/pages/${originalName}`;
         pageUrl = await uploadRawFile(file.buffer, pagePath);
       } catch (uploadErr) {
@@ -3923,8 +3923,8 @@ export async function translatePage(req: Request, res: Response) {
     const parentTopic = (subTopic as any).topics;
     const parentChapter = parentTopic?.chapters;
     const parentSubject = parentChapter?.subjects;
-    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
-      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
+    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug && subTopic.slug)
+      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}/${subTopic.slug}`
       : null;
 
     // Get all active material languages EXCEPT English
@@ -4014,12 +4014,17 @@ Return ONLY the complete translated HTML document, nothing else.`;
 
         // Update or create DB record
         if (existingTrans) {
-          await supabase
+          const { error: updErr } = await supabase
             .from('sub_topic_translations')
             .update({ page: pageUrl, updated_by: userId })
             .eq('id', existingTrans.id);
+          if (updErr) {
+            console.error(`Failed to update translation for ${lang.name}:`, updErr);
+            results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB update failed: ${updErr.message}` });
+            continue;
+          }
         } else {
-          await supabase
+          const { error: insErr } = await supabase
             .from('sub_topic_translations')
             .insert({
               sub_topic_id: Number(sub_topic_id),
@@ -4029,6 +4034,11 @@ Return ONLY the complete translated HTML document, nothing else.`;
               is_active: true,
               created_by: userId,
             });
+          if (insErr) {
+            console.error(`Failed to insert translation for ${lang.name}:`, insErr);
+            results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB insert failed: ${insErr.message}` });
+            continue;
+          }
         }
 
         results.push({ language: lang.name, iso_code: lang.iso_code, status: 'success', page_url: pageUrl });
@@ -5154,10 +5164,29 @@ export async function scaffoldCdn(req: Request, res: Response) {
       return err(res, `Failed to parse: ${parseResult.errors.join('; ')}`, 400);
     }
 
-    // Build all CDN folder paths (under materials/ prefix)
-    const { buildCdnPaths } = require('../../utils/courseParser');
-    const rawPaths: string[] = buildCdnPaths(parseResult.course, langCodes);
-    const paths = rawPaths.map(p => `materials/${p}`);
+    // Build all CDN folder paths using DB-compatible slugs (lowercase-hyphenated)
+    // This matches the format used by Subject/Chapter/Topic controllers and all file uploads
+    const course = parseResult.course;
+    const courseSlug = nameToSlug(course.name);
+    const paths: string[] = [`materials/${courseSlug}`];
+
+    for (const chapter of course.chapters) {
+      const chapterSlug = nameToSlug(chapter.name);
+      const chapterPath = `materials/${courseSlug}/${chapterSlug}`;
+      paths.push(chapterPath);
+
+      for (const topic of chapter.topics) {
+        const topicSlug = nameToSlug(topic.name);
+        const topicPath = `${chapterPath}/${topicSlug}`;
+        paths.push(topicPath);
+        paths.push(`${topicPath}/resources`);
+
+        // Language folders under each topic
+        for (const iso of langCodes) {
+          paths.push(`${topicPath}/${iso}`);
+        }
+      }
+    }
 
     // Create folders in batches
     const batchSize = 10;
@@ -5168,9 +5197,8 @@ export async function scaffoldCdn(req: Request, res: Response) {
       created += batch.length;
     }
 
-    // Also create the .txt file on CDN
-    const courseFolderName = buildCourseFolderName(parseResult.course.name);
-    const txtPath = `materials/${courseFolderName}/${courseFolderName}.txt`;
+    // Also create the .txt file on CDN (using slug-based path)
+    const txtPath = `materials/${courseSlug}/${courseSlug}.txt`;
     await uploadRawFile(Buffer.from(txt_content, 'utf-8'), txtPath);
 
     // Create matching Bunny Stream collection hierarchy for videos
