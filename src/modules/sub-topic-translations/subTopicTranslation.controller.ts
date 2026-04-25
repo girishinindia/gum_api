@@ -158,13 +158,12 @@ export async function create(req: Request, res: Response) {
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).eq('for_material', true).single();
   if (!lang) return err(res, 'Language not found or not available for material', 404);
 
-  // Build material folder path from parent chain (includes sub-topic slug)
+  // Build material folder path from parent chain (topic level — no sub-topic folder)
   const parentTopic = (subTopic as any).topics;
   const parentChapter = parentTopic?.chapters;
   const parentSubject = parentChapter?.subjects;
-  const subTopicSlug = subTopic.slug;
-  const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug && subTopicSlug)
-    ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}/${subTopicSlug}`
+  const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
+    ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
     : null;
 
   // Set audit field
@@ -322,7 +321,7 @@ export async function update(req: Request, res: Response) {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   let mediaUploaded = false;
 
-  // Build material folder path for structured file uploads (includes sub-topic slug)
+  // Build material folder path for structured file uploads (topic level — no sub-topic folder)
   let updateMaterialBasePath: string | null = null;
   let updateLangIso: string | null = resolvedLangIso || null;
   if (files?.page_file?.[0]) {
@@ -336,8 +335,8 @@ export async function update(req: Request, res: Response) {
       const t = (stData as any).topics;
       const c = t?.chapters;
       const s = c?.subjects;
-      if (s?.slug && c?.slug && t?.slug && stData.slug) {
-        updateMaterialBasePath = `materials/${s.slug}/${c.slug}/${t.slug}/${stData.slug}`;
+      if (s?.slug && c?.slug && t?.slug) {
+        updateMaterialBasePath = `materials/${s.slug}/${c.slug}/${t.slug}`;
       }
     }
     if (!updateLangIso) {

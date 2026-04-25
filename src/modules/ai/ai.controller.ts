@@ -3470,12 +3470,12 @@ USER INSTRUCTIONS: ${userPrompt}`;
         } catch {}
       }
 
-      // Upload HTML file to Bunny storage using original filename (include sub-topic slug in path)
+      // Upload HTML file to Bunny storage using original filename (topic-level path)
       let pageUrl: string | undefined;
       try {
         const originalName = file.originalname || `${slug}.html`;
         const pagePath = materialBasePath
-          ? `${materialBasePath}/${slug}/${language.iso_code}/${originalName}`
+          ? `${materialBasePath}/${language.iso_code}/${originalName}`
           : `sub-topic-translations/pages/${originalName}`;
         pageUrl = await uploadRawFile(file.buffer, pagePath);
       } catch (uploadErr) {
@@ -3923,8 +3923,8 @@ export async function translatePage(req: Request, res: Response) {
     const parentTopic = (subTopic as any).topics;
     const parentChapter = parentTopic?.chapters;
     const parentSubject = parentChapter?.subjects;
-    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug && subTopic.slug)
-      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}/${subTopic.slug}`
+    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
+      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
       : null;
 
     // Get all active material languages EXCEPT English
