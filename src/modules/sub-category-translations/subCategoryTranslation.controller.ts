@@ -46,19 +46,34 @@ function generateStructuredData(opts: {
   isoCode?: string;
   image?: string | null;
   canonicalUrl?: string | null;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  metaKeywords?: string | null;
+  ogTitle?: string | null;
+  ogDescription?: string | null;
+  ogImage?: string | null;
+  twitterTitle?: string | null;
+  twitterDescription?: string | null;
+  twitterImage?: string | null;
+  focusKeyword?: string | null;
 }): any[] {
   const lang = opts.isoCode || 'en';
   const pageUrl = opts.canonicalUrl || `${SITE_URL}/${lang}/categories/${opts.categorySlug}/${opts.subCategorySlug}`;
+  const headline = opts.metaTitle || opts.ogTitle || opts.name;
+  const desc = opts.metaDescription || opts.ogDescription || opts.description;
+  const img = opts.ogImage || opts.twitterImage || opts.image;
+  const keywords = opts.metaKeywords || opts.focusKeyword || undefined;
 
   const sd: any[] = [
     {
       '@context': 'https://schema.org',
       '@type': 'CollectionPage',
-      name: opts.name,
-      ...(opts.description && { description: opts.description }),
+      name: headline,
+      ...(desc && { description: desc }),
       url: pageUrl,
       inLanguage: lang,
-      ...(opts.image && { image: opts.image }),
+      ...(img && { image: img }),
+      ...(keywords && { keywords }),
       isPartOf: {
         '@type': 'WebSite',
         name: SITE_NAME,
@@ -160,8 +175,8 @@ export async function create(req: Request, res: Response) {
     uploadedUrls.push(body.twitter_image);
   }
 
-  // Auto-generate structured_data if empty/null (use sub-category image as fallback)
-  if (!body.structured_data || (Array.isArray(body.structured_data) && body.structured_data.length === 0)) {
+  // Auto-generate structured_data from all filled SEO fields
+  {
     const parentCat = (subCat as any).categories;
     body.structured_data = generateStructuredData({
       name: body.name,
@@ -172,6 +187,16 @@ export async function create(req: Request, res: Response) {
       isoCode: lang.iso_code,
       image: subCat.image || null,
       canonicalUrl: body.canonical_url,
+      metaTitle: body.meta_title,
+      metaDescription: body.meta_description,
+      metaKeywords: body.meta_keywords,
+      ogTitle: body.og_title,
+      ogDescription: body.og_description,
+      ogImage: body.og_image,
+      twitterTitle: body.twitter_title,
+      twitterDescription: body.twitter_description,
+      twitterImage: body.twitter_image,
+      focusKeyword: body.focus_keyword,
     });
   }
 
@@ -227,8 +252,8 @@ export async function update(req: Request, res: Response) {
     resolvedLangIso = lang.iso_code;
   }
 
-  // Regenerate structured data if requested via query param
-  if (req.query.regenerate_sd === 'true') {
+  // Always regenerate structured_data from all filled SEO fields
+  {
     const subCatId = updates.sub_category_id || old.sub_category_id;
     const langId = updates.language_id || old.language_id;
     if (!resolvedSubCatSlug) {
@@ -252,6 +277,16 @@ export async function update(req: Request, res: Response) {
       isoCode: resolvedLangIso || 'en',
       image: resolvedSubCatImage || null,
       canonicalUrl: updates.canonical_url !== undefined ? updates.canonical_url : old.canonical_url,
+      metaTitle: updates.meta_title !== undefined ? updates.meta_title : old.meta_title,
+      metaDescription: updates.meta_description !== undefined ? updates.meta_description : old.meta_description,
+      metaKeywords: updates.meta_keywords !== undefined ? updates.meta_keywords : old.meta_keywords,
+      ogTitle: updates.og_title !== undefined ? updates.og_title : old.og_title,
+      ogDescription: updates.og_description !== undefined ? updates.og_description : old.og_description,
+      ogImage: updates.og_image !== undefined ? updates.og_image : old.og_image,
+      twitterTitle: updates.twitter_title !== undefined ? updates.twitter_title : old.twitter_title,
+      twitterDescription: updates.twitter_description !== undefined ? updates.twitter_description : old.twitter_description,
+      twitterImage: updates.twitter_image !== undefined ? updates.twitter_image : old.twitter_image,
+      focusKeyword: updates.focus_keyword !== undefined ? updates.focus_keyword : old.focus_keyword,
     });
   }
 

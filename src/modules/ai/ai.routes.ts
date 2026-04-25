@@ -56,6 +56,9 @@ r.post('/reverse-translate-page', requirePermission('ai', 'create'), htmlUpload.
 const txtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { const ext = file.originalname.toLowerCase(); if (ext.endsWith('.txt') || ext.endsWith('.csv')) cb(null, true); else cb(new Error('Only .txt or .csv files are allowed')); } });
 r.post('/import-material-tree', requirePermission('ai', 'create'), txtUpload.single('file'), ctrl.importMaterialTree);
 
+// Scan CDN — read-only preview of course folders for selective import
+r.post('/scan-cdn', requirePermission('ai', 'read'), ctrl.scanCdn);
+
 // Import from CDN — scan Bunny storage and create missing DB records
 r.post('/import-from-cdn', requirePermission('ai', 'create'), ctrl.importFromCdn);
 
@@ -64,5 +67,8 @@ r.post('/scaffold-cdn', requirePermission('ai', 'create'), ctrl.scaffoldCdn);
 
 // Check video transcoding status
 r.post('/check-video-status', requirePermission('ai', 'create'), ctrl.checkVideoStatus);
+
+// Clean orphaned videos from Bunny Stream (not linked to any DB record)
+r.post('/clean-orphaned-videos', requirePermission('ai', 'delete'), ctrl.cleanOrphanedVideos);
 
 export default r;

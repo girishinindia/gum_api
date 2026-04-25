@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
+import { deleteVideoFromStream } from '../../services/video.service';
 
 const CACHE_KEY = 'subjects:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -103,6 +104,17 @@ export async function create(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 
+  // Sync English translation
+  if (body.name) {
+    await supabase.from('subject_translations').upsert({
+      subject_id: data.id,
+      language_id: 7,
+      name: body.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'subject_id,language_id' });
+  }
+
   // Create Bunny folder: materials/<subject-slug>/
   createBunnyFolder(`materials/${data.slug}`).catch(() => {});
 
@@ -142,6 +154,17 @@ export async function update(req: Request, res: Response) {
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
+  }
+
+  // Sync English translation
+  if (updates.name) {
+    await supabase.from('subject_translations').upsert({
+      subject_id: id,
+      language_id: 7,
+      name: updates.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'subject_id,language_id' });
   }
 
   await clearCache();
@@ -240,8 +263,14 @@ export async function remove(req: Request, res: Response) {
     const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds);
     if (childTopics && childTopics.length > 0) {
       const tIds = childTopics.map((t: any) => t.id);
-      const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
+      const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').in('topic_id', tIds);
       if (childSubTopics && childSubTopics.length > 0) {
+        // Delete Bunny Stream videos for each sub-topic
+        for (const st of childSubTopics) {
+          if (st.video_id && st.video_source === 'bunny') {
+            try { await deleteVideoFromStream(st.video_id); } catch {}
+          }
+        }
         const stIds = childSubTopics.map((st: any) => st.id);
         await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
         await supabase.from('sub_topics').delete().in('topic_id', tIds);

@@ -108,6 +108,17 @@ export async function create(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 
+  // Sync English translation
+  if (body.name) {
+    await supabase.from('category_translations').upsert({
+      category_id: data.id,
+      language_id: 7,
+      name: body.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'category_id,language_id' });
+  }
+
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'category_created', targetType: 'category', targetId: data.id, targetName: data.code, ip: getClientIp(req) });
   if (imageUrl) logData({ actorId: req.user!.id, action: 'media_uploaded', resourceType: 'category', resourceId: data.id, resourceName: data.code, ip: getClientIp(req), metadata: { type: 'category_image' } });
@@ -154,6 +165,17 @@ export async function update(req: Request, res: Response) {
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
+  }
+
+  // Sync English translation
+  if (updates.name) {
+    await supabase.from('category_translations').upsert({
+      category_id: id,
+      language_id: 7,
+      name: updates.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'category_id,language_id' });
   }
 
   await clearCache();

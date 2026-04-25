@@ -136,6 +136,54 @@ export function clearCollectionCache(): void {
   collectionCache.clear();
 }
 
+/**
+ * Delete a collection from Bunny Stream.
+ */
+export async function deleteStreamCollection(collectionId: string): Promise<void> {
+  const libId = config.bunny.streamLibraryId;
+  const res = await fetch(`${STREAM_BASE}/library/${libId}/collections/${collectionId}`, {
+    method: 'DELETE',
+    headers: apiHeaders(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Bunny Stream delete collection failed: ${res.status} ${text}`);
+  }
+}
+
+/**
+ * List ALL videos in the Bunny Stream library (auto-paginates).
+ * Returns flat array of { guid, title, collectionId, status, storageSize }.
+ */
+export async function listAllStreamVideos(): Promise<{ guid: string; title: string; collectionId: string; status: number; storageSize: number }[]> {
+  const all: any[] = [];
+  let page = 1;
+  const perPage = 100;
+  while (true) {
+    const result = await listStreamVideos({ page, itemsPerPage: perPage });
+    all.push(...result.items);
+    if (all.length >= result.totalItems || result.items.length < perPage) break;
+    page++;
+  }
+  return all.map(v => ({ guid: v.guid, title: v.title, collectionId: v.collectionId || '', status: v.status, storageSize: v.storageSize || 0 }));
+}
+
+/**
+ * List ALL collections in the Bunny Stream library (auto-paginates).
+ */
+export async function listAllStreamCollections(): Promise<StreamCollection[]> {
+  const all: StreamCollection[] = [];
+  let page = 1;
+  const perPage = 100;
+  while (true) {
+    const result = await listStreamCollections(undefined, page, perPage);
+    all.push(...result.items);
+    if (all.length >= result.totalItems || result.items.length < perPage) break;
+    page++;
+  }
+  return all;
+}
+
 // ─── Video Upload (existing buffer method) ─────────────────
 
 /**

@@ -25,10 +25,10 @@ export async function list(req: Request, res: Response) {
     // Return top-level subjects as folders
     const { data: subjects } = await supabase
       .from('subjects')
-      .select('id, slug, updated_at')
+      .select('id, code, slug, display_order, updated_at')
       .is('deleted_at', null)
       .eq('is_active', true)
-      .order('slug');
+      .order('display_order');
 
     const nodes: TreeNode[] = (subjects || []).map(s => ({
       name: s.slug,
@@ -55,10 +55,10 @@ export async function fullTree(req: Request, res: Response) {
   try {
     // Fetch all data in parallel — 6 fast DB queries instead of hundreds of CDN calls
     const [subjectsRes, chaptersRes, topicsRes, subTopicsRes, translationsRes, languagesRes] = await Promise.all([
-      supabase.from('subjects').select('id, slug, created_at, updated_at').is('deleted_at', null).order('slug'),
-      supabase.from('chapters').select('id, slug, subject_id, created_at, updated_at').is('deleted_at', null).order('slug'),
-      supabase.from('topics').select('id, slug, chapter_id, created_at, updated_at').is('deleted_at', null).order('slug'),
-      supabase.from('sub_topics').select('id, slug, topic_id, created_at, updated_at').is('deleted_at', null).order('slug'),
+      supabase.from('subjects').select('id, code, slug, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
+      supabase.from('chapters').select('id, slug, subject_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
+      supabase.from('topics').select('id, slug, chapter_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
+      supabase.from('sub_topics').select('id, slug, topic_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('sub_topic_translations').select('id, sub_topic_id, language_id, page, created_at, updated_at').is('deleted_at', null),
       supabase.from('languages').select('id, iso_code, name').eq('is_active', true).eq('for_material', true).order('id'),
     ]);
@@ -101,6 +101,9 @@ export async function fullTree(req: Request, res: Response) {
     let totalFiles = 0;
     let totalSize = 0;
     let totalTranslations = 0;
+
+    // Helper: format display name with order number
+    const displayName = (slug: string, order?: number) => order ? `${order}. ${slug}` : slug;
 
     // Build tree
     const tree: TreeNode[] = subjects.map(subject => {
@@ -183,7 +186,7 @@ export async function fullTree(req: Request, res: Response) {
 
           totalFolders++;
           return {
-            name: topic.slug,
+            name: displayName(topic.slug, topic.display_order),
             path: topicPath,
             isDirectory: true,
             size: 0,
@@ -196,7 +199,7 @@ export async function fullTree(req: Request, res: Response) {
 
         totalFolders++;
         return {
-          name: chapter.slug,
+          name: displayName(chapter.slug, chapter.display_order),
           path: chapterPath,
           isDirectory: true,
           size: 0,
@@ -209,7 +212,7 @@ export async function fullTree(req: Request, res: Response) {
 
       totalFolders++;
       return {
-        name: subject.slug,
+        name: subject.code || subject.slug,
         path: subjectPath,
         isDirectory: true,
         size: 0,

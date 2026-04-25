@@ -38,6 +38,7 @@ function parseMultipartBody(req: Request): any {
 /**
  * Auto-generates JSON-LD structured data for a sub-topic translation.
  * Produces: Article, BreadcrumbList (5-level: Home > Subjects > Subject > Topic > Sub-Topic), ItemList.
+ * Uses all available SEO fields for rich structured data.
  */
 function generateStructuredData(opts: {
   name: string;
@@ -47,19 +48,34 @@ function generateStructuredData(opts: {
   isoCode?: string;
   image?: string | null;
   canonicalUrl?: string | null;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  metaKeywords?: string | null;
+  ogTitle?: string | null;
+  ogDescription?: string | null;
+  ogImage?: string | null;
+  twitterTitle?: string | null;
+  twitterDescription?: string | null;
+  twitterImage?: string | null;
+  focusKeyword?: string | null;
 }): any[] {
   const lang = opts.isoCode || 'en';
   const pageUrl = opts.canonicalUrl || `${SITE_URL}/${lang}/subjects/${opts.topicSlug}/${opts.subTopicSlug}`;
+  const headline = opts.metaTitle || opts.ogTitle || opts.name;
+  const desc = opts.metaDescription || opts.ogDescription || opts.shortIntro;
+  const img = opts.ogImage || opts.twitterImage || opts.image;
+  const keywords = opts.metaKeywords || opts.focusKeyword || undefined;
 
   const sd: any[] = [
     {
       '@context': 'https://schema.org',
       '@type': 'Article',
-      name: opts.name,
-      ...(opts.shortIntro && { description: opts.shortIntro }),
+      name: headline,
+      ...(desc && { description: desc }),
       url: pageUrl,
       inLanguage: lang,
-      ...(opts.image && { image: opts.image }),
+      ...(img && { image: img }),
+      ...(keywords && { keywords }),
       isPartOf: {
         '@type': 'WebSite',
         name: SITE_NAME,
@@ -198,18 +214,26 @@ export async function create(req: Request, res: Response) {
     uploadedUrls.push(body.page);
   }
 
-  // Auto-generate structured_data if empty/null
-  if (!body.structured_data || (Array.isArray(body.structured_data) && body.structured_data.length === 0)) {
-    body.structured_data = generateStructuredData({
-      name: body.name,
-      shortIntro: body.short_intro,
-      subTopicSlug: subTopic.slug,
-      topicSlug: parentTopic?.slug || 'topic',
-      isoCode: lang.iso_code,
-      image: body.image || null,
-      canonicalUrl: body.canonical_url,
-    });
-  }
+  // Auto-generate structured_data from all filled SEO fields
+  body.structured_data = generateStructuredData({
+    name: body.name,
+    shortIntro: body.short_intro,
+    subTopicSlug: subTopic.slug,
+    topicSlug: parentTopic?.slug || 'topic',
+    isoCode: lang.iso_code,
+    image: body.image || null,
+    canonicalUrl: body.canonical_url,
+    metaTitle: body.meta_title,
+    metaDescription: body.meta_description,
+    metaKeywords: body.meta_keywords,
+    ogTitle: body.og_title,
+    ogDescription: body.og_description,
+    ogImage: body.og_image,
+    twitterTitle: body.twitter_title,
+    twitterDescription: body.twitter_description,
+    twitterImage: body.twitter_image,
+    focusKeyword: body.focus_keyword,
+  });
 
   const { data, error: e } = await supabase.from('sub_topic_translations').insert(body).select(FK_SELECT).single();
   if (e) {
@@ -259,8 +283,8 @@ export async function update(req: Request, res: Response) {
     resolvedLangIso = lang.iso_code;
   }
 
-  // Regenerate structured data if requested via query param
-  if (req.query.regenerate_sd === 'true') {
+  // Always regenerate structured_data from all filled SEO fields
+  {
     const subTopicId = updates.sub_topic_id || old.sub_topic_id;
     const langId = updates.language_id || old.language_id;
     if (!resolvedSubTopicSlug) {
@@ -279,8 +303,18 @@ export async function update(req: Request, res: Response) {
       subTopicSlug: resolvedSubTopicSlug || 'sub-topic',
       topicSlug: resolvedTopicSlug || 'topic',
       isoCode: resolvedLangIso || 'en',
-      image: old.image || null,
+      image: updates.image !== undefined ? updates.image : old.image,
       canonicalUrl: updates.canonical_url !== undefined ? updates.canonical_url : old.canonical_url,
+      metaTitle: updates.meta_title !== undefined ? updates.meta_title : old.meta_title,
+      metaDescription: updates.meta_description !== undefined ? updates.meta_description : old.meta_description,
+      metaKeywords: updates.meta_keywords !== undefined ? updates.meta_keywords : old.meta_keywords,
+      ogTitle: updates.og_title !== undefined ? updates.og_title : old.og_title,
+      ogDescription: updates.og_description !== undefined ? updates.og_description : old.og_description,
+      ogImage: updates.og_image !== undefined ? updates.og_image : old.og_image,
+      twitterTitle: updates.twitter_title !== undefined ? updates.twitter_title : old.twitter_title,
+      twitterDescription: updates.twitter_description !== undefined ? updates.twitter_description : old.twitter_description,
+      twitterImage: updates.twitter_image !== undefined ? updates.twitter_image : old.twitter_image,
+      focusKeyword: updates.focus_keyword !== undefined ? updates.focus_keyword : old.focus_keyword,
     });
   }
 

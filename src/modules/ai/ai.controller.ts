@@ -7,7 +7,7 @@ import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, listBunnyStorage, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
-import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus } from '../../services/video.service';
+import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus, listAllStreamVideos, listAllStreamCollections, deleteVideoFromStream, deleteStreamCollection } from '../../services/video.service';
 import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
@@ -747,6 +747,327 @@ function extractMaterialFields(translated: any, fields: string[]): Record<string
   const result: Record<string, string> = {};
   for (const f of fields) result[f] = translated[f] || '';
   return result;
+}
+
+// ─── Reusable helper: generate AI translations for all for_material languages ───
+type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic';
+
+const ENTITY_CONFIG: Record<MaterialEntityType, {
+  table: string;
+  translationTable: string;
+  idField: string;
+  fields: string[];
+  entityLabel: string;
+}> = {
+  subject: { table: 'subjects', translationTable: 'subject_translations', idField: 'subject_id', fields: MATERIAL_FIELDS_SUBJECT, entityLabel: 'subject' },
+  chapter: { table: 'chapters', translationTable: 'chapter_translations', idField: 'chapter_id', fields: MATERIAL_FIELDS_CHAPTER, entityLabel: 'chapter' },
+  topic: { table: 'topics', translationTable: 'topic_translations', idField: 'topic_id', fields: MATERIAL_FIELDS_TOPIC, entityLabel: 'topic' },
+  sub_topic: { table: 'sub_topics', translationTable: 'sub_topic_translations', idField: 'sub_topic_id', fields: MATERIAL_FIELDS_SUB_TOPIC, entityLabel: 'sub-topic' },
+};
+
+const DEFAULT_TRANSLATION_PROMPT = 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
+
+/**
+ * Generate AI translations for an entity across all for_material languages.
+ * Reusable by both the bulk API endpoints and importFromCdn.
+ * Returns { results, totalInputTokens, totalOutputTokens }.
+ */
+async function generateAllTranslationsForEntity(
+  entityType: MaterialEntityType,
+  entityId: number,
+  userId: string,
+  provider: AIProvider = 'gemini',
+  prompt?: string,
+): Promise<{ results: any[]; totalInputTokens: number; totalOutputTokens: number }> {
+  const cfg = ENTITY_CONFIG[entityType];
+  const userPrompt = prompt || DEFAULT_TRANSLATION_PROMPT;
+
+  // Fetch entity
+  const { data: entity } = await supabase.from(cfg.table).select('*').eq('id', entityId).single();
+  if (!entity) throw new Error(`${cfg.entityLabel} not found (id=${entityId})`);
+
+  // For sub_topics, fetch parent topic slug for structured data breadcrumbs
+  let parentTopicSlug = '';
+  if (entityType === 'sub_topic' && entity.topic_id) {
+    const { data: parentTopic } = await supabase.from('topics').select('slug').eq('id', entity.topic_id).single();
+    parentTopicSlug = parentTopic?.slug || 'topic';
+  }
+
+  // Helper to generate JSON-LD structured data for sub-topic translations
+  const buildStructuredData = (fields: any, isoCode: string): any[] | null => {
+    if (entityType !== 'sub_topic') return null;
+    const SITE_URL = 'https://growupmore.com';
+    const SITE_NAME = 'GrowUpMore';
+    const subTopicSlug = entity.slug || '';
+    const topicSlug = parentTopicSlug;
+    const headline = fields.meta_title || fields.og_title || fields.name || '';
+    const desc = fields.meta_description || fields.og_description || fields.short_intro || '';
+    const img = fields.og_image || fields.twitter_image || null;
+    const keywords = fields.meta_keywords || fields.focus_keyword || undefined;
+    const pageUrl = `${SITE_URL}/${isoCode}/subjects/${topicSlug}/${subTopicSlug}`;
+    return [
+      {
+        '@context': 'https://schema.org', '@type': 'Article',
+        name: headline, ...(desc && { description: desc }),
+        url: pageUrl, inLanguage: isoCode,
+        ...(img && { image: img }), ...(keywords && { keywords }),
+        isPartOf: { '@type': 'WebSite', name: SITE_NAME, url: SITE_URL },
+        provider: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+      },
+      {
+        '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${isoCode}` },
+          { '@type': 'ListItem', position: 2, name: 'Subjects', item: `${SITE_URL}/${isoCode}/subjects` },
+          { '@type': 'ListItem', position: 3, name: 'Subject', item: `${SITE_URL}/${isoCode}/subjects` },
+          { '@type': 'ListItem', position: 4, name: 'Topic', item: `${SITE_URL}/${isoCode}/subjects/${topicSlug}` },
+          { '@type': 'ListItem', position: 5, name: fields.name || '' },
+        ],
+      },
+      { '@context': 'https://schema.org', '@type': 'ItemList', name: fields.name || '', numberOfItems: 0, itemListElement: [] },
+    ];
+  };
+
+  // Fetch all for_material languages
+  const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
+  if (!allLangs || allLangs.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
+
+  // Find existing translations
+  const { data: existing } = await supabase.from(cfg.translationTable).select('id, language_id, deleted_at').eq(cfg.idField, entityId);
+  const activeLangIds = new Set((existing || []).filter((e: any) => !e.deleted_at).map((e: any) => e.language_id));
+  const softDeletedMap = new Map((existing || []).filter((e: any) => e.deleted_at).map((e: any) => [e.language_id, e.id]));
+  const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+
+  if (missingLangs.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
+
+  // Check if English already exists with meaningful content
+  const enLangRecord = allLangs.find(l => l.iso_code === 'en');
+  let englishSource: any = null;
+  let englishExistsInDb = !missingLangs.find(l => l.iso_code === 'en'); // true if English is NOT in missing list
+  let englishHasContent = false;
+
+  if (englishExistsInDb && enLangRecord) {
+    const { data: enTrans } = await supabase.from(cfg.translationTable).select('*').eq(cfg.idField, entityId).is('deleted_at', null);
+    if (enTrans) englishSource = enTrans.find((t: any) => t.language_id === enLangRecord.id);
+    // Check if English has actual content beyond just name
+    const contentFields = cfg.fields.filter(f => f !== 'name');
+    englishHasContent = englishSource && contentFields.some((f: string) => {
+      const val = englishSource[f];
+      return val && typeof val === 'string' && val.trim().length > 0;
+    });
+  }
+
+  // If English exists but is empty (name-only from CDN import), we need to generate English content first
+  const needsEnglishGeneration = englishExistsInDb && !englishHasContent;
+
+  const entityName = entity.name || entity.code || entity.slug || '';
+
+  // Build extra field rules
+  const extraRules = entityType === 'subject'
+    ? 'name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences.'
+    : entityType === 'chapter' || entityType === 'topic'
+    ? `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve.`
+    : `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences.`;
+
+  // ─── Step A: If English exists but is empty, generate English content first ───
+  if (needsEnglishGeneration) {
+    const enJsonSpec = buildMaterialJsonSpec(cfg.fields);
+    const enSystemPrompt = `You are a professional educational content writer for GrowUpMore — an educational platform.
+TASK: Generate comprehensive English content for the ${cfg.entityLabel} below.
+OUTPUT — return ONLY valid JSON: ${enJsonSpec}
+RULES: ${extraRules} Write in a natural, human way. Be thorough and informative.`;
+    const enUserContent = JSON.stringify({ name: entityName, slug: entity.slug || '', code: entity.code || '' });
+
+    try {
+      const { text: enText, inputTokens: enIn, outputTokens: enOut } = await callAI(provider, enSystemPrompt, enUserContent);
+      const enTranslated = parseJSON(enText);
+      const enFields = extractMaterialFields(enTranslated, cfg.fields);
+
+      // Generate structured data for sub-topic translations
+      const enStructuredData = buildStructuredData(enFields, 'en');
+
+      // Update the existing English translation record with full content
+      if (englishSource?.id) {
+        await supabase.from(cfg.translationTable).update({
+          ...enFields,
+          ...(enStructuredData && { structured_data: enStructuredData }),
+          updated_by: userId,
+        }).eq('id', englishSource.id);
+      } else if (enLangRecord) {
+        // English record might not exist yet (edge case)
+        await supabase.from(cfg.translationTable).upsert({
+          [cfg.idField]: entityId,
+          language_id: enLangRecord.id,
+          ...enFields,
+          ...(enStructuredData && { structured_data: enStructuredData }),
+          is_active: true,
+          created_by: userId,
+        }, { onConflict: `${cfg.idField},language_id` });
+      }
+
+      // Also update entity name from AI if it provided a better one
+      if (enFields.name) {
+        await supabase.from(cfg.table).update({ name: enFields.name }).eq('id', entityId);
+      }
+
+      // Refresh englishSource with the new content for translation step
+      englishSource = { ...englishSource, ...enFields };
+      englishHasContent = true;
+    } catch (enErr: any) {
+      console.error(`Failed to generate English content for ${cfg.entityLabel} ${entityId}:`, enErr);
+      // Continue anyway — translations will be generated from name only
+    }
+  }
+
+  // ─── Step B: Generate translations for all other missing languages ───
+  // Rebuild missingLangs to exclude English (since we handled it above or it already existed)
+  const langsToTranslate = missingLangs.filter(l => l.iso_code !== 'en');
+
+  if (langsToTranslate.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
+
+  const langList = langsToTranslate.map(l => `${l.iso_code}: ${l.name}`).join(', ');
+  const jsonSpec = buildMaterialJsonSpec(cfg.fields);
+
+  let systemPrompt: string;
+  let userContent: string;
+
+  if (!englishHasContent) {
+    // No English content at all — generate everything from scratch
+    systemPrompt = `You are a professional educational content writer and multilingual translator for GrowUpMore.
+TASK: Generate comprehensive English content for the ${cfg.entityLabel} below, then translate into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { "en": ${jsonSpec}, ${langsToTranslate.map(l => `"${l.iso_code}": ${jsonSpec}`).join(', ')} }
+LANGUAGES: en: English, ${langList}
+RULES: ${extraRules} Translate EXACTLY. Use ISO code as key. Write in a natural, human way.
+MOST IMPORTANT — STRICTLY FOLLOW: Do NOT write in pure regional languages. MUST keep technical/subject/brand English words in English script (Latin letters) — do NOT transliterate. Example (Hindi): "HTML5 की Fundamentals सीखें। Web Development में Semantic Elements को cover करता है।" NOT "एचटीएमएल5 की मूल बातें।"
+USER INSTRUCTIONS: ${userPrompt}`;
+    userContent = JSON.stringify({ name: entityName, slug: entity.slug || '', code: entity.code || '' });
+  } else {
+    // English content exists — translate from it
+    const sourceContent: any = {};
+    for (const f of cfg.fields) sourceContent[f] = englishSource?.[f] || '';
+    systemPrompt = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate English content into ALL specified languages.
+OUTPUT — return ONLY valid JSON: { ${langsToTranslate.map(l => `"${l.iso_code}": ${jsonSpec}`).join(', ')} }
+LANGUAGES: ${langList}
+RULES: Translate EXACTLY with same meaning. Use ISO code as key. Write in a natural, human way.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure regional languages. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें। Modern Web Development में Semantic Elements और Forms को cover करता है।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें। आधुनिक वेब डेवलपमेंट..." — WRONG, technical words must stay in English script.
+The output should be a MIX of regional language and English technical words in English script.
+
+USER INSTRUCTIONS: ${userPrompt}`;
+    userContent = `English source:\n${JSON.stringify(sourceContent)}`;
+  }
+
+  const bulkMaxTokens = Math.max(8192, langsToTranslate.length * 4096);
+  let allTranslations: any = null;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  // Try bulk AI call with retry
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, bulkMaxTokens);
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      allTranslations = parseJSON(text);
+      break;
+    } catch (parseErr) {
+      console.error(`Bulk ${cfg.entityLabel} translation attempt ${attempt + 1} failed:`, parseErr);
+      if (attempt === 1) allTranslations = null;
+    }
+  }
+
+  const results: any[] = [];
+
+  // If bulk failed, fall back to one-by-one
+  if (!allTranslations) {
+    console.log(`Bulk ${cfg.entityLabel} translation failed, falling back to per-language...`);
+    for (const lang of langsToTranslate) {
+      try {
+        const singleSpec = buildMaterialJsonSpec(cfg.fields);
+        const singleSys = `You are a professional multilingual educational translator for GrowUpMore.
+TASK: Translate the English content below into ${lang.name} (${lang.iso_code}).
+OUTPUT — return ONLY valid JSON: ${singleSpec}
+RULES: Translate EXACTLY with same meaning. Write in a natural, human way.
+MOST IMPORTANT: Do NOT write in pure ${lang.name}. Keep technical/brand English words in English script. Example: "HTML5 की Fundamentals सीखें।"
+USER INSTRUCTIONS: ${userPrompt}`;
+        const fallbackSource: any = {};
+        for (const f of cfg.fields) fallbackSource[f] = englishSource?.[f] || '';
+        const singleUser = `English source:\n${JSON.stringify(fallbackSource)}`;
+        const { text: singleText, inputTokens: sIn, outputTokens: sOut } = await callAI(provider, singleSys, singleUser);
+        totalInputTokens += sIn;
+        totalOutputTokens += sOut;
+        const translated = parseJSON(singleText);
+        const translatedFields = extractMaterialFields(translated, cfg.fields);
+        const sd = buildStructuredData(translatedFields, lang.iso_code);
+
+        const record: any = {
+          [cfg.idField]: entityId, language_id: lang.id,
+          ...translatedFields,
+          ...(sd && { structured_data: sd }),
+          is_active: true, deleted_at: null, updated_by: userId,
+        };
+        const softDeletedId = softDeletedMap.get(lang.id);
+        let saved: any, saveErr: any;
+        if (softDeletedId) {
+          const r2 = await supabase.from(cfg.translationTable).update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+          saved = r2.data; saveErr = r2.error;
+        } else {
+          const r2 = await supabase.from(cfg.translationTable).insert({ ...record, created_by: userId }).select().single();
+          saved = r2.data; saveErr = r2.error;
+        }
+        results.push(saveErr
+          ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+          : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+      } catch (langErr: any) {
+        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
+      }
+    }
+  } else {
+    // Bulk succeeded — save each language
+    for (const lang of langsToTranslate) {
+      const translated = allTranslations[lang.iso_code];
+      if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation' }); continue; }
+
+      const translatedFields = extractMaterialFields(translated, cfg.fields);
+      const sd = buildStructuredData(translatedFields, lang.iso_code);
+
+      const record: any = {
+        [cfg.idField]: entityId, language_id: lang.id,
+        ...translatedFields,
+        ...(sd && { structured_data: sd }),
+        is_active: true, deleted_at: null, updated_by: userId,
+      };
+      const softDeletedId = softDeletedMap.get(lang.id);
+      let saved: any, saveErr: any;
+      if (softDeletedId) {
+        const r2 = await supabase.from(cfg.translationTable).update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+        saved = r2.data; saveErr = r2.error;
+      } else {
+        const r2 = await supabase.from(cfg.translationTable).insert({ ...record, created_by: userId }).select().single();
+        saved = r2.data; saveErr = r2.error;
+      }
+      results.push(saveErr
+        ? { language: lang.name, iso_code: lang.iso_code, status: 'error', error: saveErr.message }
+        : { language: lang.name, iso_code: lang.iso_code, status: 'success', id: saved.id });
+    }
+
+    // If English was generated via bulk (no content path), update entity + English translation
+    if (!englishHasContent && allTranslations['en']) {
+      const enFields = extractMaterialFields(allTranslations['en'], cfg.fields);
+      const enSd = buildStructuredData(enFields, 'en');
+      if (enFields.name) await supabase.from(cfg.table).update({ name: enFields.name }).eq('id', entityId);
+      if (englishSource?.id) {
+        await supabase.from(cfg.translationTable).update({ ...enFields, ...(enSd && { structured_data: enSd }), updated_by: userId }).eq('id', englishSource.id);
+      }
+    }
+  }
+
+  return { results, totalInputTokens, totalOutputTokens };
 }
 
 // ─── SUBJECT translation (single) ───
@@ -3792,6 +4113,86 @@ Return ONLY the complete translated HTML document in English, nothing else.`;
   }
 }
 
+// ─── Scan CDN (Preview) ───
+/**
+ * Read-only scan of the Bunny CDN root. Downloads and parses each course's
+ * .txt structure file and returns the full tree so the frontend can display
+ * a checkbox picker before the actual import.
+ */
+export async function scanCdn(_req: Request, res: Response) {
+  try {
+    const rootItems = await listBunnyStorageRecursive('materials');
+    const rootFolders = rootItems.filter(n => n.isDirectory);
+
+    const courses: any[] = [];
+    const errors: string[] = [];
+
+    for (const courseFolder of rootFolders) {
+      const children = courseFolder.children || [];
+      const txtFileName = `${courseFolder.name}.txt`;
+      const txtNode = children.find(n => !n.isDirectory && n.name === txtFileName);
+
+      if (!txtNode) {
+        errors.push(`"${courseFolder.name}" — no .txt file found (expected "${txtFileName}")`);
+        continue;
+      }
+
+      let txtContent: string;
+      try {
+        txtContent = await downloadBunnyFile(txtNode.path);
+      } catch (e: any) {
+        errors.push(`Failed to download "${txtNode.path}": ${e.message}`);
+        continue;
+      }
+
+      const parseResult = parseCourseStructure(txtContent);
+      if (parseResult.errors.length > 0) {
+        errors.push(...parseResult.errors.map(e => `[${courseFolder.name}] ${e}`));
+      }
+      if (!parseResult.course) {
+        errors.push(`Failed to parse course structure from "${txtNode.path}"`);
+        continue;
+      }
+
+      const c = parseResult.course;
+      let totalTopics = 0;
+      let totalSubTopics = 0;
+      const chaptersOut: any[] = [];
+
+      for (const ch of c.chapters) {
+        const topicsOut: any[] = [];
+        for (const tp of ch.topics) {
+          totalTopics++;
+          totalSubTopics += tp.subTopics.length;
+          topicsOut.push({
+            order: tp.order,
+            name: tp.name,
+            subTopics: tp.subTopics.map(st => ({ order: st.order, name: st.name })),
+          });
+        }
+        chaptersOut.push({
+          order: ch.order,
+          name: ch.name,
+          topics: topicsOut,
+        });
+      }
+
+      courses.push({
+        folderName: courseFolder.name,
+        name: c.name,
+        chapters: chaptersOut,
+        totalChapters: c.chapters.length,
+        totalTopics,
+        totalSubTopics,
+      });
+    }
+
+    return ok(res, { courses, errors }, 'CDN scan complete');
+  } catch (e: any) {
+    return err(res, e.message || 'CDN scan failed', 500);
+  }
+}
+
 // ─── Import from CDN ───
 /**
  * Scan the Bunny CDN `materials/` folder recursively and create missing
@@ -3814,7 +4215,11 @@ export async function importFromCdn(req: Request, res: Response) {
       upload_videos = true,
       sync_mode = 'create_only',   // 'create_only' | 'sync' | 'dry_run'
       auto_delete = false,          // only applies in sync mode
+      selected_courses,             // deprecated: string[] of folder names (kept for backward compat)
+      selected_items,               // new: { course: string; chapters?: string[] }[]
     } = req.body;
+
+    console.log('[importFromCdn] RAW selected_items:', JSON.stringify(selected_items, null, 2));
 
     const isDryRun = sync_mode === 'dry_run';
     const isSync = sync_mode === 'sync' || isDryRun;
@@ -3870,14 +4275,58 @@ export async function importFromCdn(req: Request, res: Response) {
       topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
       sub_topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
       translations: { found: 0, created: 0, existing: 0, updated: 0, deactivated: 0 },
+      ai_translations: { subjects: 0, chapters: 0, topics: 0, sub_topics: 0, total_generated: 0, errors: 0 },
       videos: { found: 0, matched: 0, uploaded: 0, replaced: 0, status_checked: 0, now_ready: 0, errors: 0 },
       errors: [] as string[],
     };
 
-    // ─── Phase 1: Scan CDN root, find course folders + .txt files ───
-    const rootItems = await listBunnyStorageRecursive('');
+    // Track newly created entity IDs for AI translation generation (Phase 6)
+    const newSubjectIds: number[] = [];
+    const newChapterIds: number[] = [];
+    const newTopicIds: number[] = [];
+    const newSubTopicIds: number[] = [];
 
-    const rootFolders = rootItems.filter(n => n.isDirectory && n.name.toLowerCase() !== 'assets' && n.name.toLowerCase() !== 'materials');
+    // ─── Phase 1: Scan CDN root, find course folders + .txt files ───
+    const rootItems = await listBunnyStorageRecursive('materials');
+
+    let rootFolders = rootItems.filter(n => n.isDirectory);
+
+    // Build selection map: courseFolderName → chapter selections (null = all chapters)
+    // Each chapter selection: { name, topics?: Set<string> | null } (null topics = all topics)
+    type ChapterSelection = { name: string; topics: Set<string> | null };
+    const selectionMap = new Map<string, ChapterSelection[] | null>();
+
+    if (Array.isArray(selected_items) && selected_items.length > 0) {
+      // Granular selection: { course: "C_Programming", chapters?: [{ name: "ch1", topics?: ["tp1"] }] }
+      for (const item of selected_items) {
+        if (item.chapters && item.chapters.length > 0) {
+          const chapterSels: ChapterSelection[] = item.chapters.map((ch: any) => {
+            // Support both old format (string) and new format ({ name, topics? })
+            if (typeof ch === 'string') return { name: ch, topics: null };
+            return {
+              name: ch.name,
+              topics: ch.topics && ch.topics.length > 0 ? new Set(ch.topics) : null,
+            };
+          });
+          selectionMap.set(item.course, chapterSels);
+        } else {
+          selectionMap.set(item.course, null); // null = all chapters
+        }
+      }
+      // Debug: log parsed selection map
+      for (const [course, chSels] of selectionMap) {
+        if (chSels) {
+          console.log(`[importFromCdn] selectionMap["${course}"] =`, chSels.map(cs => ({ name: cs.name, topics: cs.topics ? [...cs.topics] : 'ALL' })));
+        } else {
+          console.log(`[importFromCdn] selectionMap["${course}"] = ALL chapters`);
+        }
+      }
+      rootFolders = rootFolders.filter(n => selectionMap.has(n.name));
+    } else if (Array.isArray(selected_courses) && selected_courses.length > 0) {
+      // Backward compat: old format = all chapters for selected courses
+      const selectedSet = new Set(selected_courses.map((s: string) => s));
+      rootFolders = rootFolders.filter(n => selectedSet.has(n.name));
+    }
 
     for (const courseFolder of rootFolders) {
       const children = courseFolder.children || [];
@@ -3920,7 +4369,7 @@ export async function importFromCdn(req: Request, res: Response) {
           const newSlug = await generateUniqueSlug(supabase, 'subjects', subjectSlug);
           const { data: created, error: createErr } = await supabase
             .from('subjects')
-            .insert({ code: subjectCode, slug: newSlug, is_active: true, display_order: 1, sort_order: 1, created_by: userId })
+            .insert({ code: subjectCode, slug: newSlug, name: parsedCourse.name, is_active: true, display_order: 1, sort_order: 1, created_by: userId })
             .select('id, code, slug')
             .single();
 
@@ -3931,8 +4380,21 @@ export async function importFromCdn(req: Request, res: Response) {
           subject = created;
           existingSubjectsBySlug.set(newSlug, created);
           existingSubjectsByCode.set(subjectCode.toLowerCase(), created);
+
+          // Create English translation for subject
+          const enLang = langByIso.get('en');
+          if (enLang) {
+            await supabase.from('subject_translations').upsert({
+              subject_id: created.id,
+              language_id: enLang.id,
+              name: parsedCourse.name,
+              is_active: true,
+              created_by: userId,
+            }, { onConflict: 'subject_id,language_id' });
+          }
         }
         report.subjects.created++;
+        if (subject.id > 0) newSubjectIds.push(subject.id);
       } else {
         report.subjects.existing++;
       }
@@ -3965,8 +4427,43 @@ export async function importFromCdn(req: Request, res: Response) {
       const seenTopicIds = new Set<number>();
       const seenSubTopicIds = new Set<number>();
 
+      // ─── Filter chapters based on granular selection ───
+      const courseSelection = selectionMap.get(courseFolder.name); // null = all, array = specific chapters
+      let chaptersToProcess = parsedCourse.chapters;
+      // Map: chapterName → Set<topicName> | null (null = all topics for this chapter)
+      const topicFilterMap = new Map<string, Set<string> | null>();
+
+      if (courseSelection) {
+        console.log(`Selection filter for "${courseFolder.name}":`, JSON.stringify(courseSelection.map(cs => ({ name: cs.name, topics: cs.topics ? [...cs.topics] : null }))));
+        console.log(`Parsed chapters:`, parsedCourse.chapters.map(ch => ch.name));
+      }
+
+      if (courseSelection) {
+        // Frontend sends parsed names from scan (e.g. "Introduction to C Programming")
+        // Match by: exact name, namesMatch (fuzzy), or slug comparison
+        chaptersToProcess = parsedCourse.chapters.filter(ch => {
+          const chSlug = nameToSlug(ch.name);
+          for (const sel of courseSelection) {
+            if (sel.name === ch.name || namesMatch(sel.name, ch.name) || nameToSlug(sel.name) === chSlug) {
+              topicFilterMap.set(ch.name, sel.topics);
+              return true;
+            }
+          }
+          // Also try matching against CDN folder names (backward compat)
+          const chapterCdnName = courseCdnChildren.find(n => namesMatch(n.name, ch.name))?.name;
+          if (chapterCdnName) {
+            const chSel = courseSelection.find(cs => cs.name === chapterCdnName || namesMatch(cs.name, chapterCdnName));
+            if (chSel) {
+              topicFilterMap.set(ch.name, chSel.topics);
+              return true;
+            }
+          }
+          return false;
+        });
+      }
+
       // ─── Phase 2b: Create/Update Chapters, Topics, Sub-Topics from .txt ───
-      for (const parsedChapter of parsedCourse.chapters) {
+      for (const parsedChapter of chaptersToProcess) {
         report.chapters.found++;
 
         const chapterSlug = nameToSlug(parsedChapter.name);
@@ -3994,6 +4491,7 @@ export async function importFromCdn(req: Request, res: Response) {
               .from('chapters')
               .insert({
                 slug: newSlug,
+                name: parsedChapter.name,
                 subject_id: subject.id,
                 is_active: true,
                 display_order: parsedChapter.order,
@@ -4012,8 +4510,21 @@ export async function importFromCdn(req: Request, res: Response) {
             const list = chaptersBySubject.get(subject.id) || [];
             list.push(created);
             chaptersBySubject.set(subject.id, list);
+
+            // Create English translation for chapter
+            const enLang = langByIso.get('en');
+            if (enLang) {
+              await supabase.from('chapter_translations').upsert({
+                chapter_id: created.id,
+                language_id: enLang.id,
+                name: parsedChapter.name,
+                is_active: true,
+                created_by: userId,
+              }, { onConflict: 'chapter_id,language_id' });
+            }
           }
           report.chapters.created++;
+          if (chapter.id > 0) newChapterIds.push(chapter.id);
         } else {
           // Sync mode: update sort_order if changed
           if (isSync && (chapter.sort_order !== parsedChapter.order || chapter.display_order !== parsedChapter.order)) {
@@ -4042,7 +4553,27 @@ export async function importFromCdn(req: Request, res: Response) {
           n => n.isDirectory && n.name.toLowerCase() !== 'assets'
         ) || [];
 
-        for (const parsedTopic of parsedChapter.topics) {
+        // ─── Filter topics based on granular selection ───
+        const selectedTopicSet = topicFilterMap.get(parsedChapter.name); // undefined/null = all, Set = specific
+        let topicsToProcess = parsedChapter.topics;
+        if (selectedTopicSet) {
+          topicsToProcess = parsedChapter.topics.filter(tp => {
+            // Frontend sends parsed names from scan (e.g. "Getting Started with C")
+            // Check exact match first, then fuzzy
+            if (selectedTopicSet.has(tp.name)) return true;
+            for (const sel of selectedTopicSet) {
+              if (namesMatch(sel, tp.name) || nameToSlug(sel) === nameToSlug(tp.name)) return true;
+            }
+            // Also try matching against CDN folder names (backward compat)
+            const topicCdnName = chapterCdnChildren_items.find(n => namesMatch(n.name, tp.name))?.name;
+            if (topicCdnName && selectedTopicSet.has(topicCdnName)) return true;
+            return false;
+          });
+        }
+
+        console.log(`Chapter "${parsedChapter.name}": ${parsedChapter.topics.length} total topics, ${topicsToProcess.length} after filter. TopicFilter:`, topicFilterMap.get(parsedChapter.name) ? [...topicFilterMap.get(parsedChapter.name)!] : 'null (all)');
+
+        for (const parsedTopic of topicsToProcess) {
           report.topics.found++;
 
           const topicSlug = nameToSlug(parsedTopic.name);
@@ -4067,6 +4598,7 @@ export async function importFromCdn(req: Request, res: Response) {
                 .from('topics')
                 .insert({
                   slug: newSlug,
+                  name: parsedTopic.name,
                   chapter_id: chapter.id,
                   is_active: true,
                   display_order: parsedTopic.order,
@@ -4085,8 +4617,21 @@ export async function importFromCdn(req: Request, res: Response) {
               const list = topicsByChapter.get(chapter.id) || [];
               list.push(created);
               topicsByChapter.set(chapter.id, list);
+
+              // Create English translation for topic
+              const enLang = langByIso.get('en');
+              if (enLang) {
+                await supabase.from('topic_translations').upsert({
+                  topic_id: created.id,
+                  language_id: enLang.id,
+                  name: parsedTopic.name,
+                  is_active: true,
+                  created_by: userId,
+                }, { onConflict: 'topic_id,language_id' });
+              }
             }
             report.topics.created++;
+            if (topic.id > 0) newTopicIds.push(topic.id);
           } else {
             if (isSync && (topic.sort_order !== parsedTopic.order || topic.display_order !== parsedTopic.order)) {
               if (!isDryRun) {
@@ -4150,6 +4695,7 @@ export async function importFromCdn(req: Request, res: Response) {
                   .from('sub_topics')
                   .insert({
                     slug: newSlug,
+                    name: parsedST.name,
                     topic_id: topic.id,
                     display_order: parsedST.order,
                     difficulty_level: 'all_levels',
@@ -4169,8 +4715,21 @@ export async function importFromCdn(req: Request, res: Response) {
                 const list = subTopicsByTopic.get(topic.id) || [];
                 list.push(created);
                 subTopicsByTopic.set(topic.id, list);
+
+                // Create English translation for sub-topic
+                const enLang = langByIso.get('en');
+                if (enLang) {
+                  await supabase.from('sub_topic_translations').upsert({
+                    sub_topic_id: created.id,
+                    language_id: enLang.id,
+                    name: parsedST.name,
+                    is_active: true,
+                    created_by: userId,
+                  }, { onConflict: 'sub_topic_id,language_id' });
+                }
               }
               report.sub_topics.created++;
+              if (subTopic.id > 0) newSubTopicIds.push(subTopic.id);
             } else {
               // Sync mode: update sort_order if changed
               if (isSync && subTopic.display_order !== parsedST.order) {
@@ -4401,7 +4960,10 @@ export async function importFromCdn(req: Request, res: Response) {
       }
 
       // ─── Phase 5: Sync deletions (soft delete items not in .txt) ───
-      if (isSync && subject.id > 0) {
+      // Only delete if ALL chapters were selected (no granular selection) to avoid
+      // deleting chapters that simply weren't in the selection scope
+      const isFullCourseSync = !courseSelection; // null = all chapters selected
+      if (isSync && subject.id > 0 && isFullCourseSync) {
         const subjectChapters = chaptersBySubject.get(subject.id) || [];
         for (const ch of subjectChapters) {
           if (!seenChapterIds.has(ch.id)) {
@@ -4434,6 +4996,74 @@ export async function importFromCdn(req: Request, res: Response) {
             }
           }
         }
+      }
+    }
+
+    // ─── Phase 6: Generate AI translations for all newly created entities ───
+    if (!isDryRun) {
+      const aiProvider: AIProvider = 'gemini';
+      const totalNew = newSubjectIds.length + newChapterIds.length + newTopicIds.length + newSubTopicIds.length;
+
+      if (totalNew > 0) {
+        console.log(`Phase 6: Generating AI translations for ${totalNew} new entities...`);
+
+        // Subjects
+        for (const id of newSubjectIds) {
+          try {
+            const { results } = await generateAllTranslationsForEntity('subject', id, userId, aiProvider);
+            const success = results.filter(r => r.status === 'success').length;
+            report.ai_translations.subjects++;
+            report.ai_translations.total_generated += success;
+            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
+          } catch (aiErr: any) {
+            report.errors.push(`AI translation for subject ${id}: ${aiErr.message}`);
+            report.ai_translations.errors++;
+          }
+        }
+
+        // Chapters
+        for (const id of newChapterIds) {
+          try {
+            const { results } = await generateAllTranslationsForEntity('chapter', id, userId, aiProvider);
+            const success = results.filter(r => r.status === 'success').length;
+            report.ai_translations.chapters++;
+            report.ai_translations.total_generated += success;
+            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
+          } catch (aiErr: any) {
+            report.errors.push(`AI translation for chapter ${id}: ${aiErr.message}`);
+            report.ai_translations.errors++;
+          }
+        }
+
+        // Topics
+        for (const id of newTopicIds) {
+          try {
+            const { results } = await generateAllTranslationsForEntity('topic', id, userId, aiProvider);
+            const success = results.filter(r => r.status === 'success').length;
+            report.ai_translations.topics++;
+            report.ai_translations.total_generated += success;
+            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
+          } catch (aiErr: any) {
+            report.errors.push(`AI translation for topic ${id}: ${aiErr.message}`);
+            report.ai_translations.errors++;
+          }
+        }
+
+        // Sub-Topics
+        for (const id of newSubTopicIds) {
+          try {
+            const { results } = await generateAllTranslationsForEntity('sub_topic', id, userId, aiProvider);
+            const success = results.filter(r => r.status === 'success').length;
+            report.ai_translations.sub_topics++;
+            report.ai_translations.total_generated += success;
+            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
+          } catch (aiErr: any) {
+            report.errors.push(`AI translation for sub-topic ${id}: ${aiErr.message}`);
+            report.ai_translations.errors++;
+          }
+        }
+
+        console.log(`Phase 6 complete: ${report.ai_translations.total_generated} translations generated, ${report.ai_translations.errors} errors`);
       }
     }
 
@@ -4486,9 +5116,10 @@ export async function scaffoldCdn(req: Request, res: Response) {
       return err(res, `Failed to parse: ${parseResult.errors.join('; ')}`, 400);
     }
 
-    // Build all CDN folder paths
+    // Build all CDN folder paths (under materials/ prefix)
     const { buildCdnPaths } = require('../../utils/courseParser');
-    const paths = buildCdnPaths(parseResult.course, langCodes);
+    const rawPaths: string[] = buildCdnPaths(parseResult.course, langCodes);
+    const paths = rawPaths.map(p => `materials/${p}`);
 
     // Create folders in batches
     const batchSize = 10;
@@ -4501,7 +5132,7 @@ export async function scaffoldCdn(req: Request, res: Response) {
 
     // Also create the .txt file on CDN
     const courseFolderName = buildCourseFolderName(parseResult.course.name);
-    const txtPath = `${courseFolderName}/${courseFolderName}.txt`;
+    const txtPath = `materials/${courseFolderName}/${courseFolderName}.txt`;
     await uploadRawFile(Buffer.from(txt_content, 'utf-8'), txtPath);
 
     // Create matching Bunny Stream collection hierarchy for videos
@@ -4622,5 +5253,96 @@ export async function checkVideoStatus(req: Request, res: Response) {
   } catch (error: any) {
     console.error('Check video status error:', error);
     return err(res, error.message || 'Video status check failed', 500);
+  }
+}
+
+// ─── Clean Orphaned Videos ─────────────────────────────────────
+// POST /ai/clean-orphaned-videos
+// Lists all Bunny Stream videos, compares with DB sub_topics.video_id,
+// deletes any video that has no matching DB record. Also removes empty collections.
+
+export async function cleanOrphanedVideos(req: Request, res: Response) {
+  try {
+    const { dry_run = false } = req.body;
+
+    // 1. Get all videos from Bunny Stream
+    const allVideos = await listAllStreamVideos();
+
+    // 2. Get all video_ids from DB
+    const { data: dbSubTopics, error: dbErr } = await supabase
+      .from('sub_topics')
+      .select('video_id')
+      .not('video_id', 'is', null);
+    if (dbErr) return err(res, dbErr.message, 500);
+
+    const dbVideoIds = new Set((dbSubTopics || []).map((st: any) => st.video_id));
+
+    // 3. Find orphaned videos (in Bunny but not in DB)
+    const orphanedVideos = allVideos.filter(v => !dbVideoIds.has(v.guid));
+
+    // 4. Delete orphaned videos (unless dry_run)
+    const deleted: string[] = [];
+    const failedDeletes: { guid: string; error: string }[] = [];
+
+    if (!dry_run) {
+      for (const v of orphanedVideos) {
+        try {
+          await deleteVideoFromStream(v.guid);
+          deleted.push(v.guid);
+        } catch (e: any) {
+          failedDeletes.push({ guid: v.guid, error: e.message });
+        }
+      }
+    }
+
+    // 5. Get all collections and find empty ones
+    const allCollections = await listAllStreamCollections();
+    const emptyCollections = allCollections.filter(c => c.videoCount === 0);
+    const deletedCollections: string[] = [];
+    const failedCollectionDeletes: { guid: string; error: string }[] = [];
+
+    if (!dry_run) {
+      for (const c of emptyCollections) {
+        try {
+          await deleteStreamCollection(c.guid);
+          deletedCollections.push(c.guid);
+        } catch (e: any) {
+          failedCollectionDeletes.push({ guid: c.guid, error: e.message });
+        }
+      }
+    }
+
+    const report = {
+      total_stream_videos: allVideos.length,
+      db_video_ids: dbVideoIds.size,
+      orphaned_found: orphanedVideos.length,
+      orphaned_videos: orphanedVideos.map(v => ({ guid: v.guid, title: v.title, sizeMB: Math.round(v.storageSize / 1024 / 1024 * 100) / 100 })),
+      videos_deleted: deleted.length,
+      video_delete_failures: failedDeletes,
+      total_collections: allCollections.length,
+      empty_collections_found: emptyCollections.length,
+      empty_collections: emptyCollections.map(c => ({ guid: c.guid, name: c.name })),
+      collections_deleted: deletedCollections.length,
+      collection_delete_failures: failedCollectionDeletes,
+      dry_run,
+    };
+
+    await logAdmin({
+      actorId: req.user!.id,
+      action: 'clean_orphaned_videos',
+      targetType: 'cdn_import',
+      targetId: 0,
+      targetName: 'Clean Orphaned Videos',
+      ip: getClientIp(req),
+      metadata: { orphaned: report.orphaned_found, deleted: report.videos_deleted, collections_deleted: report.collections_deleted, dry_run },
+    });
+
+    const msg = dry_run
+      ? `Dry run: found ${report.orphaned_found} orphaned videos and ${report.empty_collections_found} empty collections`
+      : `Deleted ${report.videos_deleted} orphaned videos and ${report.collections_deleted} empty collections`;
+    return ok(res, { report }, msg);
+  } catch (error: any) {
+    console.error('Clean orphaned videos error:', error);
+    return err(res, error.message || 'Clean orphaned videos failed', 500);
   }
 }

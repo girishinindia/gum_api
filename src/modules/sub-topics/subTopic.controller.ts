@@ -76,7 +76,33 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+
+  // Fetch English translation names for all sub-topics in this page
+  const subTopicIds = (data || []).map((st: any) => st.id);
+  let englishNameMap: Record<number, string> = {};
+  if (subTopicIds.length > 0) {
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (enLang) {
+      const { data: enTranslations } = await supabase
+        .from('sub_topic_translations')
+        .select('sub_topic_id, name')
+        .in('sub_topic_id', subTopicIds)
+        .eq('language_id', enLang.id)
+        .is('deleted_at', null);
+      if (enTranslations) {
+        for (const t of enTranslations) {
+          englishNameMap[t.sub_topic_id] = t.name;
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map((st: any) => ({
+    ...st,
+    english_name: englishNameMap[st.id] || null,
+  }));
+
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {
@@ -117,6 +143,17 @@ export async function create(req: Request, res: Response) {
   if (e) {
     if (e.code === '23505') return err(res, 'Sub-topic slug already exists', 409);
     return err(res, e.message, 500);
+  }
+
+  // Sync English translation
+  if (body.name) {
+    await supabase.from('sub_topic_translations').upsert({
+      sub_topic_id: data.id,
+      language_id: 7,
+      name: body.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'sub_topic_id,language_id' });
   }
 
   await clearCache(body.topic_id);
@@ -166,6 +203,17 @@ export async function update(req: Request, res: Response) {
     } else if (JSON.stringify((old as any)[k]) !== JSON.stringify(updates[k])) {
       changes[k] = { old: (old as any)[k], new: updates[k] };
     }
+  }
+
+  // Sync English translation
+  if (updates.name) {
+    await supabase.from('sub_topic_translations').upsert({
+      sub_topic_id: id,
+      language_id: 7,
+      name: updates.name,
+      is_active: true,
+      created_by: req.user!.id,
+    }, { onConflict: 'sub_topic_id,language_id' });
   }
 
   await clearCache(old.topic_id);
