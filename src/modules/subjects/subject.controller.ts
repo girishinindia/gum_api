@@ -244,50 +244,62 @@ export async function restore(req: Request, res: Response) {
 // DELETE /subjects/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('subjects').select('code, slug').eq('id', id).single();
-  if (!old) return err(res, 'Subject not found', 404);
+  try {
+    const { data: old } = await supabase.from('subjects').select('code, slug').eq('id', id).single();
+    if (!old) return err(res, 'Subject not found', 404);
 
-  // Delete Bunny CDN folder for this subject (materials/<slug>/)
-  if (old.slug) {
-    try {
-      await deleteBunnyFolder(`materials/${old.slug}`);
-    } catch (bunnyErr) {
-      console.error(`Failed to delete Bunny folder for subject ${old.slug}:`, bunnyErr);
-    }
-  }
-
-  // Cascade: delete entire tree under this subject
-  const { data: childChapters } = await supabase.from('chapters').select('id').eq('subject_id', id);
-  if (childChapters && childChapters.length > 0) {
-    const cIds = childChapters.map((c: any) => c.id);
-    const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds);
-    if (childTopics && childTopics.length > 0) {
-      const tIds = childTopics.map((t: any) => t.id);
-      const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').in('topic_id', tIds);
-      if (childSubTopics && childSubTopics.length > 0) {
-        // Delete Bunny Stream videos for each sub-topic
-        for (const st of childSubTopics) {
-          if (st.video_id && st.video_source === 'bunny') {
-            try { await deleteVideoFromStream(st.video_id); } catch {}
-          }
-        }
-        const stIds = childSubTopics.map((st: any) => st.id);
-        await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
-        await supabase.from('sub_topics').delete().in('topic_id', tIds);
+    // Delete Bunny CDN folder for this subject (materials/<slug>/)
+    if (old.slug) {
+      try {
+        await deleteBunnyFolder(`materials/${old.slug}`);
+      } catch (bunnyErr) {
+        console.error(`Failed to delete Bunny folder for subject ${old.slug}:`, bunnyErr);
       }
-      await supabase.from('topic_translations').delete().in('topic_id', tIds);
-      await supabase.from('topics').delete().in('chapter_id', cIds);
     }
-    await supabase.from('chapter_translations').delete().in('chapter_id', cIds);
-    await supabase.from('chapters').delete().eq('subject_id', id);
+
+    // Cascade: delete entire tree under this subject
+    const { data: childChapters } = await supabase.from('chapters').select('id').eq('subject_id', id);
+    if (childChapters && childChapters.length > 0) {
+      const cIds = childChapters.map((c: any) => c.id);
+      const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds);
+      if (childTopics && childTopics.length > 0) {
+        const tIds = childTopics.map((t: any) => t.id);
+        const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').in('topic_id', tIds);
+        if (childSubTopics && childSubTopics.length > 0) {
+          // Delete Bunny Stream videos for each sub-topic
+          for (const st of childSubTopics) {
+            if (st.video_id && st.video_source === 'bunny') {
+              try { await deleteVideoFromStream(st.video_id); } catch {}
+            }
+          }
+          const stIds = childSubTopics.map((st: any) => st.id);
+          const { error: stTransErr } = await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
+          if (stTransErr) console.error('Failed to delete sub_topic_translations:', stTransErr);
+          const { error: stErr } = await supabase.from('sub_topics').delete().in('topic_id', tIds);
+          if (stErr) console.error('Failed to delete sub_topics:', stErr);
+        }
+        const { error: ttErr } = await supabase.from('topic_translations').delete().in('topic_id', tIds);
+        if (ttErr) console.error('Failed to delete topic_translations:', ttErr);
+        const { error: tErr } = await supabase.from('topics').delete().in('chapter_id', cIds);
+        if (tErr) console.error('Failed to delete topics:', tErr);
+      }
+      const { error: ctErr } = await supabase.from('chapter_translations').delete().in('chapter_id', cIds);
+      if (ctErr) console.error('Failed to delete chapter_translations:', ctErr);
+      const { error: cErr } = await supabase.from('chapters').delete().eq('subject_id', id);
+      if (cErr) console.error('Failed to delete chapters:', cErr);
+    }
+    const { error: stErr2 } = await supabase.from('subject_translations').delete().eq('subject_id', id);
+    if (stErr2) console.error('Failed to delete subject_translations:', stErr2);
+
+    const { error: e } = await supabase.from('subjects').delete().eq('id', id);
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    logAdmin({ actorId: req.user!.id, action: 'subject_deleted', targetType: 'subject', targetId: id, targetName: old.code, ip: getClientIp(req) });
+
+    return ok(res, null, 'Subject deleted');
+  } catch (error: any) {
+    console.error('Permanent delete subject failed:', error);
+    return err(res, error.message || 'Failed to permanently delete subject', 500);
   }
-  await supabase.from('subject_translations').delete().eq('subject_id', id);
-
-  const { error: e } = await supabase.from('subjects').delete().eq('id', id);
-  if (e) return err(res, e.message, 500);
-
-  await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'subject_deleted', targetType: 'subject', targetId: id, targetName: old.code, ip: getClientIp(req) });
-
-  return ok(res, null, 'Subject deleted');
 }
