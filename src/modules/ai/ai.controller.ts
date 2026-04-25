@@ -3262,7 +3262,7 @@ export async function autoSubTopics(req: Request, res: Response) {
     if (!userId) return err(res, 'Authentication required', 401);
     if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
-    const { topic_id, language_id, prompt, provider: reqProvider } = req.body;
+    const { topic_id, language_id, prompt, provider: reqProvider, sub_topic_id: existingSubTopicId } = req.body;
     if (!topic_id) return err(res, 'topic_id is required', 400);
     if (!language_id) return err(res, 'language_id is required', 400);
 
@@ -3374,45 +3374,83 @@ USER INSTRUCTIONS: ${userPrompt}`;
       const slug = (st.slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
       if (!slug) continue;
 
-      // Check if sub_topic with this slug exists under this topic
-      const { data: existingSt } = await supabase
-        .from('sub_topics')
-        .select('id, slug')
-        .eq('topic_id', topic_id)
-        .eq('slug', slug)
-        .is('deleted_at', null)
-        .single();
-
       let subTopicId: number;
+      let isNewSubTopic = false;
 
-      if (existingSt) {
-        subTopicId = existingSt.id;
-        updatedSubTopics++;
-      } else {
-        const difficultyLevel = ['beginner', 'intermediate', 'advanced', 'expert', 'all_levels'].includes(st.difficulty_level)
-          ? st.difficulty_level : 'all_levels';
-        const estimatedMinutes = typeof st.estimated_minutes === 'number' ? st.estimated_minutes : 30;
-
-        const { data: newSt, error: stErr } = await supabase
+      // If frontend passed an existing sub_topic_id, use it directly (prevents duplicate creation)
+      if (existingSubTopicId) {
+        const { data: directSt } = await supabase
           .from('sub_topics')
-          .insert({
-            topic_id,
-            slug,
-            display_order: displayOrder++,
-            difficulty_level: difficultyLevel,
-            estimated_minutes: estimatedMinutes,
-            is_active: true,
-            created_by: userId,
-          })
-          .select('id')
+          .select('id, slug')
+          .eq('id', Number(existingSubTopicId))
+          .eq('topic_id', topic_id)
+          .is('deleted_at', null)
           .single();
 
-        if (stErr || !newSt) {
-          console.error('Failed to create sub_topic:', stErr);
-          continue;
+        if (directSt) {
+          subTopicId = directSt.id;
+          // Update slug if AI generated a better one and it doesn't conflict
+          if (directSt.slug !== slug) {
+            const { data: slugConflict } = await supabase
+              .from('sub_topics')
+              .select('id')
+              .eq('topic_id', topic_id)
+              .eq('slug', slug)
+              .neq('id', directSt.id)
+              .is('deleted_at', null)
+              .single();
+            if (!slugConflict) {
+              await supabase.from('sub_topics').update({ slug }).eq('id', directSt.id);
+            }
+          }
+          updatedSubTopics++;
+        } else {
+          // sub_topic_id was passed but not found — treat as new
+          existingSubTopicId && console.warn(`sub_topic_id ${existingSubTopicId} not found, creating new`);
+          const difficultyLevel = ['beginner', 'intermediate', 'advanced', 'expert', 'all_levels'].includes(st.difficulty_level)
+            ? st.difficulty_level : 'all_levels';
+          const estimatedMinutes = typeof st.estimated_minutes === 'number' ? st.estimated_minutes : 30;
+
+          const { data: newSt, error: stErr } = await supabase
+            .from('sub_topics')
+            .insert({ topic_id, slug, display_order: displayOrder++, difficulty_level: difficultyLevel, estimated_minutes: estimatedMinutes, is_active: true, created_by: userId })
+            .select('id')
+            .single();
+
+          if (stErr || !newSt) { console.error('Failed to create sub_topic:', stErr); continue; }
+          subTopicId = newSt.id;
+          isNewSubTopic = true;
+          createdSubTopics++;
         }
-        subTopicId = newSt.id;
-        createdSubTopics++;
+      } else {
+        // No sub_topic_id passed — match by slug (original behavior for new sub-topics)
+        const { data: existingSt } = await supabase
+          .from('sub_topics')
+          .select('id, slug')
+          .eq('topic_id', topic_id)
+          .eq('slug', slug)
+          .is('deleted_at', null)
+          .single();
+
+        if (existingSt) {
+          subTopicId = existingSt.id;
+          updatedSubTopics++;
+        } else {
+          const difficultyLevel = ['beginner', 'intermediate', 'advanced', 'expert', 'all_levels'].includes(st.difficulty_level)
+            ? st.difficulty_level : 'all_levels';
+          const estimatedMinutes = typeof st.estimated_minutes === 'number' ? st.estimated_minutes : 30;
+
+          const { data: newSt, error: stErr } = await supabase
+            .from('sub_topics')
+            .insert({ topic_id, slug, display_order: displayOrder++, difficulty_level: difficultyLevel, estimated_minutes: estimatedMinutes, is_active: true, created_by: userId })
+            .select('id')
+            .single();
+
+          if (stErr || !newSt) { console.error('Failed to create sub_topic:', stErr); continue; }
+          subTopicId = newSt.id;
+          isNewSubTopic = true;
+          createdSubTopics++;
+        }
       }
 
       // Check if translation exists (include page URL so we can delete old file)
@@ -3487,7 +3525,7 @@ USER INSTRUCTIONS: ${userPrompt}`;
         sub_topic_id: subTopicId,
         slug,
         name: st.name || slug,
-        is_new: !existingSt,
+        is_new: isNewSubTopic,
         translation_action: existingTrans ? 'updated' : 'created',
         page_url: pageUrl || null,
       });

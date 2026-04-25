@@ -14,6 +14,10 @@ interface TreeNode {
   children?: TreeNode[];
   dbId?: number;
   type?: 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'language' | 'resources' | 'file';
+  videoId?: string;
+  videoStatus?: string;
+  videoUrl?: string;
+  fileCount?: number;
 }
 
 /**
@@ -58,7 +62,7 @@ export async function fullTree(req: Request, res: Response) {
       supabase.from('subjects').select('id, code, slug, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('chapters').select('id, slug, subject_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('topics').select('id, slug, chapter_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
-      supabase.from('sub_topics').select('id, slug, topic_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
+      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_status, video_url, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('sub_topic_translations').select('id, sub_topic_id, language_id, page, created_at, updated_at').is('deleted_at', null),
       supabase.from('languages').select('id, iso_code, name').eq('is_active', true).eq('for_material', true).order('id'),
     ]);
@@ -118,16 +122,20 @@ export async function fullTree(req: Request, res: Response) {
           const topicPath = `${chapterPath}/${topic.slug}`;
           const topicSubTopics = subTopicsByTopic.get(topic.id) || [];
 
-          // Collect all translations for all sub-topics under this topic
-          // Group by language → then by sub-topic file
-          const langFilesMap = new Map<number, { lang: typeof languages[0]; files: { name: string; path: string; lastChanged: string; dbId: number }[] }>();
-
-          for (const subTopic of topicSubTopics) {
+          // Build sub-topic nodes — each sub-topic gets its own language folders + resources
+          const subTopicNodes: TreeNode[] = topicSubTopics.map(subTopic => {
+            const subTopicPath = `${topicPath}/${subTopic.slug}`;
             const stTranslations = translationsBySubTopic.get(subTopic.id) || [];
+
+            // Group this sub-topic's translations by language
+            const langFilesMap = new Map<number, { lang: typeof languages[0]; files: { name: string; path: string; lastChanged: string; dbId: number }[] }>();
+            const langHasTranslation = new Set<number>(); // track languages that have a translation record
+
             for (const tr of stTranslations) {
               const lang = langMap.get(tr.language_id);
               if (!lang) continue;
               totalTranslations++;
+              langHasTranslation.add(lang.id);
               if (tr.page) {
                 const urlParts = (tr.page as string).split('/');
                 const fileName = urlParts[urlParts.length - 1] || `${subTopic.slug}.html`;
@@ -142,47 +150,67 @@ export async function fullTree(req: Request, res: Response) {
                 langFilesMap.set(lang.id, entry);
               }
             }
-          }
 
-          // Build language folder nodes (matching CDN structure: topic/language/files)
-          const langFolderNodes: TreeNode[] = [];
-          for (const [langId, { lang, files }] of langFilesMap) {
-            const langPath = `${topicPath}/${lang.iso_code}`;
-            totalFolders++;
-            langFolderNodes.push({
-              name: lang.iso_code,
-              path: langPath,
-              isDirectory: true,
-              size: 0,
-              lastChanged: files[0]?.lastChanged || '',
-              children: files.map(f => ({
-                name: f.name,
-                path: f.path,
-                isDirectory: false,
+            // Build language folder nodes for this sub-topic
+            // Show ALL languages that have a translation record (even if no page file uploaded yet)
+            const langFolderNodes: TreeNode[] = [];
+            for (const lang of languages) {
+              if (!langHasTranslation.has(lang.id)) continue; // no translation record at all
+              const langPath = `${subTopicPath}/${lang.iso_code}`;
+              const entry = langFilesMap.get(lang.id);
+              const files = entry?.files || [];
+              totalFolders++;
+              langFolderNodes.push({
+                name: lang.iso_code,
+                path: langPath,
+                isDirectory: true,
                 size: 0,
-                lastChanged: f.lastChanged,
-                dbId: f.dbId,
-                type: 'file' as const,
-              })),
-              type: 'language' as const,
-            });
-          }
+                lastChanged: files[0]?.lastChanged || '',
+                children: files.map(f => ({
+                  name: f.name,
+                  path: f.path,
+                  isDirectory: false,
+                  size: 0,
+                  lastChanged: f.lastChanged,
+                  dbId: f.dbId,
+                  type: 'file' as const,
+                })),
+                fileCount: files.length,
+                type: 'language' as const,
+              });
+            }
 
-          // Add resources folder (exists in CDN at topic level)
-          const resourcesPath = `${topicPath}/resources`;
-          totalFolders++;
-          const topicChildren: TreeNode[] = [
-            {
-              name: 'resources',
-              path: resourcesPath,
+            // Resources folder for this sub-topic
+            const resourcesPath = `${subTopicPath}/resources`;
+            totalFolders++;
+            const subTopicChildren: TreeNode[] = [
+              {
+                name: 'resources',
+                path: resourcesPath,
+                isDirectory: true,
+                size: 0,
+                lastChanged: subTopic.updated_at || subTopic.created_at || '',
+                children: [],
+                type: 'resources' as const,
+              },
+              ...langFolderNodes,
+            ];
+
+            totalFolders++;
+            return {
+              name: displayName(subTopic.slug, subTopic.display_order),
+              path: subTopicPath,
               isDirectory: true,
               size: 0,
-              lastChanged: topic.updated_at || topic.created_at || '',
-              children: [],
-              type: 'resources' as const,
-            },
-            ...langFolderNodes,
-          ];
+              lastChanged: subTopic.updated_at || subTopic.created_at || '',
+              children: subTopicChildren,
+              dbId: subTopic.id,
+              type: 'sub_topic' as const,
+              videoId: subTopic.video_id || undefined,
+              videoStatus: subTopic.video_status || undefined,
+              videoUrl: subTopic.video_url || undefined,
+            } as TreeNode;
+          });
 
           totalFolders++;
           return {
@@ -191,7 +219,7 @@ export async function fullTree(req: Request, res: Response) {
             isDirectory: true,
             size: 0,
             lastChanged: topic.updated_at || topic.created_at || '',
-            children: topicChildren,
+            children: subTopicNodes,
             dbId: topic.id,
             type: 'topic' as const,
           };
