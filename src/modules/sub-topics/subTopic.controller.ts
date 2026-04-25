@@ -3,10 +3,11 @@ import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
 import { hasPermission } from '../../middleware/rbac';
 import { logAdmin, logData } from '../../services/activityLog.service';
-import { uploadVideoToStream, deleteVideoFromStream, getVideoStatus } from '../../services/video.service';
+import { uploadVideoToStream, deleteVideoFromStream, getVideoStatus, findOrCreateCollection, buildCollectionName } from '../../services/video.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -278,9 +279,8 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from('sub_topics').select('slug, video_id, video_source, topic_id').eq('id', id).single();
   if (!old) return err(res, 'Sub-topic not found', 404);
 
-  if (old.video_id && old.video_source === 'bunny') {
-    try { await deleteVideoFromStream(old.video_id); } catch {}
-  }
+  // Note: intentionally NOT deleting Bunny Stream video here — videos are retained
+  // so they can be re-matched on re-import. Use explicit delete-video button instead.
 
   // Delete child translations first to avoid FK constraint
   await supabase.from('sub_topic_translations').delete().eq('sub_topic_id', id);
@@ -297,19 +297,51 @@ export async function remove(req: Request, res: Response) {
 // POST /sub-topics/:id/upload-video
 export async function uploadVideo(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: st } = await supabase.from('sub_topics').select('id, slug, video_id, video_source, topic_id').eq('id', id).single();
+  const { data: st } = await supabase.from('sub_topics').select('id, slug, name, display_order, video_id, video_source, topic_id').eq('id', id).single();
   if (!st) return err(res, 'Sub-topic not found', 404);
 
   if (!req.file) return err(res, 'No video file provided', 400);
 
   try {
-    // Delete old Bunny video if exists
-    if (st.video_id && st.video_source === 'bunny') {
+    // Delete old Bunny video if exists (handle both 'bunny' and 'bunny_pending' sources)
+    if (st.video_id && (st.video_source === 'bunny' || st.video_source === 'bunny_pending')) {
       try { await deleteVideoFromStream(st.video_id); } catch {}
     }
 
-    const title = `${st.slug || 'sub-topic'}-${id}`;
-    const result = await uploadVideoToStream(req.file.buffer, title);
+    // Look up hierarchy to assign video to the correct Stream collection
+    // and to build a title matching CDN folder naming: e.g. "01_Getting_Started_with_C"
+    let collectionId: string | undefined;
+    let topicName: string | undefined;
+    try {
+      const { data: hierarchy } = await supabase
+        .from('sub_topics')
+        .select('slug, topics(name, display_order, chapters(name, display_order, subjects(name)))')
+        .eq('id', id)
+        .single();
+      if (hierarchy) {
+        const t = (hierarchy as any).topics;
+        const c = t?.chapters;
+        const s = c?.subjects;
+        topicName = t?.name;
+        if (s?.name && c?.name && t?.name) {
+          // Use same naming convention as scaffoldCdn:
+          // "C_Programming/01_Introduction_to_C_Programming/01_Getting_Started_with_C"
+          const coursePart = buildCourseFolderName(s.name);
+          const chapterPart = buildCdnName(c.display_order ?? 0, c.name);
+          const topicPart = buildCdnName(t.display_order ?? 0, t.name);
+          const collName = buildCollectionName(coursePart, chapterPart, topicPart);
+          collectionId = await findOrCreateCollection(collName);
+        }
+      }
+    } catch { /* non-fatal — video uploads without collection assignment */ }
+
+    // Video title: "{order}_{SubTopicName}" using the sub-topic's own name
+    // e.g. "01_What_is_C_Programming_History_and_Evolution"
+    const order = st.display_order ?? 0;
+    const paddedOrder = String(order).padStart(2, '0');
+    const titleBase = st.name ? sanitizeName(st.name) : (st.slug || 'sub-topic');
+    const title = `${paddedOrder}_${titleBase}`;
+    const result = await uploadVideoToStream(req.file.buffer, title, collectionId);
 
     const updates: any = {
       video_id: result.videoId,
@@ -340,7 +372,8 @@ export async function deleteVideo(req: Request, res: Response) {
   const { data: st } = await supabase.from('sub_topics').select('id, slug, video_id, video_source, topic_id').eq('id', id).single();
   if (!st) return err(res, 'Sub-topic not found', 404);
 
-  if (st.video_id && st.video_source === 'bunny') {
+  // Delete from Bunny Stream for both 'bunny' and 'bunny_pending' sources
+  if (st.video_id && (st.video_source === 'bunny' || st.video_source === 'bunny_pending')) {
     try { await deleteVideoFromStream(st.video_id); } catch {}
   }
 

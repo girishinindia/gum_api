@@ -7,7 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
-import { deleteVideoFromStream } from '../../services/video.service';
+import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 
 const CACHE_KEY = 'chapters:all';
 const clearCache = async (subjectId?: number) => {
@@ -96,8 +96,8 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: chapter:activate required to create inactive', 403);
   }
 
-  // Verify subject exists and get its slug for folder path
-  const { data: subject } = await supabase.from('subjects').select('id, slug').eq('id', body.subject_id).single();
+  // Verify subject exists and get its name for folder path
+  const { data: subject } = await supabase.from('subjects').select('id, slug, name').eq('id', body.subject_id).single();
   if (!subject) return err(res, 'Subject not found', 404);
 
   // Set audit field
@@ -128,8 +128,11 @@ export async function create(req: Request, res: Response) {
     }, { onConflict: 'chapter_id,language_id' });
   }
 
-  // Create Bunny folder: materials/<subject-slug>/<chapter-slug>/
-  createBunnyFolder(`materials/${subject.slug}/${data.slug}`).catch(() => {});
+  // Create Bunny folder: materials/<SubjectName>/<Order_ChapterName>/
+  // Uses sanitized names to match scaffold convention
+  const cdnSubjectFolder = buildCourseFolderName(subject.name || subject.slug);
+  const cdnChapterFolder = buildCdnName(data.display_order ?? data.sort_order ?? 0, body.name || data.slug);
+  createBunnyFolder(`materials/${cdnSubjectFolder}/${cdnChapterFolder}`).catch(() => {});
 
   await clearCache(body.subject_id);
   logAdmin({
@@ -308,18 +311,13 @@ export async function remove(req: Request, res: Response) {
     }
   }
 
-  // Cascade: delete child topics (and their sub-topics/translations + Bunny videos), then chapter translations
+  // Cascade: delete child topics (and their sub-topics/translations), then chapter translations
+  // Note: videos retained in Bunny Stream for re-import
   const { data: childTopics } = await supabase.from('topics').select('id').eq('chapter_id', id);
   if (childTopics && childTopics.length > 0) {
     const tIds = childTopics.map((t: any) => t.id);
-    const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').in('topic_id', tIds);
+    const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
     if (childSubTopics && childSubTopics.length > 0) {
-      // Delete Bunny Stream videos for each sub-topic
-      for (const st of childSubTopics) {
-        if (st.video_id && st.video_source === 'bunny') {
-          try { await deleteVideoFromStream(st.video_id); } catch {}
-        }
-      }
       const stIds = childSubTopics.map((st: any) => st.id);
       await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
       await supabase.from('sub_topics').delete().in('topic_id', tIds);

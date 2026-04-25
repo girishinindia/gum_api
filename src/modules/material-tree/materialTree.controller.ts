@@ -2,10 +2,12 @@ import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { deleteBunnyFolder, listBunnyStorage, downloadBunnyFile, uploadRawFile } from '../../services/storage.service';
 import { uploadToBunny, deleteFromBunny } from '../../config/bunny';
+import { listAllStreamCollections, deleteStreamCollection } from '../../services/video.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp } from '../../utils/helpers';
 import { ok, err } from '../../utils/response';
 import { config } from '../../config';
+import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 
 interface TreeNode {
   name: string;
@@ -786,5 +788,126 @@ export async function reconcileFolderNames(req: Request, res: Response) {
   } catch (e: any) {
     console.error('Reconcile folder names failed:', e);
     return err(res, e.message || 'Failed to reconcile folder names', 500);
+  }
+}
+
+// ─── Clean Orphaned Stream Collections ─────────────────────────────
+// POST /material-tree/clean-orphaned-collections?dry_run=true
+// Lists all Bunny Stream collections, compares with DB subjects/chapters/topics,
+// and deletes collections that don't match any active hierarchy.
+export async function cleanOrphanedCollections(req: Request, res: Response) {
+  const dryRun = req.query.dry_run !== 'false'; // default true
+  try {
+    // 1. Fetch all Stream collections
+    const allCollections = await listAllStreamCollections();
+    if (!allCollections.length) {
+      return ok(res, { total: 0, orphaned: 0, deleted: 0, kept: 0 }, 'No collections found');
+    }
+
+    // 2. Fetch all active subjects with their chapter/topic hierarchy
+    const { data: subjects } = await supabase
+      .from('subjects')
+      .select('id, name, slug, chapters(id, name, slug, display_order, topics(id, name, slug, display_order))')
+      .is('deleted_at', null);
+
+    // 3. Build a set of valid collection names from DB hierarchy
+    // Current format: "C_Programming/01_Introduction_to_C/01_Getting_Started" (sanitized, topic-level only)
+    // Also match old formats for backward compatibility
+    const validNames = new Set<string>();
+    for (const subject of (subjects || [])) {
+      const cdnSubject = buildCourseFolderName(subject.name || subject.slug);
+
+      // Subject-level (old format — kept for matching)
+      validNames.add(subject.name);
+      validNames.add(subject.slug);
+      validNames.add(cdnSubject);
+
+      const chapters = (subject as any).chapters || [];
+      for (const chapter of chapters) {
+        const cdnChapter = buildCdnName(chapter.display_order ?? 0, chapter.name);
+
+        // Chapter-level (old formats)
+        validNames.add(`${subject.name} > ${chapter.name}`);
+        validNames.add(`${subject.slug} > ${chapter.slug}`);
+
+        const topics = (chapter as any).topics || [];
+        for (const topic of topics) {
+          const cdnTopic = buildCdnName(topic.display_order ?? 0, topic.name);
+
+          // Topic-level — old ">" format
+          validNames.add(`${subject.name} > ${chapter.name} > ${topic.name}`);
+          validNames.add(`${subject.slug} > ${chapter.slug} > ${topic.slug}`);
+          // Topic-level — old "/" raw name format
+          validNames.add(`${subject.name}/${chapter.name}/${topic.name}`);
+          validNames.add(`${subject.slug}/${chapter.slug}/${topic.slug}`);
+          // Topic-level — current sanitized CDN format (matches scaffold)
+          validNames.add(`${cdnSubject}/${cdnChapter}/${cdnTopic}`);
+        }
+      }
+    }
+
+    // 4. Also fetch all video_ids from DB to keep collections that have assigned videos
+    const { data: videoSubTopics } = await supabase
+      .from('sub_topics')
+      .select('video_id')
+      .not('video_id', 'is', null)
+      .is('deleted_at', null);
+    const activeVideoIds = new Set((videoSubTopics || []).map(v => v.video_id));
+
+    // 5. Identify orphaned collections
+    const orphaned: { guid: string; name: string; videoCount: number }[] = [];
+    const kept: { guid: string; name: string; reason: string }[] = [];
+
+    for (const coll of allCollections) {
+      if (validNames.has(coll.name)) {
+        kept.push({ guid: coll.guid, name: coll.name, reason: 'matches DB hierarchy' });
+      } else if (coll.videoCount > 0) {
+        // Keep collections with videos even if name doesn't match — avoid data loss
+        kept.push({ guid: coll.guid, name: coll.name, reason: `has ${coll.videoCount} videos` });
+      } else {
+        orphaned.push({ guid: coll.guid, name: coll.name, videoCount: coll.videoCount });
+      }
+    }
+
+    // 6. Delete orphaned collections (or just report in dry run)
+    let deleted = 0;
+    const errors: string[] = [];
+    if (!dryRun) {
+      for (const coll of orphaned) {
+        try {
+          await deleteStreamCollection(coll.guid);
+          deleted++;
+        } catch (e: any) {
+          errors.push(`Failed to delete "${coll.name}": ${e.message}`);
+        }
+      }
+    }
+
+    logAdmin({
+      actorId: (req as any).user?.id,
+      action: 'clean_orphaned_collections',
+      targetType: 'cdn_import',
+      targetId: 0,
+      targetName: 'Clean Orphaned Stream Collections',
+      ip: getClientIp(req),
+      metadata: { dryRun, total: allCollections.length, orphaned: orphaned.length, deleted, kept: kept.length },
+    });
+
+    return ok(res, {
+      dry_run: dryRun,
+      total_collections: allCollections.length,
+      orphaned_count: orphaned.length,
+      deleted_count: deleted,
+      kept_count: kept.length,
+      orphaned: orphaned.slice(0, 50), // limit response size
+      kept: kept.slice(0, 20),
+      errors,
+    }, dryRun
+      ? `Dry run: found ${orphaned.length} orphaned collections out of ${allCollections.length} total`
+      : `Deleted ${deleted} orphaned collections out of ${orphaned.length} found`
+    );
+  } catch (e: any) {
+    console.error('Clean orphaned collections error:', e);
+    return err(res, e.message || 'Failed to clean orphaned collections', 500);
   }
 }

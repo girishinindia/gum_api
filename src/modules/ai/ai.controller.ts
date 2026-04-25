@@ -3282,20 +3282,22 @@ export async function autoSubTopics(req: Request, res: Response) {
     const plainText = stripHtml(htmlContent);
     if (!plainText || plainText.length < 50) return err(res, 'HTML file has insufficient text content', 400);
 
-    // Look up topic with parent chain for folder path
+    // Look up topic with parent chain for folder path (names + orders for sanitized CDN paths)
     const { data: topic } = await supabase
       .from('topics')
-      .select('id, slug, chapter_id, chapters(slug, subject_id, subjects(slug))')
+      .select('id, slug, name, display_order, chapter_id, chapters(slug, name, display_order, subject_id, subjects(slug, name))')
       .eq('id', topic_id)
       .single();
     if (!topic) return err(res, 'Topic not found', 404);
 
-    // Build Bunny folder path from parent slugs
+    // Build Bunny folder path using sanitized names (matching scaffold convention)
+    // Falls back to slug when name is null (sanitizeName normalizes both to same result)
     const chapterData = (topic as any).chapters;
-    const subjectSlug = chapterData?.subjects?.slug;
-    const chapterSlug = chapterData?.slug;
-    const materialBasePath = (subjectSlug && chapterSlug)
-      ? `materials/${subjectSlug}/${chapterSlug}/${topic.slug}`
+    const subjectRef = chapterData?.subjects?.name || chapterData?.subjects?.slug;
+    const chapterRef = chapterData?.name || chapterData?.slug;
+    const topicRef = topic.name || topic.slug;
+    const materialBasePath = (subjectRef && chapterRef && topicRef)
+      ? `materials/${buildCourseFolderName(subjectRef)}/${buildCdnName(chapterData.display_order ?? 0, chapterRef)}/${buildCdnName(topic.display_order ?? 0, topicRef)}`
       : null;
 
     // Look up language
@@ -3618,6 +3620,7 @@ export async function importMaterialTree(req: Request, res: Response) {
           .insert({
             code,
             slug,
+            name: parsedSubject.name,
             is_active: true,
             display_order: 1,
             sort_order: 1,
@@ -3637,8 +3640,8 @@ export async function importMaterialTree(req: Request, res: Response) {
         report.created.subjects++;
         report.details.push({ type: 'subject', name: parsedSubject.name, action: 'created', id: subjectId, slug });
 
-        // Create Bunny folder
-        createBunnyFolder(`materials/${slug}`).catch(() => {});
+        // Create Bunny folder using sanitized name (matching scaffold convention)
+        createBunnyFolder(`materials/${buildCourseFolderName(parsedSubject.name)}`).catch(() => {});
       }
 
       const aiSubject: any = { name: parsedSubject.name, isNew: subjectIsNew, chapters: [] };
@@ -3663,6 +3666,7 @@ export async function importMaterialTree(req: Request, res: Response) {
             .from('chapters')
             .insert({
               slug,
+              name: parsedChapter.name,
               subject_id: subjectId,
               is_active: true,
               display_order: ci + 1,
@@ -3683,8 +3687,10 @@ export async function importMaterialTree(req: Request, res: Response) {
           report.created.chapters++;
           report.details.push({ type: 'chapter', name: parsedChapter.name, action: 'created', id: chapterId, slug, parent: parsedSubject.name });
 
-          // Create Bunny folder
-          createBunnyFolder(`materials/${subjectSlug}/${slug}`).catch(() => {});
+          // Create Bunny folder using sanitized names (matching scaffold convention)
+          const cdnSubject = buildCourseFolderName(parsedSubject.name);
+          const cdnChapter = buildCdnName(ci + 1, parsedChapter.name);
+          createBunnyFolder(`materials/${cdnSubject}/${cdnChapter}`).catch(() => {});
         }
 
         const aiChapter: any = { name: parsedChapter.name, isNew: chapterIsNew, topics: [] };
@@ -3709,6 +3715,7 @@ export async function importMaterialTree(req: Request, res: Response) {
               .from('topics')
               .insert({
                 slug,
+                name: parsedTopic.name,
                 chapter_id: chapterId,
                 is_active: true,
                 display_order: ti + 1,
@@ -3731,7 +3738,11 @@ export async function importMaterialTree(req: Request, res: Response) {
             report.details.push({ type: 'topic', name: parsedTopic.name, action: 'created', id: newTopic.id, slug, parent: parsedChapter.name });
 
             // Create Bunny folders: topic + resources + language subfolders
-            const basePath = `materials/${subjectSlug}/${chapterSlug}/${slug}`;
+            // Uses sanitized names (matching scaffold convention)
+            const cdnSubject = buildCourseFolderName(parsedSubject.name);
+            const cdnChapter = buildCdnName(ci + 1, parsedChapter.name);
+            const cdnTopic = buildCdnName(ti + 1, parsedTopic.name);
+            const basePath = `materials/${cdnSubject}/${cdnChapter}/${cdnTopic}`;
             const folders = [basePath, `${basePath}/resources`];
             for (const lang of activeLangs) {
               folders.push(`${basePath}/${lang.iso_code}`);
@@ -3909,13 +3920,17 @@ export async function translatePage(req: Request, res: Response) {
     const htmlContent = file.buffer.toString('utf-8');
     if (!htmlContent || htmlContent.length < 50) return err(res, 'HTML file has insufficient content', 400);
 
-    // Get the base filename without extension for naming translated files
-    const baseFileName = file.originalname.replace(/\.(html|htm)$/i, '');
+    // Get the base filename without extension for naming translated files.
+    // Strip any trailing language suffix (e.g. _en, _hi, _gu) so translations
+    // get clean names like "filename_gu.html" instead of "filename_en_gu.html".
+    const baseFileName = file.originalname
+      .replace(/\.(html|htm)$/i, '')
+      .replace(/_(?:en|hi|gu|mr|ta|te|kn|ml|bn|pa|ur|or|as|ne|si|sd|ks|mai|doi|kok|bho|sa|mni)$/i, '');
 
-    // Get sub-topic with full parent hierarchy for folder path
+    // Get sub-topic with full parent hierarchy for folder path (names + orders for sanitized CDN paths)
     const { data: subTopic } = await supabase
       .from('sub_topics')
-      .select('id, slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+      .select('id, slug, topic_id, topics(slug, name, display_order, chapter_id, chapters(slug, name, display_order, subject_id, subjects(slug, name)))')
       .eq('id', sub_topic_id)
       .single();
     if (!subTopic) return err(res, 'Sub-topic not found', 404);
@@ -3923,8 +3938,12 @@ export async function translatePage(req: Request, res: Response) {
     const parentTopic = (subTopic as any).topics;
     const parentChapter = parentTopic?.chapters;
     const parentSubject = parentChapter?.subjects;
-    const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
-      ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
+    // Falls back to slug when name is null (sanitizeName normalizes both to same result)
+    const subjectRef = parentSubject?.name || parentSubject?.slug;
+    const chapterRef = parentChapter?.name || parentChapter?.slug;
+    const topicRef = parentTopic?.name || parentTopic?.slug;
+    const materialBasePath = (subjectRef && chapterRef && topicRef)
+      ? `materials/${buildCourseFolderName(subjectRef)}/${buildCdnName(parentChapter.display_order ?? 0, chapterRef)}/${buildCdnName(parentTopic.display_order ?? 0, topicRef)}`
       : null;
 
     // Get all active material languages EXCEPT English
@@ -4341,19 +4360,33 @@ export async function importFromCdn(req: Request, res: Response) {
 
     // Build selection map: courseFolderName → chapter selections (null = all chapters)
     // Each chapter selection: { name, topics?: Set<string> | null } (null topics = all topics)
-    type ChapterSelection = { name: string; topics: Set<string> | null };
+    type ChapterSelection = { name: string; topics: Set<string> | null; subTopicSelections: Map<string, Set<string>> };
     const selectionMap = new Map<string, ChapterSelection[] | null>();
 
+    // Sub-topic filter: topicName → Set<subTopicName> (absent key = all sub-topics)
+    const globalSubTopicFilterMap = new Map<string, Set<string>>();
+
     if (Array.isArray(selected_items) && selected_items.length > 0) {
-      // Granular selection: { course: "C_Programming", chapters?: [{ name: "ch1", topics?: ["tp1"] }] }
+      // Granular selection: { course: "C_Programming", chapters?: [{ name: "ch1", topics?: [{ name: "tp1", subTopics?: ["st1"] }] }] }
       for (const item of selected_items) {
         if (item.chapters && item.chapters.length > 0) {
           const chapterSels: ChapterSelection[] = item.chapters.map((ch: any) => {
             // Support both old format (string) and new format ({ name, topics? })
-            if (typeof ch === 'string') return { name: ch, topics: null };
+            if (typeof ch === 'string') return { name: ch, topics: null, subTopicSelections: new Map() };
+            if (!ch.topics || ch.topics.length === 0) return { name: ch.name, topics: null, subTopicSelections: new Map() };
+
+            // Topics can be string[] (old) or { name, subTopics? }[] (new)
+            const topicNames: string[] = ch.topics.map((tp: any) => typeof tp === 'string' ? tp : tp.name);
+            const stSelections = new Map<string, Set<string>>();
+            for (const tp of ch.topics) {
+              if (typeof tp !== 'string' && tp.subTopics && tp.subTopics.length > 0) {
+                stSelections.set(tp.name, new Set(tp.subTopics as string[]));
+              }
+            }
             return {
               name: ch.name,
-              topics: ch.topics && ch.topics.length > 0 ? new Set(ch.topics) : null,
+              topics: new Set(topicNames),
+              subTopicSelections: stSelections,
             };
           });
           selectionMap.set(item.course, chapterSels);
@@ -4459,10 +4492,10 @@ export async function importFromCdn(req: Request, res: Response) {
       if (upload_videos && !isDryRun) {
         try {
           streamCollections = await createCourseCollections(
-            parsedCourse.name,
+            buildCourseFolderName(parsedCourse.name),
             parsedCourse.chapters.map(ch => ({
-              name: ch.name,
-              topics: ch.topics.map(tp => ({ name: tp.name })),
+              name: buildCdnName(ch.order, ch.name),
+              topics: ch.topics.map(tp => ({ name: buildCdnName(tp.order, tp.name) })),
             }))
           );
         } catch (collErr: any) {
@@ -4480,9 +4513,11 @@ export async function importFromCdn(req: Request, res: Response) {
       let chaptersToProcess = parsedCourse.chapters;
       // Map: chapterName → Set<topicName> | null (null = all topics for this chapter)
       const topicFilterMap = new Map<string, Set<string> | null>();
+      // Map: topicName → Set<subTopicName> (absent = all sub-topics for this topic)
+      const subTopicFilterMap = new Map<string, Set<string>>();
 
       if (courseSelection) {
-        console.log(`Selection filter for "${courseFolder.name}":`, JSON.stringify(courseSelection.map(cs => ({ name: cs.name, topics: cs.topics ? [...cs.topics] : null }))));
+        console.log(`Selection filter for "${courseFolder.name}":`, JSON.stringify(courseSelection.map(cs => ({ name: cs.name, topics: cs.topics ? [...cs.topics] : null, subTopicSelections: cs.subTopicSelections ? Object.fromEntries([...cs.subTopicSelections].map(([k, v]) => [k, [...v]])) : {} }))));
         console.log(`Parsed chapters:`, parsedCourse.chapters.map(ch => ch.name));
       }
 
@@ -4494,6 +4529,12 @@ export async function importFromCdn(req: Request, res: Response) {
           for (const sel of courseSelection) {
             if (sel.name === ch.name || namesMatch(sel.name, ch.name) || nameToSlug(sel.name) === chSlug) {
               topicFilterMap.set(ch.name, sel.topics);
+              // Populate sub-topic filter from this chapter's selections
+              if (sel.subTopicSelections) {
+                for (const [tpName, stSet] of sel.subTopicSelections) {
+                  subTopicFilterMap.set(tpName, stSet);
+                }
+              }
               return true;
             }
           }
@@ -4503,6 +4544,11 @@ export async function importFromCdn(req: Request, res: Response) {
             const chSel = courseSelection.find(cs => cs.name === chapterCdnName || namesMatch(cs.name, chapterCdnName));
             if (chSel) {
               topicFilterMap.set(ch.name, chSel.topics);
+              if (chSel.subTopicSelections) {
+                for (const [tpName, stSet] of chSel.subTopicSelections) {
+                  subTopicFilterMap.set(tpName, stSet);
+                }
+              }
               return true;
             }
           }
@@ -4702,9 +4748,24 @@ export async function importFromCdn(req: Request, res: Response) {
           if (topic.id > 0) seenTopicIds.add(topic.id);
 
           // Create/update sub-topics from parsed data
-          const subTopicDbMap = new Map<string, { id: number; slug: string }>();
+          const subTopicDbMap = new Map<string, { id: number; slug: string; display_order: number }>();
 
-          for (const parsedST of parsedTopic.subTopics) {
+          // ─── Filter sub-topics based on granular selection ───
+          const selectedSTSet = subTopicFilterMap.get(parsedTopic.name); // undefined = all, Set = specific
+          let subTopicsToProcess = parsedTopic.subTopics;
+          if (selectedSTSet) {
+            subTopicsToProcess = parsedTopic.subTopics.filter(st => {
+              if (selectedSTSet.has(st.name)) return true;
+              for (const sel of selectedSTSet) {
+                if (namesMatch(sel, st.name) || nameToSlug(sel) === nameToSlug(st.name)) return true;
+              }
+              return false;
+            });
+          }
+
+          console.log(`Topic "${parsedTopic.name}": ${parsedTopic.subTopics.length} total sub-topics, ${subTopicsToProcess.length} after filter. STFilter:`, selectedSTSet ? [...selectedSTSet] : 'undefined (all)');
+
+          for (const parsedST of subTopicsToProcess) {
             const stSlug = nameToSlug(parsedST.name);
 
             let subTopic = existingSubTopics.get(`${topic.id}:${stSlug}`);
@@ -4751,7 +4812,7 @@ export async function importFromCdn(req: Request, res: Response) {
                     is_active: true,
                     created_by: userId,
                   })
-                  .select('id, slug')
+                  .select('id, slug, display_order')
                   .single();
 
                 if (stErr || !created) {
@@ -4794,12 +4855,12 @@ export async function importFromCdn(req: Request, res: Response) {
             }
 
             if (!subTopic && isDryRun) {
-              subTopic = { id: -1, slug: stSlug };
+              subTopic = { id: -1, slug: stSlug, display_order: parsedST.order };
             }
 
             if (subTopic.id > 0) seenSubTopicIds.add(subTopic.id);
 
-            subTopicDbMap.set(parsedST.name.toLowerCase(), { id: subTopic.id, slug: subTopic.slug });
+            subTopicDbMap.set(parsedST.name.toLowerCase(), { id: subTopic.id, slug: subTopic.slug, display_order: parsedST.order });
           }
 
           // ─── Phase 3: Scan CDN topic folder for language files ───
@@ -4826,7 +4887,10 @@ export async function importFromCdn(req: Request, res: Response) {
               for (const fileNode of langFiles) {
                 report.translations.found++;
 
-                const fileBaseName = fileNode.name.replace(/\.(html|htm)$/i, '');
+                let fileBaseName = fileNode.name.replace(/\.(html|htm)$/i, '');
+                // Strip trailing language suffix (e.g. _en, _hi, _gu) since files are already in language folders
+                // This handles both file-upload naming (01_topic_name_en.html) and plain naming (topic_name.html)
+                fileBaseName = fileBaseName.replace(new RegExp(`_${folderName}$`, 'i'), '');
                 const normalized = normalizeCdnName(fileBaseName);
 
                 let matchedST: { id: number; slug: string } | undefined;
@@ -4934,7 +4998,11 @@ export async function importFromCdn(req: Request, res: Response) {
                   f => !f.isDirectory && videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
                 );
 
-                const topicCollName = buildCollectionName(parsedCourse.name, parsedChapter.name, parsedTopic.name);
+                const topicCollName = buildCollectionName(
+                  buildCourseFolderName(parsedCourse.name),
+                  buildCdnName(parsedChapter.order, parsedChapter.name),
+                  buildCdnName(parsedTopic.order, parsedTopic.name)
+                );
                 const topicCollId = streamCollections.get(topicCollName);
 
                 for (const videoNode of videoFiles) {
@@ -4943,7 +5011,7 @@ export async function importFromCdn(req: Request, res: Response) {
                   const videoBaseName = videoNode.name.replace(/\.\w+$/i, '');
                   const normalizedVideo = normalizeCdnName(videoBaseName);
 
-                  let matchedST: { id: number; slug: string } | undefined;
+                  let matchedST: { id: number; slug: string; display_order: number } | undefined;
                   matchedST = subTopicDbMap.get(normalizedVideo);
 
                   if (!matchedST) {
@@ -4985,7 +5053,7 @@ export async function importFromCdn(req: Request, res: Response) {
                   // Fetch video into Bunny Stream directly from CDN storage URL
                   try {
                     const storageUrl = buildStorageUrl(videoNode.path);
-                    const videoTitle = `${matchedST.slug}-${matchedST.id}`;
+                    const videoTitle = buildCdnName(matchedST.display_order, parsedTopic.name);
                     await fetchVideoFromUrl(storageUrl, videoTitle, topicCollId);
 
                     await supabase
@@ -5164,20 +5232,21 @@ export async function scaffoldCdn(req: Request, res: Response) {
       return err(res, `Failed to parse: ${parseResult.errors.join('; ')}`, 400);
     }
 
-    // Build all CDN folder paths using DB-compatible slugs (lowercase-hyphenated)
-    // This matches the format used by Subject/Chapter/Topic controllers and all file uploads
+    // Build all CDN folder paths with order-prefixed names (01_Name, 02_Name, ...)
+    // Course level: sanitized name without order prefix (e.g. "C_Programming")
+    // Chapter/Topic level: zero-padded order + sanitized name (e.g. "01_Introduction_to_C")
     const course = parseResult.course;
-    const courseSlug = nameToSlug(course.name);
-    const paths: string[] = [`materials/${courseSlug}`];
+    const courseFolder = buildCourseFolderName(course.name);
+    const paths: string[] = [`materials/${courseFolder}`];
 
     for (const chapter of course.chapters) {
-      const chapterSlug = nameToSlug(chapter.name);
-      const chapterPath = `materials/${courseSlug}/${chapterSlug}`;
+      const chapterFolder = buildCdnName(chapter.order, chapter.name);
+      const chapterPath = `materials/${courseFolder}/${chapterFolder}`;
       paths.push(chapterPath);
 
       for (const topic of chapter.topics) {
-        const topicSlug = nameToSlug(topic.name);
-        const topicPath = `${chapterPath}/${topicSlug}`;
+        const topicFolder = buildCdnName(topic.order, topic.name);
+        const topicPath = `${chapterPath}/${topicFolder}`;
         paths.push(topicPath);
         paths.push(`${topicPath}/resources`);
 
@@ -5197,18 +5266,19 @@ export async function scaffoldCdn(req: Request, res: Response) {
       created += batch.length;
     }
 
-    // Also create the .txt file on CDN (using slug-based path)
-    const txtPath = `materials/${courseSlug}/${courseSlug}.txt`;
+    // Also create the .txt file on CDN (using folder-based path)
+    const txtPath = `materials/${courseFolder}/${courseFolder}.txt`;
     await uploadRawFile(Buffer.from(txt_content, 'utf-8'), txtPath);
 
     // Create matching Bunny Stream collection hierarchy for videos
+    // Use the same order-prefixed folder names so CDN and Stream match
     let streamCollectionsCreated = 0;
     try {
       const collections = await createCourseCollections(
-        parseResult.course.name,
-        parseResult.course.chapters.map(ch => ({
-          name: ch.name,
-          topics: ch.topics.map(tp => ({ name: tp.name })),
+        courseFolder,
+        course.chapters.map(ch => ({
+          name: buildCdnName(ch.order, ch.name),
+          topics: ch.topics.map(tp => ({ name: buildCdnName(tp.order, tp.name) })),
         }))
       );
       streamCollectionsCreated = collections.size;
@@ -5251,11 +5321,14 @@ export async function checkVideoStatus(req: Request, res: Response) {
     const userId = (req as any).user?.id;
     if (!userId) return err(res, 'Unauthorized', 401);
 
-    // Find all sub-topics with pending videos
+    // Find all sub-topics with videos still processing
+    // uploadVideo() sets video_source='bunny' with video_status='processing',
+    // so we must check both 'bunny_pending' and 'bunny' with status='processing'
     const { data: pendingSTs, error: fetchErr } = await supabase
       .from('sub_topics')
       .select('id, slug, video_id, video_source')
-      .eq('video_source', 'bunny_pending')
+      .in('video_source', ['bunny_pending', 'bunny'])
+      .eq('video_status', 'processing')
       .is('deleted_at', null);
 
     if (fetchErr) return err(res, fetchErr.message, 500);

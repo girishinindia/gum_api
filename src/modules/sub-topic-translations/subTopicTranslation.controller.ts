@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 
 const SITE_URL = 'https://growupmore.com';
 const SITE_NAME = 'GrowUpMore';
@@ -151,19 +152,23 @@ export async function create(req: Request, res: Response) {
   }
 
   // Verify sub-topic exists (include parent hierarchy for structured data + folder path)
-  const { data: subTopic } = await supabase.from('sub_topics').select('id, slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))').eq('id', body.sub_topic_id).single();
+  const { data: subTopic } = await supabase.from('sub_topics').select('id, slug, topic_id, topics(slug, name, display_order, chapter_id, chapters(slug, name, display_order, subject_id, subjects(slug, name)))').eq('id', body.sub_topic_id).single();
   if (!subTopic) return err(res, 'Sub-topic not found', 404);
 
   // Verify language exists and for_material = true
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).eq('for_material', true).single();
   if (!lang) return err(res, 'Language not found or not available for material', 404);
 
-  // Build material folder path from parent chain (topic level — no sub-topic folder)
+  // Build material folder path using sanitized names (matching scaffold convention)
+  // Falls back to slug when name is null (sanitizeName normalizes both to same result)
   const parentTopic = (subTopic as any).topics;
   const parentChapter = parentTopic?.chapters;
   const parentSubject = parentChapter?.subjects;
-  const materialBasePath = (parentSubject?.slug && parentChapter?.slug && parentTopic?.slug)
-    ? `materials/${parentSubject.slug}/${parentChapter.slug}/${parentTopic.slug}`
+  const subjectRef = parentSubject?.name || parentSubject?.slug;
+  const chapterRef = parentChapter?.name || parentChapter?.slug;
+  const topicRef = parentTopic?.name || parentTopic?.slug;
+  const materialBasePath = (subjectRef && chapterRef && topicRef)
+    ? `materials/${buildCourseFolderName(subjectRef)}/${buildCdnName(parentChapter.display_order ?? 0, chapterRef)}/${buildCdnName(parentTopic.display_order ?? 0, topicRef)}`
     : null;
 
   // Set audit field
@@ -254,6 +259,8 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Sub-topic translation not found', 404);
 
   const updates = parseMultipartBody(req);
+  // Remove non-DB fields before they reach the update query
+  delete updates.skip_cascade;
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {
     if (!hasPermission(req, 'sub_topic_translation', 'activate')) {
@@ -321,22 +328,25 @@ export async function update(req: Request, res: Response) {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   let mediaUploaded = false;
 
-  // Build material folder path for structured file uploads (topic level — no sub-topic folder)
+  // Build material folder path using sanitized names (matching scaffold convention)
   let updateMaterialBasePath: string | null = null;
   let updateLangIso: string | null = resolvedLangIso || null;
   if (files?.page_file?.[0]) {
     const subTopicId = updates.sub_topic_id || old.sub_topic_id;
     const { data: stData } = await supabase
       .from('sub_topics')
-      .select('slug, topic_id, topics(slug, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+      .select('slug, topic_id, topics(slug, name, display_order, chapter_id, chapters(slug, name, display_order, subject_id, subjects(slug, name)))')
       .eq('id', subTopicId)
       .single();
     if (stData) {
       const t = (stData as any).topics;
       const c = t?.chapters;
       const s = c?.subjects;
-      if (s?.slug && c?.slug && t?.slug) {
-        updateMaterialBasePath = `materials/${s.slug}/${c.slug}/${t.slug}`;
+      const sRef = s?.name || s?.slug;
+      const cRef = c?.name || c?.slug;
+      const tRef = t?.name || t?.slug;
+      if (sRef && cRef && tRef) {
+        updateMaterialBasePath = `materials/${buildCourseFolderName(sRef)}/${buildCdnName(c.display_order ?? 0, cRef)}/${buildCdnName(t.display_order ?? 0, tRef)}`;
       }
     }
     if (!updateLangIso) {
@@ -392,6 +402,46 @@ export async function update(req: Request, res: Response) {
       : `sub-topic-translations/pages/${originalName}`;
     updates.page = await uploadRawFile(files.page_file[0].buffer, path);
     mediaUploaded = true;
+
+    // CASCADE: When ANY language file is updated, delete all OTHER language files
+    // so they can be regenerated from the new source file.
+    // skip_cascade: set to true during batch uploads (Process flow Step 3, auto-upload)
+    // to prevent sequential uploads from deleting each other's files.
+    const skipCascade = req.body?.skip_cascade === true || req.body?.skip_cascade === 'true'
+      || req.query?.skip_cascade === 'true';
+    if (!skipCascade) {
+      const cascadeSubTopicId = updates.sub_topic_id || old.sub_topic_id;
+      const cascadeLangId = updates.language_id || old.language_id;
+      try {
+        const { data: otherTranslations } = await supabase
+          .from('sub_topic_translations')
+          .select('id, page, language_id')
+          .eq('sub_topic_id', cascadeSubTopicId)
+          .neq('language_id', cascadeLangId)
+          .not('page', 'is', null)
+          .is('deleted_at', null);
+
+        if (otherTranslations?.length) {
+          // Delete each other language's page file from CDN
+          for (const otherTrans of otherTranslations) {
+            if (otherTrans.page) {
+              try { await deleteImage(extractBunnyPath(otherTrans.page), otherTrans.page); } catch {}
+            }
+          }
+          // Set page=null for all other translations in bulk
+          const otherIds = otherTranslations.map(t => t.id);
+          await supabase
+            .from('sub_topic_translations')
+            .update({ page: null, updated_by: req.user!.id })
+            .in('id', otherIds);
+
+          console.log(`Cascade: deleted ${otherTranslations.length} other language page files for sub_topic_id=${cascadeSubTopicId}`);
+        }
+      } catch (cascadeErr: any) {
+        // Non-fatal — the primary upload succeeded, cascade cleanup is best-effort
+        console.warn('Cascade delete of other language files failed:', cascadeErr.message);
+      }
+    }
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

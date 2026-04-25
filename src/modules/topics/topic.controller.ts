@@ -7,7 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolders, deleteBunnyFolder } from '../../services/storage.service';
-import { deleteVideoFromStream } from '../../services/video.service';
+import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 
 const CACHE_KEY = 'topics:all';
 const clearCache = async (chapterId?: number) => {
@@ -117,18 +117,20 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: topic:activate required to create inactive', 403);
   }
 
-  // Verify chapter exists if chapter_id is provided; also fetch parent slugs for folder path
-  let subjectSlug: string | null = null;
-  let chapterSlug: string | null = null;
+  // Verify chapter exists if chapter_id is provided; also fetch parent info for folder path
+  let subjectName: string | null = null;
+  let chapterName: string | null = null;
+  let chapterOrder: number = 0;
   if (body.chapter_id) {
     const { data: chapter } = await supabase
       .from('chapters')
-      .select('id, slug, subject_id, subjects(slug)')
+      .select('id, slug, name, display_order, subject_id, subjects(slug, name)')
       .eq('id', body.chapter_id)
       .single();
     if (!chapter) return err(res, 'Chapter not found', 404);
-    chapterSlug = chapter.slug;
-    subjectSlug = (chapter as any).subjects?.slug || null;
+    chapterName = chapter.name || chapter.slug;
+    chapterOrder = chapter.display_order ?? 0;
+    subjectName = (chapter as any).subjects?.name || (chapter as any).subjects?.slug || null;
   }
 
   // Set audit field
@@ -159,9 +161,13 @@ export async function create(req: Request, res: Response) {
     }, { onConflict: 'topic_id,language_id' });
   }
 
-  // Create Bunny folders: materials/<subject>/<chapter>/<topic>/ + resources/ + language folders
-  if (subjectSlug && chapterSlug) {
-    const basePath = `materials/${subjectSlug}/${chapterSlug}/${data.slug}`;
+  // Create Bunny folders: materials/<SubjectName>/<Order_ChapterName>/<Order_TopicName>/ + resources/ + lang folders
+  // Uses sanitized names to match scaffold convention
+  if (subjectName && chapterName) {
+    const cdnSubject = buildCourseFolderName(subjectName);
+    const cdnChapter = buildCdnName(chapterOrder, chapterName);
+    const cdnTopic = buildCdnName(data.display_order ?? 0, body.name || data.slug);
+    const basePath = `materials/${cdnSubject}/${cdnChapter}/${cdnTopic}`;
     const folders = [basePath, `${basePath}/resources`];
 
     // Fetch all active languages for language subfolders
@@ -347,15 +353,9 @@ export async function remove(req: Request, res: Response) {
     }
   }
 
-  // Delete child sub-topics (including their Bunny Stream videos) and translations
-  const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').eq('topic_id', id);
+  // Delete child sub-topics and translations (videos retained in Bunny Stream for re-import)
+  const { data: childSubTopics } = await supabase.from('sub_topics').select('id').eq('topic_id', id);
   if (childSubTopics && childSubTopics.length > 0) {
-    // Delete Bunny Stream videos for each sub-topic
-    for (const st of childSubTopics) {
-      if (st.video_id && st.video_source === 'bunny') {
-        try { await deleteVideoFromStream(st.video_id); } catch {}
-      }
-    }
     const stIds = childSubTopics.map((st: any) => st.id);
     await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
     await supabase.from('sub_topics').delete().eq('topic_id', id);

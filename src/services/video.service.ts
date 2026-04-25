@@ -85,22 +85,29 @@ export async function findOrCreateCollection(name: string): Promise<string> {
 }
 
 /**
- * Build a hierarchical collection name following the convention:
- *   "CourseName > ChapterName > TopicName"
- * Since Bunny Stream collections are flat (no parent-child), we use
- * this naming convention to simulate hierarchy.
+ * Build a collection name matching the CDN folder path convention:
+ *   "CourseName/ChapterName/TopicName"
+ * Since Bunny Stream collections are flat (no parent-child nesting),
+ * we use "/" path-style naming so searching by subject or chapter
+ * filters results naturally.
+ *
+ * Only topic-level collections are created (where videos actually live).
+ * Course and chapter levels are encoded in the name for searchability.
  */
 export function buildCollectionName(courseName: string, chapterName?: string, topicName?: string): string {
   const parts = [courseName];
   if (chapterName) parts.push(chapterName);
   if (topicName) parts.push(topicName);
-  return parts.join(' > ');
+  return parts.join('/');
 }
 
 /**
- * Create the full collection hierarchy for a course.
- * Creates: course-level, chapter-level, and topic-level collections.
- * Returns a map of "course > chapter > topic" → collectionId.
+ * Create topic-level collections for a course.
+ * Only creates collections at the topic level (where videos live).
+ * Course and chapter names are part of the path-style collection name
+ * for easy searching/filtering in the Bunny Stream dashboard.
+ *
+ * Returns a map of "course/chapter/topic" → collectionId.
  */
 export async function createCourseCollections(
   courseName: string,
@@ -108,17 +115,8 @@ export async function createCourseCollections(
 ): Promise<Map<string, string>> {
   const collectionsMap = new Map<string, string>();
 
-  // Course-level collection
-  const courseCollName = buildCollectionName(courseName);
-  const courseCollId = await findOrCreateCollection(courseCollName);
-  collectionsMap.set(courseCollName, courseCollId);
-
-  // Chapter and topic level collections
+  // Only create topic-level collections (no empty course/chapter containers)
   for (const chapter of chapters) {
-    const chapterCollName = buildCollectionName(courseName, chapter.name);
-    const chapterCollId = await findOrCreateCollection(chapterCollName);
-    collectionsMap.set(chapterCollName, chapterCollId);
-
     for (const topic of chapter.topics) {
       const topicCollName = buildCollectionName(courseName, chapter.name, topic.name);
       const topicCollId = await findOrCreateCollection(topicCollName);

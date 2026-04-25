@@ -7,7 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
-import { deleteVideoFromStream } from '../../services/video.service';
+import { buildCourseFolderName } from '../../utils/courseParser';
 
 const CACHE_KEY = 'subjects:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -115,8 +115,10 @@ export async function create(req: Request, res: Response) {
     }, { onConflict: 'subject_id,language_id' });
   }
 
-  // Create Bunny folder: materials/<subject-slug>/
-  createBunnyFolder(`materials/${data.slug}`).catch(() => {});
+  // Create Bunny folder: materials/<SanitizedSubjectName>/
+  // Uses buildCourseFolderName to match scaffold convention (e.g. "C_Programming")
+  const cdnSubjectFolder = buildCourseFolderName(data.name || data.code || data.slug);
+  createBunnyFolder(`materials/${cdnSubjectFolder}`).catch(() => {});
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'subject_created', targetType: 'subject', targetId: data.id, targetName: data.code, ip: getClientIp(req) });
@@ -264,14 +266,9 @@ export async function remove(req: Request, res: Response) {
       const { data: childTopics } = await supabase.from('topics').select('id').in('chapter_id', cIds);
       if (childTopics && childTopics.length > 0) {
         const tIds = childTopics.map((t: any) => t.id);
-        const { data: childSubTopics } = await supabase.from('sub_topics').select('id, video_id, video_source').in('topic_id', tIds);
+        // Note: videos retained in Bunny Stream for re-import
+        const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
         if (childSubTopics && childSubTopics.length > 0) {
-          // Delete Bunny Stream videos for each sub-topic
-          for (const st of childSubTopics) {
-            if (st.video_id && st.video_source === 'bunny') {
-              try { await deleteVideoFromStream(st.video_id); } catch {}
-            }
-          }
           const stIds = childSubTopics.map((st: any) => st.id);
           const { error: stTransErr } = await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
           if (stTransErr) console.error('Failed to delete sub_topic_translations:', stTransErr);

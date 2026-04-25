@@ -14,5 +14,6 @@ r.delete('/folder', requirePermission('subject', 'delete'), ctrl.deleteFolder);
 // CDN cleanup / migration endpoints
 r.post('/fix-orphaned-subtopic-folders', requirePermission('subject', 'delete'), ctrl.fixOrphanedSubtopicFolders);
 r.post('/reconcile-folder-names', requirePermission('subject', 'delete'), ctrl.reconcileFolderNames);
+r.post('/clean-orphaned-collections', requirePermission('subject', 'delete'), ctrl.cleanOrphanedCollections);
 
 export default r;
