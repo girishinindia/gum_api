@@ -9,6 +9,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
+import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -298,6 +299,9 @@ export async function remove(req: Request, res: Response) {
 
   // Note: intentionally NOT deleting Bunny Stream video here — videos are retained
   // so they can be re-matched on re-import. Use explicit delete-video button instead.
+
+  // Archive YouTube URLs before deletion so they can be re-linked on CDN re-import
+  await archiveYoutubeUrls([id], req.user?.id);
 
   // Delete child translations first to avoid FK constraint
   await supabase.from('sub_topic_translations').delete().eq('sub_topic_id', id);

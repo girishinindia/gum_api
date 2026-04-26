@@ -13,6 +13,7 @@ import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
 import { matchSubject, matchChapter, matchTopic, matchSubTopic } from '../../services/materialMatcher.service';
 import { generateMaterialData, type MaterialTreeInput } from '../../services/materialAiGenerator.service';
+import { getArchivedYoutubeUrls, markArchiveRestored } from '../../services/youtubeArchive.service';
 
 // ─── Rate limiter (in-memory, per user) ───
 const rateLimits = new Map<number, { count: number; resetAt: number }>();
@@ -832,25 +833,41 @@ async function generateAllTranslationsForEntity(
   const { data: allLangs } = await supabase.from('languages').select('id, name, iso_code, native_name').eq('is_active', true).eq('for_material', true).order('id');
   if (!allLangs || allLangs.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
 
-  // Find existing translations
-  const { data: existing } = await supabase.from(cfg.translationTable).select('id, language_id, deleted_at').eq(cfg.idField, entityId);
-  const activeLangIds = new Set((existing || []).filter((e: any) => !e.deleted_at).map((e: any) => e.language_id));
+  // Find existing translations (fetch ALL fields so we can detect empty-content records)
+  const { data: existing } = await supabase.from(cfg.translationTable).select('*').eq(cfg.idField, entityId);
+  const activeTranslations = (existing || []).filter((e: any) => !e.deleted_at);
+  const activeLangIds = new Set(activeTranslations.map((e: any) => e.language_id));
   const softDeletedMap = new Map((existing || []).filter((e: any) => e.deleted_at).map((e: any) => [e.language_id, e.id]));
-  const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
 
-  if (missingLangs.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
+  // Check which active translations have meaningful content vs just name/page
+  const contentFields = cfg.fields.filter(f => f !== 'name');
+  const emptyTransMap = new Map<number, number>(); // language_id → translation record id (for update)
+  for (const t of activeTranslations) {
+    const hasContent = contentFields.some((f: string) => {
+      const val = t[f];
+      return val && typeof val === 'string' && val.trim().length > 0;
+    });
+    if (!hasContent) {
+      emptyTransMap.set(t.language_id, t.id);
+    }
+  }
+
+  // Languages that need work: truly missing OR exist but have no content
+  const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+  const emptyLangs = allLangs.filter(l => emptyTransMap.has(l.id));
+  const langsNeedingContent = [...missingLangs, ...emptyLangs];
+
+  if (langsNeedingContent.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
 
   // Check if English already exists with meaningful content
   const enLangRecord = allLangs.find(l => l.iso_code === 'en');
   let englishSource: any = null;
-  let englishExistsInDb = !missingLangs.find(l => l.iso_code === 'en'); // true if English is NOT in missing list
+  let englishExistsInDb = activeLangIds.has(enLangRecord?.id); // true if English translation row exists
   let englishHasContent = false;
 
   if (englishExistsInDb && enLangRecord) {
-    const { data: enTrans } = await supabase.from(cfg.translationTable).select('*').eq(cfg.idField, entityId).is('deleted_at', null);
-    if (enTrans) englishSource = enTrans.find((t: any) => t.language_id === enLangRecord.id);
+    englishSource = activeTranslations.find((t: any) => t.language_id === enLangRecord.id);
     // Check if English has actual content beyond just name
-    const contentFields = cfg.fields.filter(f => f !== 'name');
     englishHasContent = englishSource && contentFields.some((f: string) => {
       const val = englishSource[f];
       return val && typeof val === 'string' && val.trim().length > 0;
@@ -867,7 +884,7 @@ async function generateAllTranslationsForEntity(
     ? 'name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences.'
     : entityType === 'chapter' || entityType === 'topic'
     ? `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve.`
-    : `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences.`;
+    : `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; tags = comma-separated relevant tags; video_title = concise video title; video_description = 2-3 sentence video description; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`;
 
   // ─── Step A: If English exists but is empty, generate English content first ───
   if (needsEnglishGeneration) {
@@ -919,9 +936,9 @@ RULES: ${extraRules} Write in a natural, human way. Be thorough and informative.
     }
   }
 
-  // ─── Step B: Generate translations for all other missing languages ───
-  // Rebuild missingLangs to exclude English (since we handled it above or it already existed)
-  const langsToTranslate = missingLangs.filter(l => l.iso_code !== 'en');
+  // ─── Step B: Generate translations for all other missing/empty languages ───
+  // Include both truly missing and empty (name-only) translations, excluding English (handled above)
+  const langsToTranslate = langsNeedingContent.filter(l => l.iso_code !== 'en');
 
   if (langsToTranslate.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
 
@@ -1012,9 +1029,14 @@ USER INSTRUCTIONS: ${userPrompt}`;
           is_active: true, deleted_at: null, updated_by: userId,
         };
         const softDeletedId = softDeletedMap.get(lang.id);
+        const emptyExistingId = emptyTransMap.get(lang.id);
         let saved: any, saveErr: any;
         if (softDeletedId) {
           const r2 = await supabase.from(cfg.translationTable).update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+          saved = r2.data; saveErr = r2.error;
+        } else if (emptyExistingId) {
+          // Update existing empty translation with AI content (preserves page_url etc.)
+          const r2 = await supabase.from(cfg.translationTable).update({ ...translatedFields, ...(sd && { structured_data: sd }), updated_by: userId }).eq('id', emptyExistingId).select().single();
           saved = r2.data; saveErr = r2.error;
         } else {
           const r2 = await supabase.from(cfg.translationTable).insert({ ...record, created_by: userId }).select().single();
@@ -1043,9 +1065,14 @@ USER INSTRUCTIONS: ${userPrompt}`;
         is_active: true, deleted_at: null, updated_by: userId,
       };
       const softDeletedId = softDeletedMap.get(lang.id);
+      const emptyExistingId = emptyTransMap.get(lang.id);
       let saved: any, saveErr: any;
       if (softDeletedId) {
         const r2 = await supabase.from(cfg.translationTable).update({ ...record, created_by: userId }).eq('id', softDeletedId).select().single();
+        saved = r2.data; saveErr = r2.error;
+      } else if (emptyExistingId) {
+        // Update existing empty translation with AI content (preserves page_url etc.)
+        const r2 = await supabase.from(cfg.translationTable).update({ ...translatedFields, ...(sd && { structured_data: sd }), updated_by: userId }).eq('id', emptyExistingId).select().single();
         saved = r2.data; saveErr = r2.error;
       } else {
         const r2 = await supabase.from(cfg.translationTable).insert({ ...record, created_by: userId }).select().single();
@@ -5310,6 +5337,88 @@ export async function importFromCdn(req: Request, res: Response) {
               } catch (streamErr: any) {
                 report.errors.push(`Failed to scan Stream collection "${topicCollName}": ${streamErr.message}`);
               }
+            }
+          }
+
+          // ─── Phase 4c: Restore archived YouTube URLs ───
+          // Check the youtube_url_archive table for URLs that were saved before a previous
+          // permanent delete, and re-link them to the matching newly-created sub-topics.
+          if (!isDryRun && subTopicDbMap.size > 0 && subject.slug) {
+            try {
+              const archivedUrls = await getArchivedYoutubeUrls(subject.slug, chapterSlug, topicSlug);
+
+              if (archivedUrls.length > 0) {
+                const restoredArchiveIds: number[] = [];
+
+                for (const archived of archivedUrls) {
+                  // Match by slug (normalized comparison)
+                  const normalizedArchived = archived.sub_topic_slug.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+                  let matchedST: { id: number; slug: string; display_order: number } | undefined;
+
+                  // Try exact slug match first
+                  for (const [, stRecord] of subTopicDbMap) {
+                    if (stRecord.slug === archived.sub_topic_slug) {
+                      matchedST = stRecord;
+                      break;
+                    }
+                  }
+
+                  // Fallback: normalized match
+                  if (!matchedST) {
+                    for (const [, stRecord] of subTopicDbMap) {
+                      if (stRecord.slug.replace(/[^a-z0-9]/g, '') === normalizedArchived) {
+                        matchedST = stRecord;
+                        break;
+                      }
+                    }
+                  }
+
+                  // Fallback: display_order match
+                  if (!matchedST && archived.sub_topic_display_order != null) {
+                    for (const [, stRecord] of subTopicDbMap) {
+                      if (stRecord.display_order === archived.sub_topic_display_order) {
+                        matchedST = stRecord;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (!matchedST) continue;
+
+                  // Check if sub-topic already has a video linked (don't overwrite)
+                  const { data: currentST } = await supabase
+                    .from('sub_topics')
+                    .select('video_id, video_source, youtube_url')
+                    .eq('id', matchedST.id)
+                    .single();
+
+                  if (currentST?.youtube_url || currentST?.video_id) continue; // Already has video, skip
+
+                  // Restore the YouTube URL
+                  const { error: restoreErr } = await supabase
+                    .from('sub_topics')
+                    .update({
+                      youtube_url: archived.youtube_url,
+                      video_source: archived.video_source || 'youtube',
+                    })
+                    .eq('id', matchedST.id);
+
+                  if (!restoreErr) {
+                    restoredArchiveIds.push(archived.id);
+                    report.videos.found++;
+                    report.videos.matched++;
+                    console.log(`[Phase 4c] Restored YouTube URL for sub-topic ${matchedST.slug} from archive`);
+                  }
+                }
+
+                // Mark restored entries so they won't match again
+                if (restoredArchiveIds.length > 0) {
+                  await markArchiveRestored(restoredArchiveIds);
+                }
+              }
+            } catch (archiveErr: any) {
+              report.errors.push(`Phase 4c: Failed to restore YouTube URLs: ${archiveErr.message}`);
             }
           }
         }

@@ -8,6 +8,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
 import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
+import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
 
 const CACHE_KEY = 'chapters:all';
 const clearCache = async (subjectId?: number) => {
@@ -319,6 +320,8 @@ export async function remove(req: Request, res: Response) {
     const { data: childSubTopics } = await supabase.from('sub_topics').select('id').in('topic_id', tIds);
     if (childSubTopics && childSubTopics.length > 0) {
       const stIds = childSubTopics.map((st: any) => st.id);
+      // Archive YouTube URLs before deletion
+      await archiveYoutubeUrls(stIds, req.user?.id);
       await supabase.from('sub_topic_translations').delete().in('sub_topic_id', stIds);
       await supabase.from('sub_topics').delete().in('topic_id', tIds);
     }
