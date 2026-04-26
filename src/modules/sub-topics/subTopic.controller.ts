@@ -9,7 +9,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
-import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
+import { archiveYoutubeUrls, deleteArchiveForSubTopic } from '../../services/youtubeArchive.service';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -100,6 +100,20 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fetch YouTube description status for all sub-topics in this page
+  let ytDescMap: Record<number, { id: number; video_title: string }> = {};
+  if (subTopicIds.length > 0) {
+    const { data: ytDescs } = await supabase
+      .from('youtube_descriptions')
+      .select('id, sub_topic_id, video_title')
+      .in('sub_topic_id', subTopicIds);
+    if (ytDescs) {
+      for (const yd of ytDescs) {
+        ytDescMap[yd.sub_topic_id] = { id: yd.id, video_title: yd.video_title };
+      }
+    }
+  }
+
   const libId = config.bunny.streamLibraryId;
   const enriched = (data || []).map((st: any) => {
     // Compute video_url if missing but video_id exists (e.g. linked via CDN import)
@@ -113,11 +127,15 @@ export async function list(req: Request, res: Response) {
           : `https://vz-cdn.b-cdn.net/${st.video_id}/thumbnail.jpg`;
       }
     }
+    const ytDesc = ytDescMap[st.id];
     return {
       ...st,
       video_url,
       video_thumbnail_url,
       english_name: englishNameMap[st.id] || null,
+      has_yt_description: !!ytDesc,
+      yt_description_id: ytDesc?.id || null,
+      yt_video_title: ytDesc?.video_title || null,
     };
   });
 
@@ -203,6 +221,12 @@ export async function update(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+
+  // If youtube_url is being changed or cleared, clean up stale archive entries
+  // so CDN re-imports won't resurrect a URL the user intentionally replaced/removed
+  if ('youtube_url' in updates && updates.youtube_url !== old.youtube_url) {
+    await deleteArchiveForSubTopic(id);
+  }
 
   const { data, error: e } = await supabase
     .from('sub_topics')
@@ -397,6 +421,10 @@ export async function deleteVideo(req: Request, res: Response) {
   if (st.video_id && (st.video_source === 'bunny' || st.video_source === 'bunny_pending')) {
     try { await deleteVideoFromStream(st.video_id); } catch {}
   }
+
+  // Clean up any unrestored youtube_url_archive entries for this sub-topic
+  // so CDN re-imports won't resurrect a URL the user intentionally deleted
+  await deleteArchiveForSubTopic(id);
 
   const { data, error: e } = await supabase.from('sub_topics').update({
     video_id: null,

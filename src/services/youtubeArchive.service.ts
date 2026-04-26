@@ -36,6 +36,19 @@ export async function archiveYoutubeUrls(
     archived_by: archivedBy ?? null,
   }));
 
+  // Deduplicate: remove existing unrestored entries for the same sub-topic slugs
+  // before inserting new ones, preventing duplicate archive rows
+  for (const row of rows) {
+    await supabase
+      .from('youtube_url_archive')
+      .delete()
+      .eq('subject_slug', row.subject_slug)
+      .eq('chapter_slug', row.chapter_slug)
+      .eq('topic_slug', row.topic_slug)
+      .eq('sub_topic_slug', row.sub_topic_slug)
+      .is('restored_at', null);
+  }
+
   const { error } = await supabase.from('youtube_url_archive').insert(rows);
   if (error) {
     console.error('Failed to archive YouTube URLs:', error);
@@ -92,5 +105,46 @@ export async function markArchiveRestored(archiveIds: number[]): Promise<void> {
 
   if (error) {
     console.error('Failed to mark YouTube archive entries as restored:', error);
+  }
+}
+
+/**
+ * Delete ALL archive entries for a specific sub-topic (both restored and unrestored).
+ * Called when a user explicitly removes a YouTube URL or changes it,
+ * so that CDN re-imports won't resurrect a URL the user intentionally deleted
+ * and old entries don't accumulate wasting database space.
+ *
+ * @param subTopicId - The sub-topic ID whose archive entries should be cleaned
+ */
+export async function deleteArchiveForSubTopic(subTopicId: number): Promise<void> {
+  // Look up the sub-topic's full slug hierarchy
+  const { data: st } = await supabase
+    .from('sub_topics')
+    .select(`
+      slug,
+      topics!inner(slug, chapters!inner(slug, subjects!inner(slug)))
+    `)
+    .eq('id', subTopicId)
+    .single();
+
+  if (!st) return;
+
+  const subjectSlug = (st as any).topics.chapters.subjects.slug;
+  const chapterSlug = (st as any).topics.chapters.slug;
+  const topicSlug = (st as any).topics.slug;
+
+  // Delete ALL entries (both restored and unrestored) to prevent DB bloat
+  const { error, count } = await supabase
+    .from('youtube_url_archive')
+    .delete()
+    .eq('subject_slug', subjectSlug)
+    .eq('chapter_slug', chapterSlug)
+    .eq('topic_slug', topicSlug)
+    .eq('sub_topic_slug', st.slug);
+
+  if (error) {
+    console.error('Failed to delete archive entries for sub-topic:', error);
+  } else if (count && count > 0) {
+    console.log(`[YouTubeArchive] Cleaned ${count} archive entry(ies) for sub-topic "${st.slug}"`);
   }
 }

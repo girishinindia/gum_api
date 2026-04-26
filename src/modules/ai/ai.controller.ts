@@ -4404,7 +4404,7 @@ export async function importFromCdn(req: Request, res: Response) {
       supabase.from('subjects').select('id, code, slug').is('deleted_at', null),
       supabase.from('chapters').select('id, slug, subject_id, sort_order, display_order').is('deleted_at', null),
       supabase.from('topics').select('id, slug, chapter_id, sort_order, display_order').is('deleted_at', null),
-      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_source').is('deleted_at', null),
+      supabase.from('sub_topics').select('id, slug, name, topic_id, display_order, video_id, video_source').is('deleted_at', null),
     ]);
 
     const existingSubjectsBySlug = new Map<string, any>((subjectsRes.data || []).map((s: any) => [s.slug, s]));
@@ -4962,6 +4962,27 @@ export async function importFromCdn(req: Request, res: Response) {
             subTopicDbMap.set(parsedST.name.toLowerCase(), { id: subTopic.id, slug: subTopic.slug, display_order: parsedST.order });
           }
 
+          // Build a set of ALL known sub-topic names for this topic (including unselected ones)
+          // Used in Phase 3 to silently skip CDN files belonging to unselected sub-topics
+          // instead of reporting them as errors
+          const allKnownSubTopicNames = new Set<string>();
+          if (topic.id > 0) {
+            const topicSTs = subTopicsByTopic.get(topic.id) || [];
+            for (const dbST of topicSTs) {
+              allKnownSubTopicNames.add(dbST.slug.replace(/-/g, ' ').toLowerCase());
+              allKnownSubTopicNames.add(dbST.slug.replace(/-/g, ' ').replace(/[^a-z0-9]/g, '').toLowerCase());
+              if (dbST.name) {
+                allKnownSubTopicNames.add(dbST.name.toLowerCase());
+                allKnownSubTopicNames.add(dbST.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+              }
+            }
+          }
+          // Also add all sub-topics from the .txt file (including unselected ones)
+          for (const allST of parsedTopic.subTopics) {
+            allKnownSubTopicNames.add(allST.name.toLowerCase());
+            allKnownSubTopicNames.add(allST.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+          }
+
           // ─── Phase 3: Scan CDN topic folder for language files ───
           const topicCdnFolder = chapterCdnChildren_items.find(n => namesMatch(n.name, parsedTopic.name));
 
@@ -5009,7 +5030,13 @@ export async function importFromCdn(req: Request, res: Response) {
                 }
 
                 if (!matchedST) {
-                  report.errors.push(`No matching sub-topic for file "${fileNode.name}" in ${topicCdnFolder.name}/${folderName}/`);
+                  // Check if this file belongs to a known sub-topic that wasn't selected
+                  // If so, skip silently instead of reporting an error
+                  const isKnownUnselected = allKnownSubTopicNames.has(normalized)
+                    || allKnownSubTopicNames.has(normalized.replace(/[^a-z0-9]/g, ''));
+                  if (!isKnownUnselected) {
+                    report.errors.push(`No matching sub-topic for file "${fileNode.name}" in ${topicCdnFolder.name}/${folderName}/`);
+                  }
                   continue;
                 }
 
