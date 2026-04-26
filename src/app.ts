@@ -57,6 +57,7 @@ import subTopicTranslationRoutes from './modules/sub-topic-translations/subTopic
 import aiRoutes from './modules/ai/ai.routes';
 import resumeRoutes from './modules/resume/resume.routes';
 import materialTreeRoutes from './modules/material-tree/materialTree.routes';
+import youtubeDescriptionRoutes from './modules/youtube-descriptions/youtubeDescription.routes';
 
 const app = express();
 
@@ -135,6 +136,7 @@ app.use(`${api}/sub-topic-translations`,      subTopicTranslationRoutes);
 app.use(`${api}/ai`,                        aiRoutes);
 app.use(`${api}/resume`,                    resumeRoutes);
 app.use(`${api}/material-tree`,             materialTreeRoutes);
+app.use(`${api}/youtube-descriptions`,     youtubeDescriptionRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

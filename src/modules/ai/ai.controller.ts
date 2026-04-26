@@ -5834,3 +5834,290 @@ export async function cleanOrphanedVideos(req: Request, res: Response) {
     return err(res, error.message || 'Clean orphaned videos failed', 500);
   }
 }
+
+// ─── YouTube Description Generator ───────────────────────────────
+/**
+ * Generate YouTube video title + description for one or more sub-topics.
+ * Reads the English HTML file from BunnyCDN, sends to AI, saves to youtube_descriptions table.
+ *
+ * Body: { sub_topic_ids: number[], provider?: 'openai'|'anthropic'|'gemini' }
+ * Also accepts: { subject_id, chapter_id, topic_id } to resolve all sub-topics under them.
+ */
+export async function generateYoutubeDescription(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const provider: AIProvider = (req.body.provider as AIProvider) || 'openai';
+    let subTopicIds: number[] = req.body.sub_topic_ids || [];
+
+    // Resolve sub-topic IDs from higher-level selection (supports single ID or arrays)
+    if (subTopicIds.length === 0) {
+      const { subject_id, chapter_id, topic_id, subject_ids, chapter_ids, topic_ids } = req.body;
+      const resolvedTopicIds: number[] = topic_ids || (topic_id ? [topic_id] : []);
+      const resolvedChapterIds: number[] = chapter_ids || (chapter_id ? [chapter_id] : []);
+      const resolvedSubjectIds: number[] = subject_ids || (subject_id ? [subject_id] : []);
+
+      if (resolvedTopicIds.length > 0) {
+        const { data } = await supabase.from('sub_topics').select('id').in('topic_id', resolvedTopicIds).is('deleted_at', null);
+        subTopicIds = (data || []).map((r: any) => r.id);
+      } else if (resolvedChapterIds.length > 0) {
+        const { data: topics } = await supabase.from('topics').select('id').in('chapter_id', resolvedChapterIds).is('deleted_at', null);
+        if (topics && topics.length > 0) {
+          const tIds = topics.map((t: any) => t.id);
+          const { data } = await supabase.from('sub_topics').select('id').in('topic_id', tIds).is('deleted_at', null);
+          subTopicIds = (data || []).map((r: any) => r.id);
+        }
+      } else if (resolvedSubjectIds.length > 0) {
+        const { data: chapters } = await supabase.from('chapters').select('id').in('subject_id', resolvedSubjectIds).is('deleted_at', null);
+        if (chapters && chapters.length > 0) {
+          const cIds = chapters.map((c: any) => c.id);
+          const { data: topics } = await supabase.from('topics').select('id').in('chapter_id', cIds).is('deleted_at', null);
+          if (topics && topics.length > 0) {
+            const tIds = topics.map((t: any) => t.id);
+            const { data } = await supabase.from('sub_topics').select('id').in('topic_id', tIds).is('deleted_at', null);
+            subTopicIds = (data || []).map((r: any) => r.id);
+          }
+        }
+      }
+    }
+
+    if (subTopicIds.length === 0) return err(res, 'No sub-topics specified or found', 400);
+
+    // Fetch material languages for the description template
+    const { data: materialLangs } = await supabase
+      .from('languages')
+      .select('name')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .order('id');
+    const langNames = (materialLangs || []).map((l: any) => l.name);
+    const langCheckboxes = langNames.map((n: string) => `✅ ${n}`).join(' ');
+
+    // Fetch all sub-topics with their hierarchy
+    const { data: subTopics } = await supabase
+      .from('sub_topics')
+      .select(`
+        id, slug, display_order, youtube_url,
+        topics!inner(id, slug, display_order,
+          chapters!inner(id, slug, display_order,
+            subjects!inner(id, slug, code, name)
+          )
+        )
+      `)
+      .in('id', subTopicIds)
+      .is('deleted_at', null);
+
+    if (!subTopics || subTopics.length === 0) return err(res, 'No valid sub-topics found', 404);
+
+    // Fetch English language ID
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (!enLang) return err(res, 'English language not configured', 500);
+
+    const results: Array<{
+      sub_topic_id: number;
+      slug: string;
+      status: 'success' | 'skipped' | 'error';
+      video_title?: string;
+      error?: string;
+    }> = [];
+
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    for (const st of subTopics) {
+      const topic = (st as any).topics;
+      const chapter = topic.chapters;
+      const subject = chapter.subjects;
+
+      // Get English translation to find the page (HTML file) URL
+      const { data: enTrans } = await supabase
+        .from('sub_topic_translations')
+        .select('name, page, short_intro, long_intro')
+        .eq('sub_topic_id', st.id)
+        .eq('language_id', enLang.id)
+        .is('deleted_at', null)
+        .single();
+
+      const subTopicName = enTrans?.name || st.slug;
+
+      // Try to download the English HTML file from CDN
+      let fileContent = '';
+      let sourceFilePath = '';
+      if (enTrans?.page) {
+        try {
+          sourceFilePath = (enTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+          const rawHtml = await downloadBunnyFile(sourceFilePath);
+          // Strip HTML tags to get plain text
+          fileContent = rawHtml
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/\s+/g, ' ')
+            .trim();
+        } catch (downloadErr) {
+          console.error(`Failed to download CDN file for sub-topic ${st.slug}:`, downloadErr);
+        }
+      }
+
+      // If no file content, use available translation fields as context
+      if (!fileContent) {
+        const parts: string[] = [];
+        if (enTrans?.short_intro) parts.push(enTrans.short_intro);
+        if (enTrans?.long_intro) parts.push(enTrans.long_intro);
+        if (parts.length > 0) {
+          fileContent = parts.join('\n\n');
+        } else {
+          // Still generate based on name alone
+          fileContent = `Topic: ${subTopicName} (part of ${subject.name || subject.code} course)`;
+        }
+      }
+
+      const subjectName = subject.name || subject.code || subject.slug;
+
+      // Build AI prompt
+      const systemPrompt = `You are a YouTube content strategist and SEO expert. Generate a YouTube video title and description for an educational video.
+
+STRICT RULES:
+1. The total description MUST be strictly under 5000 English characters
+2. Follow the EXACT template structure provided below
+3. Return valid JSON with keys: "video_title" and "description"
+4. VIDEO TITLE FORMAT: "${subTopicName}? [Key Aspects & Descriptive Words] | ${subjectName} Course"
+   Example: "What is C Programming? History, Evolution & Complete Beginner Guide | C Programming Course"
+   - Must include the sub-topic name, a few descriptive/SEO-rich words, and the course name separated by |
+5. NEVER write "In this video," or "In this tutorial," anywhere in the description
+6. The FIRST LINE must be an extremely catchy, attention-grabbing hook that creates curiosity or excitement — make it feel urgent, surprising, or thought-provoking
+7. Use appropriate icons/emojis throughout ALL sections to make the description visually appealing and scannable
+8. Use the actual content provided to generate relevant learning points
+9. Generate relevant SEO keywords and hashtags based on the actual content
+10. Replace placeholder links with [Add Link] placeholders
+
+TEMPLATE STRUCTURE:
+---
+🔥 [Extremely catchy first line — a bold statement, surprising fact, or thought-provoking question that hooks the reader instantly. NO "In this video" type phrases.]
+
+[2-3 sentence paragraph explaining what this lesson covers and why it matters, mentioning the course name "${subjectName}". Use a conversational, energetic tone. Add relevant icons.]
+
+📖 What You'll Learn:
+✅ [Point 1 based on actual content]
+✅ [Point 2]
+✅ [Point 3]
+✅ [Point 4]
+✅ [Point 5]
+✅ [Point 6]
+(Generate 5-10 relevant points from the content)
+
+📚 Course Material Available In Multiple Languages
+🌍 Get complete learning material in:
+${langCheckboxes}
+
+📦 Along with:
+📝 Quizzes
+📌 Assignments
+💻 Practical Projects
+📚 Notes
+🎯 Beginner-friendly explanations
+
+💡 Whether you're a student, beginner, job seeker, or aspiring developer — this course helps you master programming concepts clearly and practically.
+
+🌐 Connect With Us
+🔗 Website: [Add Website Link]
+📧 Email: [Add Email Link]
+📱 WhatsApp: [Add WhatsApp Link]
+✈️ Telegram: [Add Telegram Link]
+📸 Instagram: [Add Instagram Link]
+👍 Facebook: [Add Facebook Link]
+💼 LinkedIn: [Add LinkedIn Link]
+
+🎬 Explore More Playlists
+▶️ ${subjectName} Complete Course: [Add Playlist Link]
+▶️ Full Stack Development Playlist: [Add Playlist Link]
+▶️ Flutter Development Playlist: [Add Playlist Link]
+
+🎯 Who Should Watch This?
+👨‍💻 [Target audience 1]
+🎓 [Target audience 2]
+🚀 [Target audience 3]
+💼 [Target audience 4]
+🔰 [Target audience 5]
+(Generate 5-7 relevant target audience points with appropriate icons)
+
+🔔 Don't Forget!
+👉 If you found this helpful — smash that Like 👍, Share with friends 🔄, drop a Comment 💬, and Subscribe 🔔 for more programming tutorials and career-focused tech content!
+
+💬 Comment below: Which language do you want the course material in — ${langNames.join(', ')}? 🌏
+
+🔍 SEO Keywords
+[Generate 20-30 comma-separated relevant SEO keywords]
+
+🏷️ Tags
+[Generate 15-25 relevant hashtags starting with #]
+---`;
+
+      const userContent = `Subject/Course: ${subjectName}
+Chapter: ${chapter.slug}
+Topic: ${topic.slug}
+Sub-Topic Name: ${subTopicName}
+
+Content from the lesson file:
+${fileContent.substring(0, 12000)}`;
+
+      try {
+        const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, 8192);
+        totalInputTokens += inputTokens;
+        totalOutputTokens += outputTokens;
+
+        const parsed = parseJSON(text);
+        const videoTitle = parsed.video_title || `${subTopicName} | ${subjectName}`;
+        const description = parsed.description || '';
+
+        // Upsert into youtube_descriptions
+        const { error: upsertErr } = await supabase
+          .from('youtube_descriptions')
+          .upsert({
+            sub_topic_id: st.id,
+            video_title: videoTitle,
+            description: description,
+            source_file_path: sourceFilePath || null,
+            generated_by: userId,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'sub_topic_id' });
+
+        if (upsertErr) {
+          console.error(`Failed to save youtube description for sub-topic ${st.id}:`, upsertErr);
+          results.push({ sub_topic_id: st.id, slug: st.slug, status: 'error', error: upsertErr.message });
+        } else {
+          results.push({ sub_topic_id: st.id, slug: st.slug, status: 'success', video_title: videoTitle });
+        }
+      } catch (aiErr: any) {
+        console.error(`AI generation failed for sub-topic ${st.id}:`, aiErr);
+        results.push({ sub_topic_id: st.id, slug: st.slug, status: 'error', error: aiErr.message });
+      }
+    }
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    logAdmin({
+      actorId: userId,
+      action: 'youtube_description_generated',
+      targetType: 'youtube_description',
+      targetId: 0,
+      targetName: `Generated ${successCount} YouTube descriptions (${provider})`,
+      ip: getClientIp(req),
+      metadata: { provider, total: subTopicIds.length, success: successCount, errors: errorCount },
+    });
+
+    return ok(res, {
+      results,
+      summary: { total: subTopicIds.length, success: successCount, errors: errorCount },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Generated ${successCount} YouTube description(s)`);
+  } catch (error: any) {
+    console.error('generateYoutubeDescription error:', error);
+    return err(res, error.message || 'Failed to generate YouTube descriptions', 500);
+  }
+}

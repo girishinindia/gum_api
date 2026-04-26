@@ -71,4 +71,7 @@ r.post('/check-video-status', requirePermission('ai', 'create'), ctrl.checkVideo
 // Clean orphaned videos from Bunny Stream (not linked to any DB record)
 r.post('/clean-orphaned-videos', requirePermission('ai', 'delete'), ctrl.cleanOrphanedVideos);
 
+// Generate YouTube video title + description from English CDN file
+r.post('/generate-youtube-description', requirePermission('ai', 'create'), ctrl.generateYoutubeDescription);
+
 export default r;
