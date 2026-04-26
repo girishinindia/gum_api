@@ -551,14 +551,14 @@ export async function coverage(req: Request, res: Response) {
   // Also get sub-topic level video info (bunny/youtube)
   const { data: subTopicVideoData } = await supabase
     .from('sub_topics')
-    .select('id, video_source, video_url, youtube_url, video_status')
+    .select('id, video_id, video_source, video_url, youtube_url, video_status')
     .eq('is_active', true)
     .is('deleted_at', null);
   const subTopicVideoMap = new Map<number, { video_source?: string; has_video: boolean }>();
   for (const st of (subTopicVideoData || [])) {
     subTopicVideoMap.set(st.id, {
       video_source: st.video_source || undefined,
-      has_video: !!(st.video_url || st.youtube_url),
+      has_video: !!(st.video_id || st.video_url || st.youtube_url),
     });
   }
 

@@ -7,7 +7,7 @@ import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, listBunnyStorage, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
-import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus, listAllStreamVideos, listAllStreamCollections, deleteVideoFromStream, deleteStreamCollection } from '../../services/video.service';
+import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus, listAllStreamVideos, listAllStreamCollections, listStreamCollections, deleteVideoFromStream, deleteStreamCollection, listStreamVideos } from '../../services/video.service';
 import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
@@ -3903,6 +3903,174 @@ export async function importMaterialTree(req: Request, res: Response) {
  * Body (multipart): file (HTML), sub_topic_id, provider (optional)
  * Returns per-language results with progress.
  */
+
+/**
+ * Reusable helper: Translate an HTML file to missing languages for a sub-topic.
+ * Used by both the translatePage HTTP handler and importFromCdn Phase 3b.
+ *
+ * @param opts.subTopicId - The sub-topic DB ID
+ * @param opts.htmlContent - The source HTML content to translate
+ * @param opts.baseFileName - Base filename without extension or language suffix
+ * @param opts.sourceLanguageIso - ISO code of the source language (e.g. 'hi', 'en')
+ * @param opts.skipLanguageIsos - ISO codes of languages to skip (already have files)
+ * @param opts.provider - AI provider to use ('gemini', 'anthropic', 'openai')
+ * @param opts.userId - The acting user ID for audit
+ * @param opts.materialBasePath - CDN folder path e.g. 'materials/C_Programming/01_Intro/01_Topic'
+ * @param opts.subjectName - Subject name for translation context
+ * @param opts.chapterName - Chapter name for translation context
+ * @param opts.topicName - Topic name for translation context
+ * @param opts.includeEnglish - Whether English should be a target language (default: false)
+ */
+async function translateHtmlToMissingLanguages(opts: {
+  subTopicId: number;
+  htmlContent: string;
+  baseFileName: string;
+  sourceLanguageIso: string;
+  skipLanguageIsos: string[];
+  provider: AIProvider;
+  userId: string | number;
+  materialBasePath: string;
+  subjectName: string;
+  chapterName: string;
+  topicName: string;
+  includeEnglish?: boolean;
+}): Promise<{
+  results: Array<{ language: string; iso_code: string; status: string; page_url?: string; error?: string }>;
+  inputTokens: number;
+  outputTokens: number;
+}> {
+  const {
+    subTopicId, htmlContent, baseFileName, sourceLanguageIso,
+    skipLanguageIsos, provider, userId, materialBasePath,
+    subjectName, chapterName, topicName, includeEnglish = false,
+  } = opts;
+
+  // Get all active material languages
+  const { data: allLangs } = await supabase
+    .from('languages')
+    .select('id, name, native_name, iso_code')
+    .eq('is_active', true)
+    .eq('for_material', true)
+    .order('id');
+
+  const skipSet = new Set(skipLanguageIsos.map(s => s.toLowerCase()));
+  skipSet.add(sourceLanguageIso.toLowerCase());
+  const targetLangs = (allLangs || []).filter(l => {
+    if (skipSet.has(l.iso_code)) return false;
+    if (!includeEnglish && l.iso_code === 'en') return false;
+    return true;
+  });
+
+  if (targetLangs.length === 0) {
+    return { results: [], inputTokens: 0, outputTokens: 0 };
+  }
+
+  // Find source language name for the translation prompt
+  const sourceLang = (allLangs || []).find(l => l.iso_code === sourceLanguageIso);
+  const sourceLangName = sourceLang?.name || 'English';
+
+  const results: Array<{ language: string; iso_code: string; status: string; page_url?: string; error?: string }> = [];
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  for (const lang of targetLangs) {
+    try {
+      const systemPrompt = `You are an expert translator. Translate the following HTML page from ${sourceLangName} to ${lang.name} (${lang.native_name}).
+
+CRITICAL RULES:
+1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
+2. Only translate the visible text content between HTML tags.
+3. Keep ALL technical terms, programming keywords, and code in English. Examples: HTML, CSS, JavaScript, Python, Pandas, DataFrame, API, JSON, REST, SQL, Git, React, Node.js, npm, webpack, function, class, variable, array, object, string, boolean, integer, float, import, export, async, await, try, catch, throw, return, const, let, var, if, else, for, while, switch, case, break, continue, null, undefined, true, false, NaN, Infinity, console.log, getElementById, querySelector, addEventListener, fetch, Promise, callback, middleware, endpoint, framework, library, module, component, prop, state, hook, render, DOM, HTTP, HTTPS, URL, URI, TCP, UDP, DNS, IP, SSL, TLS, SSH, FTP, CDN, CMS, SDK, IDE, CLI, GUI, OOP, MVC, CRUD, SPA, SSR, CSR, PWA, SEO, UX, UI, etc.
+4. Keep brand names and product names in English (Google, Microsoft, Apple, GitHub, Stack Overflow, VS Code, etc.)
+5. Keep code snippets, code examples, and inline code EXACTLY in English - do not translate any code.
+6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
+7. Do NOT add any explanation, comments, or wrapper - return ONLY the translated HTML.
+8. The subject is "${subjectName}", chapter is "${chapterName}", topic is "${topicName}" - keep these and related technical terms in English where translation would sound unnatural or weird.
+9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
+10. Do NOT translate alt attributes of images if they contain technical terms.
+
+Return ONLY the complete translated HTML document, nothing else.`;
+
+      const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
+      const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
+      totalInputTokens += aiResult.inputTokens;
+      totalOutputTokens += aiResult.outputTokens;
+
+      // Clean up AI response — strip any markdown code fences
+      let translatedHtml = aiResult.text.trim();
+      if (translatedHtml.startsWith('```html')) {
+        translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
+      } else if (translatedHtml.startsWith('```')) {
+        translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+
+      if (!translatedHtml || translatedHtml.length < 50) {
+        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI returned empty or too short translation' });
+        continue;
+      }
+
+      // Check if existing translation has a page file to delete
+      const { data: existingTrans } = await supabase
+        .from('sub_topic_translations')
+        .select('id, page')
+        .eq('sub_topic_id', subTopicId)
+        .eq('language_id', lang.id)
+        .is('deleted_at', null)
+        .single();
+
+      // Delete old file from CDN
+      if (existingTrans?.page) {
+        try {
+          const oldPath = (existingTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+          await deleteImage(oldPath, existingTrans.page);
+        } catch {}
+      }
+
+      // Upload translated HTML with language-suffixed filename
+      const translatedFileName = `${baseFileName}_${lang.iso_code}.html`;
+      const uploadPath = `${materialBasePath}/${lang.iso_code}/${translatedFileName}`;
+      const pageUrl = await uploadRawFile(Buffer.from(translatedHtml, 'utf-8'), uploadPath);
+
+      // Update or create DB record
+      if (existingTrans) {
+        const { error: updErr } = await supabase
+          .from('sub_topic_translations')
+          .update({ page: pageUrl, updated_by: userId })
+          .eq('id', existingTrans.id);
+        if (updErr) {
+          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB update failed: ${updErr.message}` });
+          continue;
+        }
+      } else {
+        // Get sub-topic slug for the name field
+        const { data: stData } = await supabase.from('sub_topics').select('slug').eq('id', subTopicId).single();
+        const transName = stData?.slug?.replace(/-/g, ' ') || `sub-topic-${subTopicId}`;
+        const { error: insErr } = await supabase
+          .from('sub_topic_translations')
+          .insert({
+            sub_topic_id: subTopicId,
+            language_id: lang.id,
+            name: transName,
+            page: pageUrl,
+            is_active: true,
+            created_by: userId,
+          });
+        if (insErr) {
+          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB insert failed: ${insErr.message}` });
+          continue;
+        }
+      }
+
+      results.push({ language: lang.name, iso_code: lang.iso_code, status: 'success', page_url: pageUrl });
+    } catch (langErr: any) {
+      console.error(`Translation failed for ${lang.name}:`, langErr);
+      results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
+    }
+  }
+
+  return { results, inputTokens: totalInputTokens, outputTokens: totalOutputTokens };
+}
+
 export async function translatePage(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
@@ -3938,7 +4106,6 @@ export async function translatePage(req: Request, res: Response) {
     const parentTopic = (subTopic as any).topics;
     const parentChapter = parentTopic?.chapters;
     const parentSubject = parentChapter?.subjects;
-    // Falls back to slug when name is null (sanitizeName normalizes both to same result)
     const subjectRef = parentSubject?.name || parentSubject?.slug;
     const chapterRef = parentChapter?.name || parentChapter?.slug;
     const topicRef = parentTopic?.name || parentTopic?.slug;
@@ -3946,126 +4113,30 @@ export async function translatePage(req: Request, res: Response) {
       ? `materials/${buildCourseFolderName(subjectRef)}/${buildCdnName(parentChapter.display_order ?? 0, chapterRef)}/${buildCdnName(parentTopic.display_order ?? 0, topicRef)}`
       : null;
 
-    // Get all active material languages EXCEPT English
-    const { data: allLangs } = await supabase
-      .from('languages')
-      .select('id, name, native_name, iso_code')
-      .eq('is_active', true)
-      .eq('for_material', true)
-      .order('id');
+    if (!materialBasePath) return err(res, 'Could not resolve CDN path for sub-topic', 400);
 
-    // skip_language: ISO code of a language to skip (e.g. source language when reverse-translating)
-    const skipLanguage = req.body.skip_language || null;
-    const targetLangs = (allLangs || []).filter(l => l.iso_code !== 'en' && l.iso_code !== skipLanguage);
-    if (targetLangs.length === 0) return err(res, 'No target languages found for translation', 400);
+    const skipLanguages: string[] = [];
+    if (req.body.skip_language) skipLanguages.push(req.body.skip_language);
 
-    // Get context about the subject/chapter/topic for better translation
     const subjectName = parentSubject?.slug?.replace(/-/g, ' ') || '';
     const chapterName = parentChapter?.slug?.replace(/-/g, ' ') || '';
     const topicName = parentTopic?.slug?.replace(/-/g, ' ') || '';
 
-    const results: { language: string; iso_code: string; status: string; page_url?: string; error?: string }[] = [];
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-
-    // Translate one language at a time for quality
-    for (const lang of targetLangs) {
-      try {
-        const systemPrompt = `You are an expert translator. Translate the following HTML page from English to ${lang.name} (${lang.native_name}).
-
-CRITICAL RULES:
-1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
-2. Only translate the visible text content between HTML tags.
-3. Keep ALL technical terms, programming keywords, and code in English. Examples: HTML, CSS, JavaScript, Python, Pandas, DataFrame, API, JSON, REST, SQL, Git, React, Node.js, npm, webpack, function, class, variable, array, object, string, boolean, integer, float, import, export, async, await, try, catch, throw, return, const, let, var, if, else, for, while, switch, case, break, continue, null, undefined, true, false, NaN, Infinity, console.log, getElementById, querySelector, addEventListener, fetch, Promise, callback, middleware, endpoint, framework, library, module, component, prop, state, hook, render, DOM, HTTP, HTTPS, URL, URI, TCP, UDP, DNS, IP, SSL, TLS, SSH, FTP, CDN, CMS, SDK, IDE, CLI, GUI, OOP, MVC, CRUD, SPA, SSR, CSR, PWA, SEO, UX, UI, etc.
-4. Keep brand names and product names in English (Google, Microsoft, Apple, GitHub, Stack Overflow, VS Code, etc.)
-5. Keep code snippets, code examples, and inline code EXACTLY in English - do not translate any code.
-6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
-7. Do NOT add any explanation, comments, or wrapper - return ONLY the translated HTML.
-8. The subject is "${subjectName}", chapter is "${chapterName}", topic is "${topicName}" - keep these and related technical terms in English where translation would sound unnatural or weird.
-9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
-10. Do NOT translate alt attributes of images if they contain technical terms.
-
-Return ONLY the complete translated HTML document, nothing else.`;
-
-        // Calculate max tokens based on HTML size (translated HTML is usually similar or slightly larger)
-        const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
-        const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
-        totalInputTokens += aiResult.inputTokens;
-        totalOutputTokens += aiResult.outputTokens;
-
-        // Clean up AI response — strip any markdown code fences
-        let translatedHtml = aiResult.text.trim();
-        if (translatedHtml.startsWith('```html')) {
-          translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
-        } else if (translatedHtml.startsWith('```')) {
-          translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
-        }
-
-        if (!translatedHtml || translatedHtml.length < 50) {
-          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI returned empty or too short translation' });
-          continue;
-        }
-
-        // Check if existing translation has a page file to delete
-        const { data: existingTrans } = await supabase
-          .from('sub_topic_translations')
-          .select('id, page')
-          .eq('sub_topic_id', sub_topic_id)
-          .eq('language_id', lang.id)
-          .is('deleted_at', null)
-          .single();
-
-        // Delete old file from CDN
-        if (existingTrans?.page) {
-          try {
-            const oldPath = (existingTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
-            await deleteImage(oldPath, existingTrans.page);
-          } catch {}
-        }
-
-        // Upload translated HTML with language-suffixed filename
-        const translatedFileName = `${baseFileName}_${lang.iso_code}.html`;
-        const uploadPath = materialBasePath
-          ? `${materialBasePath}/${lang.iso_code}/${translatedFileName}`
-          : `sub-topic-translations/pages/${translatedFileName}`;
-
-        const pageUrl = await uploadRawFile(Buffer.from(translatedHtml, 'utf-8'), uploadPath);
-
-        // Update or create DB record
-        if (existingTrans) {
-          const { error: updErr } = await supabase
-            .from('sub_topic_translations')
-            .update({ page: pageUrl, updated_by: userId })
-            .eq('id', existingTrans.id);
-          if (updErr) {
-            console.error(`Failed to update translation for ${lang.name}:`, updErr);
-            results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB update failed: ${updErr.message}` });
-            continue;
-          }
-        } else {
-          const { error: insErr } = await supabase
-            .from('sub_topic_translations')
-            .insert({
-              sub_topic_id: Number(sub_topic_id),
-              language_id: lang.id,
-              name: subTopic.slug.replace(/-/g, ' '),
-              page: pageUrl,
-              is_active: true,
-              created_by: userId,
-            });
-          if (insErr) {
-            console.error(`Failed to insert translation for ${lang.name}:`, insErr);
-            results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB insert failed: ${insErr.message}` });
-            continue;
-          }
-        }
-
-        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'success', page_url: pageUrl });
-      } catch (langErr: any) {
-        console.error(`Translation failed for ${lang.name}:`, langErr);
-        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
-      }
-    }
+    // Delegate to reusable helper (translates from English to all other languages)
+    const { results, inputTokens, outputTokens } = await translateHtmlToMissingLanguages({
+      subTopicId: Number(sub_topic_id),
+      htmlContent,
+      baseFileName,
+      sourceLanguageIso: 'en',
+      skipLanguageIsos: skipLanguages,
+      provider,
+      userId,
+      materialBasePath,
+      subjectName,
+      chapterName,
+      topicName,
+      includeEnglish: false,
+    });
 
     const successCount = results.filter(r => r.status === 'success').length;
     const errorCount = results.filter(r => r.status === 'error').length;
@@ -4077,14 +4148,14 @@ Return ONLY the complete translated HTML document, nothing else.`;
       targetId: Number(sub_topic_id),
       targetName: subTopic.slug,
       ip: getClientIp(req),
-      metadata: { provider, languages: successCount, errors: errorCount, inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+      metadata: { provider, languages: successCount, errors: errorCount, inputTokens, outputTokens },
     });
 
     return ok(res, {
       results,
-      summary: { total: targetLangs.length, success: successCount, errors: errorCount },
-      tokens: { input: totalInputTokens, output: totalOutputTokens },
-    }, `Translated to ${successCount}/${targetLangs.length} languages`);
+      summary: { total: results.length, success: successCount, errors: errorCount },
+      tokens: { input: inputTokens, output: outputTokens },
+    }, `Translated to ${successCount}/${results.length} languages`);
   } catch (error: any) {
     console.error('Translate page error:', error);
     return err(res, error.message || 'Page translation failed', 500);
@@ -4342,6 +4413,7 @@ export async function importFromCdn(req: Request, res: Response) {
       topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
       sub_topics: { found: 0, created: 0, existing: 0, updated: 0, deleted: 0, unchanged: 0 },
       translations: { found: 0, created: 0, existing: 0, updated: 0, deactivated: 0 },
+      file_translations: { generated: 0, errors: 0, skipped: 0 },
       ai_translations: { subjects: 0, chapters: 0, topics: 0, sub_topics: 0, total_generated: 0, errors: 0 },
       videos: { found: 0, matched: 0, uploaded: 0, replaced: 0, status_checked: 0, now_ready: 0, errors: 0 },
       errors: [] as string[],
@@ -4870,6 +4942,9 @@ export async function importFromCdn(req: Request, res: Response) {
             const topicChildren = topicCdnFolder.children || [];
             // Track which translation keys are "seen" on CDN
             const seenTransKeys = new Set<string>();
+            // Track existing CDN file paths per sub-topic for Phase 3b auto-translation
+            // Map: subTopicId -> { langIso, cdnPath, baseFileName }[]
+            const existingFilesBySubTopic = new Map<number, { langIso: string; cdnPath: string; baseFileName: string }[]>();
 
             for (const childNode of topicChildren) {
               if (!childNode.isDirectory) continue;
@@ -4912,6 +4987,14 @@ export async function importFromCdn(req: Request, res: Response) {
                 }
 
                 seenTransKeys.add(`${matchedST.id}:${lang.id}`);
+
+                // Track file for Phase 3b auto-translation
+                if (!existingFilesBySubTopic.has(matchedST.id)) existingFilesBySubTopic.set(matchedST.id, []);
+                existingFilesBySubTopic.get(matchedST.id)!.push({
+                  langIso: folderName,
+                  cdnPath: fileNode.path,
+                  baseFileName: fileBaseName,
+                });
 
                 const cdnUrl = `${config.bunny.cdnUrl}/${fileNode.path}`;
                 if (isDryRun) {
@@ -4982,6 +5065,71 @@ export async function importFromCdn(req: Request, res: Response) {
                     }
                     report.translations.deactivated++;
                   }
+                }
+              }
+            }
+
+            // ─── Phase 3b: Auto-translate missing language files via AI ───
+            // For each sub-topic that has files in SOME languages but not ALL,
+            // download one existing file, translate to the missing languages, upload to CDN
+            if (!isDryRun && existingFilesBySubTopic.size > 0) {
+              const allLangIsos = [...langByIso.keys()]; // all active material language ISOs
+              const materialBasePath = `materials/${buildCourseFolderName(parsedCourse.name)}/${buildCdnName(parsedChapter.order, parsedChapter.name)}/${buildCdnName(parsedTopic.order, parsedTopic.name)}`;
+
+              for (const [stId, files] of existingFilesBySubTopic) {
+                if (stId <= 0) continue;
+
+                // Determine which languages already have files
+                const existingIsos = new Set(files.map(f => f.langIso.toLowerCase()));
+
+                // Find missing languages
+                const missingIsos = allLangIsos.filter(iso => !existingIsos.has(iso));
+                if (missingIsos.length === 0) {
+                  report.file_translations.skipped++;
+                  continue; // All languages covered
+                }
+
+                // Pick the source file: prefer English, else first available
+                const sourceFile = files.find(f => f.langIso === 'en') || files[0];
+                if (!sourceFile) continue;
+
+                try {
+                  // Download the source HTML from CDN
+                  const htmlContent = await downloadBunnyFile(sourceFile.cdnPath);
+                  if (!htmlContent || htmlContent.length < 50) {
+                    report.errors.push(`Phase 3b: Source file too small for sub-topic ${stId} (${sourceFile.cdnPath})`);
+                    report.file_translations.errors++;
+                    continue;
+                  }
+
+                  console.log(`Phase 3b: Translating "${sourceFile.baseFileName}" from ${sourceFile.langIso} to ${missingIsos.length} missing languages for sub-topic ${stId}`);
+
+                  const { results: transResults } = await translateHtmlToMissingLanguages({
+                    subTopicId: stId,
+                    htmlContent,
+                    baseFileName: sourceFile.baseFileName,
+                    sourceLanguageIso: sourceFile.langIso,
+                    skipLanguageIsos: [...existingIsos], // skip languages that already have files
+                    provider: 'gemini' as AIProvider,
+                    userId,
+                    materialBasePath,
+                    subjectName: parsedCourse.name,
+                    chapterName: parsedChapter.name,
+                    topicName: parsedTopic.name,
+                    includeEnglish: !existingIsos.has('en'), // include English if it's missing
+                  });
+
+                  const successCount = transResults.filter(r => r.status === 'success').length;
+                  const errorCount = transResults.filter(r => r.status === 'error').length;
+                  report.file_translations.generated += successCount;
+                  report.file_translations.errors += errorCount;
+
+                  if (successCount > 0) {
+                    console.log(`Phase 3b: Generated ${successCount} file translations for sub-topic ${stId}`);
+                  }
+                } catch (transErr: any) {
+                  report.errors.push(`Phase 3b: Failed to translate files for sub-topic ${stId}: ${transErr.message}`);
+                  report.file_translations.errors++;
                 }
               }
             }
@@ -5069,6 +5217,98 @@ export async function importFromCdn(req: Request, res: Response) {
                     report.errors.push(`Failed to fetch video "${videoNode.name}": ${videoErr.message}`);
                   }
                 }
+              }
+            }
+          }
+
+          // ─── Phase 4b: Detect existing Bunny Stream videos and link to sub-topics ───
+          // This handles videos already in Stream (e.g. retained after delete, or manually uploaded)
+          if (upload_videos && !isDryRun && subTopicDbMap.size > 0) {
+            const topicCollName = buildCollectionName(
+              buildCourseFolderName(parsedCourse.name),
+              buildCdnName(parsedChapter.order, parsedChapter.name),
+              buildCdnName(parsedTopic.order, parsedTopic.name)
+            );
+
+            // Try to find the collection — use the map built earlier, or search for it
+            let topicCollId = streamCollections.get(topicCollName);
+            if (!topicCollId) {
+              try {
+                // Search for existing collection without creating one
+                const { items: colls } = await listStreamCollections(topicCollName, 1, 10);
+                const exactMatch = colls.find((c: any) => c.name === topicCollName);
+                if (exactMatch) topicCollId = exactMatch.guid;
+              } catch {}
+            }
+
+            if (topicCollId) {
+              try {
+                const { items: streamVideos } = await listStreamVideos({ collectionId: topicCollId });
+
+                for (const video of streamVideos) {
+                  if (!video.guid || !video.title) continue;
+                  // Only consider fully encoded videos (status 4 = finished)
+                  // Also accept status 3 (processing) and 1 (queued) so pending videos get linked
+                  if (video.status === 5 || video.status === 6) continue; // failed/error statuses
+
+                  const videoNormalized = normalizeCdnName(video.title);
+
+                  let matchedST: { id: number; slug: string; display_order: number } | undefined;
+                  matchedST = subTopicDbMap.get(videoNormalized);
+
+                  if (!matchedST) {
+                    for (const [txtName, stRecord] of subTopicDbMap) {
+                      if (videoNormalized.replace(/[^a-z0-9]/g, '') === txtName.replace(/[^a-z0-9]/g, '')) {
+                        matchedST = stRecord;
+                        break;
+                      }
+                    }
+                  }
+
+                  if (!matchedST || matchedST.id <= 0) continue;
+
+                  // Check if sub-topic already has a video linked
+                  const { data: currentST } = await supabase
+                    .from('sub_topics')
+                    .select('video_id, video_source')
+                    .eq('id', matchedST.id)
+                    .single();
+
+                  if (currentST?.video_id) continue; // Already has a video, skip
+
+                  // Determine video_source based on encoding status
+                  const videoSource = (video.status === 4) ? 'bunny' : 'bunny_pending';
+
+                  // Build embed + thumbnail URLs (same format as uploadVideoToStream)
+                  const libId = config.bunny.streamLibraryId;
+                  const embedUrl = `https://iframe.mediadelivery.net/embed/${libId}/${video.guid}`;
+                  const thumbnailUrl = config.bunny.streamCdn
+                    ? `${config.bunny.streamCdn}/${video.guid}/thumbnail.jpg`
+                    : `https://vz-cdn.b-cdn.net/${video.guid}/thumbnail.jpg`;
+
+                  // Link the Stream video to the sub-topic
+                  const { error: linkErr } = await supabase
+                    .from('sub_topics')
+                    .update({
+                      video_id: video.guid,
+                      video_url: embedUrl,
+                      video_thumbnail_url: thumbnailUrl,
+                      video_status: (video.status === 4) ? 'ready' : 'processing',
+                      video_source: videoSource,
+                    })
+                    .eq('id', matchedST.id);
+
+                  if (!linkErr) {
+                    report.videos.found++;
+                    report.videos.matched++;
+                    console.log(`[Phase 4b] Linked Stream video "${video.title}" (${video.guid}) → sub-topic ${matchedST.id} (${matchedST.slug})`);
+                  } else {
+                    report.videos.errors++;
+                    report.errors.push(`Failed to link Stream video "${video.title}" to sub-topic ${matchedST.slug}: ${linkErr.message}`);
+                  }
+                }
+              } catch (streamErr: any) {
+                report.errors.push(`Failed to scan Stream collection "${topicCollName}": ${streamErr.message}`);
               }
             }
           }

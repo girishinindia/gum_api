@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
+import { config } from '../../config';
 import { redis } from '../../config/redis';
 import { hasPermission } from '../../middleware/rbac';
 import { logAdmin, logData } from '../../services/activityLog.service';
@@ -98,10 +99,26 @@ export async function list(req: Request, res: Response) {
     }
   }
 
-  const enriched = (data || []).map((st: any) => ({
-    ...st,
-    english_name: englishNameMap[st.id] || null,
-  }));
+  const libId = config.bunny.streamLibraryId;
+  const enriched = (data || []).map((st: any) => {
+    // Compute video_url if missing but video_id exists (e.g. linked via CDN import)
+    let video_url = st.video_url;
+    let video_thumbnail_url = st.video_thumbnail_url;
+    if (st.video_id && !video_url && (st.video_source === 'bunny' || st.video_source === 'bunny_pending')) {
+      video_url = `https://iframe.mediadelivery.net/embed/${libId}/${st.video_id}`;
+      if (!video_thumbnail_url) {
+        video_thumbnail_url = config.bunny.streamCdn
+          ? `${config.bunny.streamCdn}/${st.video_id}/thumbnail.jpg`
+          : `https://vz-cdn.b-cdn.net/${st.video_id}/thumbnail.jpg`;
+      }
+    }
+    return {
+      ...st,
+      video_url,
+      video_thumbnail_url,
+      english_name: englishNameMap[st.id] || null,
+    };
+  });
 
   return paginated(res, enriched, count || 0, page, limit);
 }
