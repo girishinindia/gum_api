@@ -21,6 +21,8 @@ interface TreeNode {
   videoId?: string;
   videoStatus?: string;
   videoUrl?: string;
+  videoSource?: string;
+  youtubeUrl?: string;
   fileCount?: number;
 }
 
@@ -66,7 +68,7 @@ export async function fullTree(req: Request, res: Response) {
       supabase.from('subjects').select('id, code, slug, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('chapters').select('id, slug, subject_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('topics').select('id, slug, chapter_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
-      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_status, video_url, created_at, updated_at').is('deleted_at', null).order('display_order'),
+      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_status, video_url, video_source, youtube_url, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('sub_topic_translations').select('id, sub_topic_id, language_id, page, created_at, updated_at').is('deleted_at', null),
       supabase.from('languages').select('id, iso_code, name').eq('is_active', true).eq('for_material', true).order('id'),
     ]);
@@ -213,6 +215,8 @@ export async function fullTree(req: Request, res: Response) {
               videoId: subTopic.video_id || undefined,
               videoStatus: subTopic.video_status || undefined,
               videoUrl: subTopic.video_url || undefined,
+              videoSource: subTopic.video_source || undefined,
+              youtubeUrl: subTopic.youtube_url || undefined,
             } as TreeNode;
           });
 
