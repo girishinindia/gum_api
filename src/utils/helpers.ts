@@ -37,12 +37,17 @@ export function toSlug(text: string): string {
 /**
  * Generate a unique slug for a given table.
  * If the base slug already exists, appends -2, -3, etc.
+ *
+ * @param scope - Optional parent scope to check uniqueness within.
+ *   e.g. { column: 'chapter_id', value: 340 } ensures slug uniqueness
+ *   only among topics in the same chapter, not globally.
  */
 export async function generateUniqueSlug(
   supabaseClient: any,
   table: string,
   text: string,
   existingId?: number,
+  scope?: { column: string; value: number },
 ): Promise<string> {
   const base = toSlug(text);
   if (!base) throw new Error('Cannot generate slug from empty text');
@@ -54,6 +59,8 @@ export async function generateUniqueSlug(
     let q = supabaseClient.from(table).select('id').eq('slug', candidate).limit(1);
     // Exclude current record when updating
     if (existingId) q = q.neq('id', existingId);
+    // Scope uniqueness to parent entity (e.g. same chapter_id)
+    if (scope) q = q.eq(scope.column, scope.value);
     const { data } = await q;
     if (!data || data.length === 0) return candidate;
     counter++;

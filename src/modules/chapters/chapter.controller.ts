@@ -106,7 +106,7 @@ export async function create(req: Request, res: Response) {
 
   // Auto-generate slug from slug field or a name-like field
   const slugSource = body.slug || body.code || body.name || `chapter-${body.subject_id}`;
-  body.slug = await generateUniqueSlug(supabase, 'chapters', slugSource);
+  body.slug = await generateUniqueSlug(supabase, 'chapters', slugSource, undefined, body.subject_id ? { column: 'subject_id', value: body.subject_id } : undefined);
 
   const { data, error: e } = await supabase
     .from('chapters')

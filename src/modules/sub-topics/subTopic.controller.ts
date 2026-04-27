@@ -170,7 +170,7 @@ export async function create(req: Request, res: Response) {
 
   // Auto-generate slug if not provided
   const slugSource = body.slug || body.code || body.name || `sub-topic-${body.topic_id || 0}`;
-  body.slug = await generateUniqueSlug(supabase, 'sub_topics', slugSource);
+  body.slug = await generateUniqueSlug(supabase, 'sub_topics', slugSource, undefined, body.topic_id ? { column: 'topic_id', value: body.topic_id } : undefined);
 
   const { data, error: e } = await supabase
     .from('sub_topics')

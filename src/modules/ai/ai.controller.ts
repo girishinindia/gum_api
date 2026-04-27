@@ -3688,7 +3688,7 @@ export async function importMaterialTree(req: Request, res: Response) {
           report.details.push({ type: 'chapter', name: parsedChapter.name, action: 'skipped', id: chapterId, parent: parsedSubject.name });
         } else {
           // Create new chapter
-          const slug = await generateUniqueSlug(supabase, 'chapters', parsedChapter.name);
+          const slug = await generateUniqueSlug(supabase, 'chapters', parsedChapter.name, undefined, { column: 'subject_id', value: subjectId });
           const { data: newChapter, error: chErr } = await supabase
             .from('chapters')
             .insert({
@@ -3737,7 +3737,7 @@ export async function importMaterialTree(req: Request, res: Response) {
             report.details.push({ type: 'topic', name: parsedTopic.name, action: 'skipped', id: topicMatch.id, parent: parsedChapter.name });
           } else {
             // Create new topic
-            const slug = await generateUniqueSlug(supabase, 'topics', parsedTopic.name);
+            const slug = await generateUniqueSlug(supabase, 'topics', parsedTopic.name, undefined, { column: 'chapter_id', value: chapterId });
             const { data: newTopic, error: tErr } = await supabase
               .from('topics')
               .insert({
@@ -3791,7 +3791,7 @@ export async function importMaterialTree(req: Request, res: Response) {
                 aiTopic.subTopics.push({ name: parsedSubTopic.name, isNew: false });
               } else {
                 // Create new sub-topic
-                const stSlug = await generateUniqueSlug(supabase, 'sub_topics', parsedSubTopic.name);
+                const stSlug = await generateUniqueSlug(supabase, 'sub_topics', parsedSubTopic.name, undefined, { column: 'topic_id', value: topicId });
                 const { data: newSubTopic, error: stErr } = await supabase
                   .from('sub_topics')
                   .insert({
@@ -4664,14 +4664,20 @@ export async function importFromCdn(req: Request, res: Response) {
         // Match: by slug (primary), then fuzzy ilike, then by position (rename detection)
         let chapter = existingChapters.get(`${subject.id}:${chapterSlug}`);
 
-        // Fuzzy match by slug prefix
-        if (!chapter && isSync) {
+        // Fuzzy match: try slug suffix and prefix matching in ALL modes (not just sync)
+        // This prevents duplicates when existing chapters have suffixed slugs like intro-2
+        if (!chapter && subject.id > 0) {
           const subjectChapters = chaptersBySubject.get(subject.id) || [];
-          // Try fuzzy slug match
-          const fuzzy = subjectChapters.find(c => c.slug.startsWith(chapterSlug.slice(0, 10)));
-          if (fuzzy) chapter = fuzzy;
-          // Try position-based match (rename detection)
+          // Try exact slug match with -N suffix pattern
+          const exactSuffix = subjectChapters.find(c => c.slug === chapterSlug || c.slug.match(new RegExp(`^${chapterSlug}-\\d+$`)));
+          if (exactSuffix) chapter = exactSuffix;
+          // Try fuzzy slug prefix match
           if (!chapter) {
+            const fuzzy = subjectChapters.find(c => c.slug.startsWith(chapterSlug.slice(0, 10)));
+            if (fuzzy) chapter = fuzzy;
+          }
+          // Position-based match (rename detection) — sync mode only
+          if (!chapter && isSync) {
             const byPos = subjectChapters.find(c => c.sort_order === parsedChapter.order);
             if (byPos) chapter = byPos;
           }
@@ -4679,7 +4685,7 @@ export async function importFromCdn(req: Request, res: Response) {
 
         if (!chapter) {
           if (!isDryRun) {
-            const newSlug = await generateUniqueSlug(supabase, 'chapters', chapterSlug);
+            const newSlug = await generateUniqueSlug(supabase, 'chapters', chapterSlug, undefined, { column: 'subject_id', value: subject.id });
             const { data: created, error: createErr } = await supabase
               .from('chapters')
               .insert({
@@ -4773,12 +4779,20 @@ export async function importFromCdn(req: Request, res: Response) {
 
           let topic = existingTopics.get(`${chapter.id}:${topicSlug}`);
 
-          // Fuzzy match for sync
-          if (!topic && isSync && chapter.id > 0) {
+          // Fuzzy match: try slug prefix and position-based matching in ALL modes (not just sync)
+          // This prevents duplicates when existing topics have suffixed slugs like data-types-2
+          if (!topic && chapter.id > 0) {
             const chapterTopics = topicsByChapter.get(chapter.id) || [];
-            const fuzzy = chapterTopics.find(t => t.slug.startsWith(topicSlug.slice(0, 10)));
-            if (fuzzy) topic = fuzzy;
+            // Try exact slug match first (handles -2, -3 suffixed slugs)
+            const exactSuffix = chapterTopics.find(t => t.slug === topicSlug || t.slug.match(new RegExp(`^${topicSlug}-\\d+$`)));
+            if (exactSuffix) topic = exactSuffix;
+            // Then try fuzzy slug prefix match
             if (!topic) {
+              const fuzzy = chapterTopics.find(t => t.slug.startsWith(topicSlug.slice(0, 10)));
+              if (fuzzy) topic = fuzzy;
+            }
+            // Position-based match (rename detection) — sync mode only
+            if (!topic && isSync) {
               const byPos = chapterTopics.find(t => t.sort_order === parsedTopic.order);
               if (byPos) topic = byPos;
             }
@@ -4786,7 +4800,7 @@ export async function importFromCdn(req: Request, res: Response) {
 
           if (!topic) {
             if (!isDryRun) {
-              const newSlug = await generateUniqueSlug(supabase, 'topics', topicSlug);
+              const newSlug = await generateUniqueSlug(supabase, 'topics', topicSlug, undefined, { column: 'chapter_id', value: chapter.id });
               const { data: created, error: createErr } = await supabase
                 .from('topics')
                 .insert({
@@ -4898,7 +4912,7 @@ export async function importFromCdn(req: Request, res: Response) {
             if (!subTopic) {
               report.sub_topics.found++;
               if (!isDryRun) {
-                const newSlug = await generateUniqueSlug(supabase, 'sub_topics', stSlug);
+                const newSlug = await generateUniqueSlug(supabase, 'sub_topics', stSlug, undefined, { column: 'topic_id', value: topic.id });
                 const { data: created, error: stErr } = await supabase
                   .from('sub_topics')
                   .insert({
