@@ -4017,6 +4017,7 @@ CRITICAL RULES:
 8. The subject is "${subjectName}", chapter is "${chapterName}", topic is "${topicName}" - keep these and related technical terms in English where translation would sound unnatural or weird.
 9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
 10. Do NOT translate alt attributes of images if they contain technical terms.
+11. STRICTLY IMPORTANT: When the source language is NOT English, ALL English words and phrases that already appear in the source text MUST be preserved EXACTLY as-is in the translation. Do NOT translate, transliterate, or replace any English word from the source into the target language. For example, if the Hindi source contains any english word — keep it in English in the ${lang.name} translation too. This rule applies to ALL English words found in the source, not just technical terms.
 
 Return ONLY the complete translated HTML document, nothing else.`;
 
