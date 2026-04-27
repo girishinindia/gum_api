@@ -74,4 +74,7 @@ r.post('/clean-orphaned-videos', requirePermission('ai', 'delete'), ctrl.cleanOr
 // Generate YouTube video title + description from English CDN file
 r.post('/generate-youtube-description', requirePermission('ai', 'create'), ctrl.generateYoutubeDescription);
 
+// Bulk generate missing content for multiple entities (subjects/chapters/topics/sub-topics)
+r.post('/bulk-generate-missing-content', requirePermission('ai', 'create'), ctrl.bulkGenerateMissingContent);
+
 export default r;

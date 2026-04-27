@@ -6162,3 +6162,81 @@ ${fileContent.substring(0, 12000)}`;
     return err(res, error.message || 'Failed to generate YouTube descriptions', 500);
   }
 }
+
+// ─── Bulk generate missing content for multiple entities ───────────────────────
+// POST /ai/bulk-generate-missing-content
+// Accepts { entity_type: 'subject'|'chapter'|'topic'|'sub_topic', entity_ids: number[], provider, prompt }
+// For each entity, calls generateAllTranslationsForEntity() to fill missing / empty translations.
+export async function bulkGenerateMissingContent(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { entity_type, entity_ids, prompt, provider: reqProvider } = req.body;
+
+    // Validate entity_type
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic'];
+    if (!entity_type || !validTypes.includes(entity_type)) {
+      return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
+    }
+    if (!entity_ids || !Array.isArray(entity_ids) || entity_ids.length === 0) {
+      return err(res, 'entity_ids must be a non-empty array of numbers', 400);
+    }
+    if (entity_ids.length > 50) {
+      return err(res, 'Maximum 50 entities per request', 400);
+    }
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    const results: { entity_id: number; status: 'success' | 'skipped' | 'error'; languages_generated: number; error?: string }[] = [];
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let successCount = 0;
+    let errorCount = 0;
+    let skippedCount = 0;
+
+    for (const entityId of entity_ids) {
+      try {
+        const { results: langResults, totalInputTokens: inTok, totalOutputTokens: outTok } =
+          await generateAllTranslationsForEntity(entity_type, entityId, String(userId), provider, prompt || undefined);
+
+        totalInputTokens += inTok;
+        totalOutputTokens += outTok;
+
+        if (langResults.length === 0) {
+          results.push({ entity_id: entityId, status: 'skipped', languages_generated: 0 });
+          skippedCount++;
+        } else {
+          const generated = langResults.filter((r: any) => r.status === 'created' || r.status === 'restored' || r.status === 'updated').length;
+          results.push({ entity_id: entityId, status: 'success', languages_generated: generated });
+          successCount++;
+        }
+      } catch (error: any) {
+        results.push({ entity_id: entityId, status: 'error', languages_generated: 0, error: error.message });
+        errorCount++;
+      }
+    }
+
+    // Log admin activity
+    const cfg = ENTITY_CONFIG[entity_type as MaterialEntityType];
+    logAdmin({
+      actorId: userId,
+      action: 'ai_bulk_content_generated',
+      targetType: cfg.table,
+      targetId: 0,
+      targetName: `Bulk generated content for ${entity_ids.length} ${cfg.entityLabel}(s) (${provider})`,
+      ip: getClientIp(req),
+      metadata: { entity_type, provider, total: entity_ids.length, success: successCount, skipped: skippedCount, errors: errorCount },
+    });
+
+    return ok(res, {
+      results,
+      summary: { total: entity_ids.length, success: successCount, skipped: skippedCount, errors: errorCount },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Generated content for ${successCount} ${cfg.entityLabel}(s), ${skippedCount} already complete`);
+  } catch (error: any) {
+    console.error('bulkGenerateMissingContent error:', error);
+    return err(res, error.message || 'Failed to bulk generate content', 500);
+  }
+}
