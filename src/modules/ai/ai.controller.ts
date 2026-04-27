@@ -6165,29 +6165,91 @@ ${fileContent.substring(0, 12000)}`;
 
 // ─── Bulk generate missing content for multiple entities ───────────────────────
 // POST /ai/bulk-generate-missing-content
-// Accepts { entity_type: 'subject'|'chapter'|'topic'|'sub_topic', entity_ids: number[], provider, prompt }
-// For each entity, calls generateAllTranslationsForEntity() to fill missing / empty translations.
+// Accepts { entity_type, entity_ids?: number[], generate_all?: boolean, provider, prompt }
+// If generate_all is true, auto-discovers ALL entities of that type with missing/empty translations.
+// Otherwise processes the given entity_ids.
 export async function bulkGenerateMissingContent(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
     if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
-    const { entity_type, entity_ids, prompt, provider: reqProvider } = req.body;
+    const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider } = req.body;
 
     // Validate entity_type
     const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic'];
     if (!entity_type || !validTypes.includes(entity_type)) {
       return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
     }
-    if (!entity_ids || !Array.isArray(entity_ids) || entity_ids.length === 0) {
-      return err(res, 'entity_ids must be a non-empty array of numbers', 400);
-    }
-    if (entity_ids.length > 50) {
-      return err(res, 'Maximum 50 entities per request', 400);
-    }
 
     const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const cfg = ENTITY_CONFIG[entity_type as MaterialEntityType];
+
+    // Determine which entity IDs to process
+    let entity_ids: number[] = [];
+
+    if (generate_all) {
+      // Auto-discover: fetch all active entities and find those with missing/empty translations
+      const { data: allEntities } = await supabase
+        .from(cfg.table)
+        .select('id')
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .order('id');
+
+      if (!allEntities || allEntities.length === 0) {
+        return ok(res, { results: [], summary: { total: 0, success: 0, skipped: 0, errors: 0 } }, 'No active entities found');
+      }
+
+      // Check which entities have missing or empty translations
+      const { data: allLangs } = await supabase.from('languages').select('id').eq('is_active', true).eq('for_material', true);
+      const totalLangs = allLangs?.length || 0;
+      if (totalLangs === 0) {
+        return ok(res, { results: [], summary: { total: 0, success: 0, skipped: 0, errors: 0 } }, 'No active for_material languages');
+      }
+
+      // Fetch all translations to find entities needing content
+      const contentFields = cfg.fields.filter(f => f !== 'name');
+      const selectFields = [cfg.idField, 'language_id', ...contentFields].join(', ');
+      const { data: allTranslations } = await supabase
+        .from(cfg.translationTable)
+        .select(selectFields)
+        .is('deleted_at', null);
+
+      const transMap = new Map<number, number>(); // entity_id → count of translations with content
+      const totalTransMap = new Map<number, number>(); // entity_id → total translation count
+      for (const t of (allTranslations || []) as Record<string, any>[]) {
+        const eid = t[cfg.idField];
+        totalTransMap.set(eid, (totalTransMap.get(eid) || 0) + 1);
+        const hasContent = contentFields.some((f: string) => {
+          const val = t[f];
+          return val && typeof val === 'string' && val.trim().length > 0;
+        });
+        if (hasContent) transMap.set(eid, (transMap.get(eid) || 0) + 1);
+      }
+
+      // Entity needs content if: missing translations OR has translations with empty content
+      for (const entity of allEntities) {
+        const totalTrans = totalTransMap.get(entity.id) || 0;
+        const withContent = transMap.get(entity.id) || 0;
+        if (totalTrans < totalLangs || withContent < totalTrans) {
+          entity_ids.push(entity.id);
+        }
+      }
+
+      if (entity_ids.length === 0) {
+        return ok(res, { results: [], summary: { total: 0, success: 0, skipped: 0, errors: 0 } }, 'All entities already have complete content');
+      }
+    } else {
+      // Use provided entity_ids
+      if (!rawIds || !Array.isArray(rawIds) || rawIds.length === 0) {
+        return err(res, 'entity_ids must be a non-empty array of numbers (or set generate_all: true)', 400);
+      }
+      if (rawIds.length > 50) {
+        return err(res, 'Maximum 50 entities per request', 400);
+      }
+      entity_ids = rawIds;
+    }
 
     const results: { entity_id: number; status: 'success' | 'skipped' | 'error'; languages_generated: number; error?: string }[] = [];
     let totalInputTokens = 0;
@@ -6219,7 +6281,6 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
     }
 
     // Log admin activity
-    const cfg = ENTITY_CONFIG[entity_type as MaterialEntityType];
     logAdmin({
       actorId: userId,
       action: 'ai_bulk_content_generated',
@@ -6227,7 +6288,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
       targetId: 0,
       targetName: `Bulk generated content for ${entity_ids.length} ${cfg.entityLabel}(s) (${provider})`,
       ip: getClientIp(req),
-      metadata: { entity_type, provider, total: entity_ids.length, success: successCount, skipped: skippedCount, errors: errorCount },
+      metadata: { entity_type, provider, total: entity_ids.length, success: successCount, skipped: skippedCount, errors: errorCount, generate_all: !!generate_all },
     });
 
     return ok(res, {
