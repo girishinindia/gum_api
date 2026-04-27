@@ -922,10 +922,8 @@ RULES: ${extraRules} Write in a natural, human way. Be thorough and informative.
         }, { onConflict: `${cfg.idField},language_id` });
       }
 
-      // Also update entity name from AI if it provided a better one
-      if (enFields.name) {
-        await supabase.from(cfg.table).update({ name: enFields.name }).eq('id', entityId);
-      }
+      // Never overwrite entity name with AI-generated name — the user-set name is authoritative.
+      // The forward sync (entity.name → English translation) already exists in CRUD controllers.
 
       // Refresh englishSource with the new content for translation step
       englishSource = { ...englishSource, ...enFields };
@@ -3482,10 +3480,10 @@ USER INSTRUCTIONS: ${userPrompt}`;
         }
       }
 
-      // Check if translation exists (include page URL so we can delete old file)
+      // Check if translation exists (include page URL + name so we can preserve name on update)
       const { data: existingTrans } = await supabase
         .from('sub_topic_translations')
-        .select('id, page')
+        .select('id, page, name')
         .eq('sub_topic_id', subTopicId)
         .eq('language_id', language_id)
         .is('deleted_at', null)
@@ -3534,6 +3532,10 @@ USER INSTRUCTIONS: ${userPrompt}`;
       if (pageUrl) translationData.page = pageUrl;
 
       if (existingTrans) {
+        // Preserve existing translation name — never overwrite user-set names with AI-generated ones
+        if (existingTrans.name) {
+          translationData.name = existingTrans.name;
+        }
         const { error: updErr } = await supabase
           .from('sub_topic_translations')
           .update({ ...translationData, updated_by: userId })
