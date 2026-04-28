@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { fetchAll } from '../../utils/supabaseFetchAll';
 import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 
 const SITE_URL = 'https://growupmore.com';
@@ -518,20 +519,22 @@ export async function coverage(req: Request, res: Response) {
     .order('id');
   if (langErr) return err(res, langErr.message, 500);
   const totalLangs = activeLangs?.length || 0;
+  const activeLangIds = new Set((activeLangs || []).map(l => l.id));
 
-  const { data: subTopics, error: stErr } = await supabase
-    .from('sub_topics')
-    .select('id, slug, topic_id')
-    .eq('is_active', true)
-    .is('deleted_at', null)
-    .order('slug');
-  if (stErr) return err(res, stErr.message, 500);
+  let subTopics: any[];
+  try {
+    subTopics = await fetchAll('sub_topics', 'id, slug, topic_id', {
+      filters: q => q.eq('is_active', true).is('deleted_at', null),
+      order: 'slug',
+    });
+  } catch (stErr: any) { return err(res, stErr.message, 500); }
 
-  const { data: translations, error: transErr } = await supabase
-    .from('sub_topic_translations')
-    .select('sub_topic_id, language_id, page, video_title, video_description')
-    .is('deleted_at', null);
-  if (transErr) return err(res, transErr.message, 500);
+  let translations: any[];
+  try {
+    translations = await fetchAll('sub_topic_translations', 'sub_topic_id, language_id, page, video_title, video_description', {
+      filters: q => q.is('deleted_at', null),
+    });
+  } catch (transErr: any) { return err(res, transErr.message, 500); }
 
   const transMap = new Map<number, Set<number>>();
   // Track page files and video info per sub-topic per language
@@ -549,13 +552,14 @@ export async function coverage(req: Request, res: Response) {
   }
 
   // Also get sub-topic level video info (bunny/youtube)
-  const { data: subTopicVideoData } = await supabase
-    .from('sub_topics')
-    .select('id, video_id, video_source, video_url, youtube_url, video_status')
-    .eq('is_active', true)
-    .is('deleted_at', null);
+  let subTopicVideoData: any[] = [];
+  try {
+    subTopicVideoData = await fetchAll('sub_topics', 'id, video_id, video_source, video_url, youtube_url, video_status', {
+      filters: q => q.eq('is_active', true).is('deleted_at', null),
+    });
+  } catch {}
   const subTopicVideoMap = new Map<number, { video_source?: string; has_video: boolean }>();
-  for (const st of (subTopicVideoData || [])) {
+  for (const st of subTopicVideoData) {
     subTopicVideoMap.set(st.id, {
       video_source: st.video_source || undefined,
       has_video: !!(st.video_id || st.video_url || st.youtube_url),
@@ -567,7 +571,7 @@ export async function coverage(req: Request, res: Response) {
     const missingLangs = (activeLangs || []).filter(l => !translatedLangIds.has(l.id));
     const translatedLangs = (activeLangs || []).filter(l => translatedLangIds.has(l.id));
     const stPages = pageMap.get(st.id);
-    const pagesWithFile = stPages ? Array.from(stPages.values()).filter(v => v).length : 0;
+    const pagesWithFile = stPages ? Array.from(stPages.entries()).filter(([langId, hasPage]) => hasPage && activeLangIds.has(langId)).length : 0;
     const stVideo = subTopicVideoMap.get(st.id);
     return {
       sub_topic_id: st.id,

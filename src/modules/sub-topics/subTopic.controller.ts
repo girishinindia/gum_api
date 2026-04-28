@@ -82,16 +82,18 @@ export async function list(req: Request, res: Response) {
 
   // Fetch English translation names for all sub-topics in this page
   const subTopicIds = (data || []).map((st: any) => st.id);
+  const isTrash = req.query.show_deleted === 'true';
   let englishNameMap: Record<number, string> = {};
   if (subTopicIds.length > 0) {
     const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
     if (enLang) {
-      const { data: enTranslations } = await supabase
+      let enQ = supabase
         .from('sub_topic_translations')
         .select('sub_topic_id, name')
         .in('sub_topic_id', subTopicIds)
-        .eq('language_id', enLang.id)
-        .is('deleted_at', null);
+        .eq('language_id', enLang.id);
+      if (!isTrash) enQ = enQ.is('deleted_at', null);
+      const { data: enTranslations } = await enQ;
       if (enTranslations) {
         for (const t of enTranslations) {
           englishNameMap[t.sub_topic_id] = t.name;

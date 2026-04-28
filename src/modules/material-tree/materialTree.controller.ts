@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { ok, err } from '../../utils/response';
 import { config } from '../../config';
 import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
+import { fetchAll } from '../../utils/supabaseFetchAll';
 
 interface TreeNode {
   name: string;
@@ -64,20 +65,23 @@ export async function list(req: Request, res: Response) {
 export async function fullTree(req: Request, res: Response) {
   try {
     // Fetch all data in parallel — 6 fast DB queries instead of hundreds of CDN calls
-    const [subjectsRes, chaptersRes, topicsRes, subTopicsRes, translationsRes, languagesRes] = await Promise.all([
+    const [subjectsRes, chaptersRes, topicsRes, subTopics, translations, languagesRes] = await Promise.all([
       supabase.from('subjects').select('id, code, slug, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('chapters').select('id, slug, subject_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
       supabase.from('topics').select('id, slug, chapter_id, display_order, created_at, updated_at').is('deleted_at', null).order('display_order'),
-      supabase.from('sub_topics').select('id, slug, topic_id, display_order, video_id, video_status, video_url, video_source, youtube_url, created_at, updated_at').is('deleted_at', null).order('display_order'),
-      supabase.from('sub_topic_translations').select('id, sub_topic_id, language_id, page, created_at, updated_at').is('deleted_at', null),
+      fetchAll('sub_topics', 'id, slug, topic_id, display_order, video_id, video_status, video_url, video_source, youtube_url, created_at, updated_at', {
+        filters: q => q.is('deleted_at', null),
+        order: 'display_order',
+      }),
+      fetchAll('sub_topic_translations', 'id, sub_topic_id, language_id, page, created_at, updated_at', {
+        filters: q => q.is('deleted_at', null),
+      }),
       supabase.from('languages').select('id, iso_code, name').eq('is_active', true).eq('for_material', true).order('id'),
     ]);
 
     const subjects = subjectsRes.data || [];
     const chapters = chaptersRes.data || [];
     const topics = topicsRes.data || [];
-    const subTopics = subTopicsRes.data || [];
-    const translations = translationsRes.data || [];
     const languages = languagesRes.data || [];
 
     // Build lookup maps for fast grouping
@@ -262,7 +266,10 @@ export async function fullTree(req: Request, res: Response) {
     return ok(res, {
       tree,
       stats: { totalFolders, totalFiles, totalSize, totalTranslations,
-        subjects: subjects.length, chapters: chapters.length, topics: topics.length, subTopics: subTopics.length },
+        expectedTranslations: subTopics.length * languages.length,
+        expectedFiles: subTopics.length * languages.length,
+        subjects: subjects.length, chapters: chapters.length, topics: topics.length, subTopics: subTopics.length,
+        materialLanguages: languages.length },
     });
   } catch (e: any) {
     console.error('Material tree error:', e);

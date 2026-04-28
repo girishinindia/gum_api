@@ -54,16 +54,19 @@ export async function list(req: Request, res: Response) {
 
   // Fetch English translation names for all chapters in this page
   const chapterIds = (data || []).map((c: any) => c.id);
+  const isTrash = req.query.show_deleted === 'true';
   let englishNameMap: Record<number, string> = {};
   if (chapterIds.length > 0) {
     const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
     if (enLang) {
-      const { data: enTranslations } = await supabase
+      let enQ = supabase
         .from('chapter_translations')
         .select('chapter_id, name')
         .in('chapter_id', chapterIds)
-        .eq('language_id', enLang.id)
-        .is('deleted_at', null);
+        .eq('language_id', enLang.id);
+      // When viewing trash, translations are also soft-deleted — include them
+      if (!isTrash) enQ = enQ.is('deleted_at', null);
+      const { data: enTranslations } = await enQ;
       if (enTranslations) {
         for (const t of enTranslations) {
           englishNameMap[t.chapter_id] = t.name;

@@ -8,12 +8,13 @@ import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { uploadRawFile, createBunnyFolder, createBunnyFolders, deleteImage, listBunnyStorageRecursive, listBunnyStorage, downloadBunnyFile, type CdnTreeNode } from '../../services/storage.service';
 import { fetchVideoFromUrl, buildStorageUrl, buildCollectionName, findOrCreateCollection, createCourseCollections, clearCollectionCache, getVideoStatus, listAllStreamVideos, listAllStreamCollections, listStreamCollections, deleteVideoFromStream, deleteStreamCollection, listStreamVideos } from '../../services/video.service';
-import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
+import { parseCourseStructure, buildCdnName, buildCourseFolderName, namesMatch, nameToSlug, normalizeCdnName, normalizeTxtName, type ParsedCourse, type ParsedChapter, type ParsedTopic, type ParsedSubTopic } from '../../utils/courseParser';
 import { config } from '../../config';
 import { parseMaterialTree, treeSummary } from '../../utils/materialTreeParser';
 import { matchSubject, matchChapter, matchTopic, matchSubTopic } from '../../services/materialMatcher.service';
 import { generateMaterialData, type MaterialTreeInput } from '../../services/materialAiGenerator.service';
 import { getArchivedYoutubeUrls, markArchiveRestored } from '../../services/youtubeArchive.service';
+import { fetchAll } from '../../utils/supabaseFetchAll';
 
 // ─── Rate limiter (in-memory, per user) ───
 const rateLimits = new Map<number, { count: number; resetAt: number }>();
@@ -4002,14 +4003,20 @@ async function translateHtmlToMissingLanguages(opts: {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
-  for (const lang of targetLangs) {
+  // Pre-fetch sub-topic slug once (needed if creating new translation records)
+  let subTopicSlug: string | undefined;
+  const { data: stSlugData } = await supabase.from('sub_topics').select('slug').eq('id', subTopicId).single();
+  subTopicSlug = stSlugData?.slug;
+
+  // Translate to ALL target languages in parallel (3× faster than sequential)
+  const translationPromises = targetLangs.map(async (lang) => {
     try {
       const systemPrompt = `You are an expert translator. Translate the following HTML page from ${sourceLangName} to ${lang.name} (${lang.native_name}).
 
 CRITICAL RULES:
 1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
 2. Only translate the visible text content between HTML tags.
-3. Keep ALL technical terms, programming keywords, and code in English. Examples: HTML, CSS, JavaScript, Python, Pandas, DataFrame, API, JSON, REST, SQL, Git, React, Node.js, npm, webpack, function, class, variable, array, object, string, boolean, integer, float, import, export, async, await, try, catch, throw, return, const, let, var, if, else, for, while, switch, case, break, continue, null, undefined, true, false, NaN, Infinity, console.log, getElementById, querySelector, addEventListener, fetch, Promise, callback, middleware, endpoint, framework, library, module, component, prop, state, hook, render, DOM, HTTP, HTTPS, URL, URI, TCP, UDP, DNS, IP, SSL, TLS, SSH, FTP, CDN, CMS, SDK, IDE, CLI, GUI, OOP, MVC, CRUD, SPA, SSR, CSR, PWA, SEO, UX, UI, etc.
+3. Keep ALL technical terms, related programming and technical keywords, and code in English. 
 4. Keep brand names and product names in English (Google, Microsoft, Apple, GitHub, Stack Overflow, VS Code, etc.)
 5. Keep code snippets, code examples, and inline code EXACTLY in English - do not translate any code.
 6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
@@ -4017,14 +4024,12 @@ CRITICAL RULES:
 8. The subject is "${subjectName}", chapter is "${chapterName}", topic is "${topicName}" - keep these and related technical terms in English where translation would sound unnatural or weird.
 9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
 10. Do NOT translate alt attributes of images if they contain technical terms.
-11. STRICTLY IMPORTANT: When the source language is NOT English, ALL English words and phrases that already appear in the source text MUST be preserved EXACTLY as-is in the translation. Do NOT translate, transliterate, or replace any English word from the source into the target language. For example, if the Hindi source contains any english word — keep it in English in the ${lang.name} translation too. This rule applies to ALL English words found in the source, not just technical terms.
+11. STRICTLY IMPORTANT: When the source language is NOT English, ALL English words and phrases that already appear in the source text MUST be preserved EXACTLY as-is in the translation. Do NOT translate, transliterate, or replace any English word from the source into the target language. For example, if the Hindi source contains any english word — keep it in English in the ${lang.name} translation too. This rule applies to ALL English words found in the source, not just technical terms. And for subject name, chapter name, topic name and sub topic name, keep only those words in english which are strange, weird to translate into hindi or other regional languages.
 
 Return ONLY the complete translated HTML document, nothing else.`;
 
       const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
       const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
-      totalInputTokens += aiResult.inputTokens;
-      totalOutputTokens += aiResult.outputTokens;
 
       // Clean up AI response — strip any markdown code fences
       let translatedHtml = aiResult.text.trim();
@@ -4035,8 +4040,7 @@ Return ONLY the complete translated HTML document, nothing else.`;
       }
 
       if (!translatedHtml || translatedHtml.length < 50) {
-        results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI returned empty or too short translation' });
-        continue;
+        return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: 'AI returned empty or too short translation', inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
       }
 
       // Check if existing translation has a page file to delete
@@ -4068,13 +4072,10 @@ Return ONLY the complete translated HTML document, nothing else.`;
           .update({ page: pageUrl, updated_by: userId })
           .eq('id', existingTrans.id);
         if (updErr) {
-          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB update failed: ${updErr.message}` });
-          continue;
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB update failed: ${updErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
         }
       } else {
-        // Get sub-topic slug for the name field
-        const { data: stData } = await supabase.from('sub_topics').select('slug').eq('id', subTopicId).single();
-        const transName = stData?.slug?.replace(/-/g, ' ') || `sub-topic-${subTopicId}`;
+        const transName = subTopicSlug?.replace(/-/g, ' ') || `sub-topic-${subTopicId}`;
         const { error: insErr } = await supabase
           .from('sub_topic_translations')
           .insert({
@@ -4086,15 +4087,28 @@ Return ONLY the complete translated HTML document, nothing else.`;
             created_by: userId,
           });
         if (insErr) {
-          results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: `DB insert failed: ${insErr.message}` });
-          continue;
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB insert failed: ${insErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
         }
       }
 
-      results.push({ language: lang.name, iso_code: lang.iso_code, status: 'success', page_url: pageUrl });
+      return { language: lang.name, iso_code: lang.iso_code, status: 'success' as const, page_url: pageUrl, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
     } catch (langErr: any) {
       console.error(`Translation failed for ${lang.name}:`, langErr);
-      results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: langErr.message || 'Translation failed' });
+      return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: langErr.message || 'Translation failed', inputTokens: 0, outputTokens: 0 };
+    }
+  });
+
+  // Wait for all parallel translations to complete
+  const settled = await Promise.allSettled(translationPromises);
+  for (const outcome of settled) {
+    if (outcome.status === 'fulfilled') {
+      const r = outcome.value;
+      totalInputTokens += r.inputTokens;
+      totalOutputTokens += r.outputTokens;
+      results.push({ language: r.language, iso_code: r.iso_code, status: r.status, page_url: r.page_url, error: r.error });
+    } else {
+      // Should not happen since each promise has its own try/catch, but handle just in case
+      results.push({ language: 'unknown', iso_code: 'unknown', status: 'error', error: outcome.reason?.message || 'Unexpected error' });
     }
   }
 
@@ -4666,6 +4680,7 @@ export async function importFromCdn(req: Request, res: Response) {
 
         // Match: by slug (primary), then fuzzy ilike, then by position (rename detection)
         let chapter = existingChapters.get(`${subject.id}:${chapterSlug}`);
+        let chapterMatchMethod = chapter ? 'exact-slug' : 'none';
 
         // Fuzzy match: try slug suffix and prefix matching in ALL modes (not just sync)
         // This prevents duplicates when existing chapters have suffixed slugs like intro-2
@@ -4673,17 +4688,25 @@ export async function importFromCdn(req: Request, res: Response) {
           const subjectChapters = chaptersBySubject.get(subject.id) || [];
           // Try exact slug match with -N suffix pattern
           const exactSuffix = subjectChapters.find(c => c.slug === chapterSlug || c.slug.match(new RegExp(`^${chapterSlug}-\\d+$`)));
-          if (exactSuffix) chapter = exactSuffix;
-          // Try fuzzy slug prefix match
+          if (exactSuffix) { chapter = exactSuffix; chapterMatchMethod = 'suffix-pattern'; }
+          // Try fuzzy slug prefix match — require at least 70% of the slug to match
+          // (avoids false positives like "control-flow-loops" matching "control-flow-conditional-statements")
           if (!chapter) {
-            const fuzzy = subjectChapters.find(c => c.slug.startsWith(chapterSlug.slice(0, 10)));
-            if (fuzzy) chapter = fuzzy;
+            const minLen = Math.max(15, Math.floor(chapterSlug.length * 0.7));
+            const prefix = chapterSlug.slice(0, minLen);
+            const fuzzy = subjectChapters.find(c => c.slug.startsWith(prefix) && Math.abs(c.slug.length - chapterSlug.length) <= 5);
+            if (fuzzy) { chapter = fuzzy; chapterMatchMethod = 'fuzzy-prefix'; }
           }
           // Position-based match (rename detection) — sync mode only
           if (!chapter && isSync) {
             const byPos = subjectChapters.find(c => c.sort_order === parsedChapter.order);
-            if (byPos) chapter = byPos;
+            if (byPos) { chapter = byPos; chapterMatchMethod = 'position'; }
           }
+        }
+        if (chapter) {
+          console.log(`[importFromCdn] Chapter "${parsedChapter.name}" (slug: ${chapterSlug}) matched existing DB chapter id=${chapter.id} slug="${chapter.slug}" via ${chapterMatchMethod}`);
+        } else {
+          console.log(`[importFromCdn] Chapter "${parsedChapter.name}" (slug: ${chapterSlug}) — no existing match, will create new`);
         }
 
         if (!chapter) {
@@ -4789,9 +4812,12 @@ export async function importFromCdn(req: Request, res: Response) {
             // Try exact slug match first (handles -2, -3 suffixed slugs)
             const exactSuffix = chapterTopics.find(t => t.slug === topicSlug || t.slug.match(new RegExp(`^${topicSlug}-\\d+$`)));
             if (exactSuffix) topic = exactSuffix;
-            // Then try fuzzy slug prefix match
+            // Then try fuzzy slug prefix match — require at least 70% of the slug to match
+            // (avoids false positives for topics with similar name prefixes)
             if (!topic) {
-              const fuzzy = chapterTopics.find(t => t.slug.startsWith(topicSlug.slice(0, 10)));
+              const minLen = Math.max(15, Math.floor(topicSlug.length * 0.7));
+              const prefix = topicSlug.slice(0, minLen);
+              const fuzzy = chapterTopics.find(t => t.slug.startsWith(prefix) && Math.abs(t.slug.length - topicSlug.length) <= 5);
               if (fuzzy) topic = fuzzy;
             }
             // Position-based match (rename detection) — sync mode only
@@ -4887,18 +4913,23 @@ export async function importFromCdn(req: Request, res: Response) {
             let subTopic = existingSubTopics.get(`${topic.id}:${stSlug}`);
 
             if (!subTopic && topic.id > 0) {
-              // Fuzzy match by ilike
+              // Fuzzy match: try exact slug with -N suffix first, then ilike prefix with length check
               const { data: fuzzyMatch } = await supabase
                 .from('sub_topics')
                 .select('id, slug, display_order, video_id, video_source')
                 .eq('topic_id', topic.id)
                 .is('deleted_at', null)
                 .ilike('slug', `${stSlug}%`)
-                .limit(1);
+                .limit(5);
 
               if (fuzzyMatch?.length) {
-                subTopic = fuzzyMatch[0];
-                existingSubTopics.set(`${topic.id}:${subTopic.slug}`, subTopic);
+                // Prefer exact match or -N suffix match; fall back to closest length match
+                const exact = fuzzyMatch.find(m => m.slug === stSlug || m.slug.match(new RegExp(`^${stSlug}-\\d+$`)));
+                const best = exact || fuzzyMatch.find(m => Math.abs(m.slug.length - stSlug.length) <= 5);
+                if (best) {
+                  subTopic = best;
+                  existingSubTopics.set(`${topic.id}:${subTopic.slug}`, subTopic);
+                }
               }
             }
 
@@ -4976,7 +5007,24 @@ export async function importFromCdn(req: Request, res: Response) {
 
             if (subTopic.id > 0) seenSubTopicIds.add(subTopic.id);
 
-            subTopicDbMap.set(parsedST.name.toLowerCase(), { id: subTopic.id, slug: subTopic.slug, display_order: parsedST.order });
+            const stRecord = { id: subTopic.id, slug: subTopic.slug, display_order: parsedST.order };
+            subTopicDbMap.set(parsedST.name.toLowerCase(), stRecord);
+            // Also key by normalizeTxtName so CDN names with special chars can match
+            subTopicDbMap.set(normalizeTxtName(parsedST.name), stRecord);
+            // Also key by DB slug (hyphens→spaces) so manually-named CDN files can match
+            if (subTopic.slug) {
+              subTopicDbMap.set(subTopic.slug.replace(/-/g, ' '), stRecord);
+            }
+          }
+
+          // Build a reverse lookup from DB sub-topics for this topic (slug-based matching)
+          // This catches CDN files that don't match any .txt name but DO match a DB sub-topic
+          const dbSubTopicsBySlug = new Map<number, { id: number; slug: string; name?: string }>();
+          if (topic.id > 0) {
+            const topicSTs = subTopicsByTopic.get(topic.id) || [];
+            for (const dbST of topicSTs) {
+              dbSubTopicsBySlug.set(dbST.id, dbST);
+            }
           }
 
           // Build a set of ALL known sub-topic names for this topic (including unselected ones)
@@ -4991,6 +5039,9 @@ export async function importFromCdn(req: Request, res: Response) {
               if (dbST.name) {
                 allKnownSubTopicNames.add(dbST.name.toLowerCase());
                 allKnownSubTopicNames.add(dbST.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                // Also add normalizeTxtName form for names with special chars (C++, ::, etc.)
+                allKnownSubTopicNames.add(normalizeTxtName(dbST.name));
+                allKnownSubTopicNames.add(normalizeTxtName(dbST.name).replace(/[^a-z0-9]/g, ''));
               }
             }
           }
@@ -4998,6 +5049,8 @@ export async function importFromCdn(req: Request, res: Response) {
           for (const allST of parsedTopic.subTopics) {
             allKnownSubTopicNames.add(allST.name.toLowerCase());
             allKnownSubTopicNames.add(allST.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+            allKnownSubTopicNames.add(normalizeTxtName(allST.name));
+            allKnownSubTopicNames.add(normalizeTxtName(allST.name).replace(/[^a-z0-9]/g, ''));
           }
 
           // ─── Phase 3: Scan CDN topic folder for language files ───
@@ -5035,14 +5088,66 @@ export async function importFromCdn(req: Request, res: Response) {
 
                 let matchedST: { id: number; slug: string } | undefined;
 
+                // Attempt 1: Direct lookup by normalizeCdnName
                 matchedST = subTopicDbMap.get(normalized);
 
+                // Attempt 2: Alphanumeric-only fuzzy match against all map keys
                 if (!matchedST) {
+                  const normalizedAlpha = normalized.replace(/[^a-z0-9]/g, '');
                   for (const [txtName, stRecord] of subTopicDbMap) {
-                    if (normalized.replace(/[^a-z0-9]/g, '') === txtName.replace(/[^a-z0-9]/g, '')) {
+                    if (normalizedAlpha === txtName.replace(/[^a-z0-9]/g, '')) {
                       matchedST = stRecord;
                       break;
                     }
+                  }
+                }
+
+                // Attempt 3: Direct DB sub-topic slug match (handles manually-uploaded CDN files
+                // whose names differ from .txt names, e.g. "devcpp" vs "Dev-C++")
+                if (!matchedST && topic.id > 0) {
+                  const normalizedAlpha = normalized.replace(/[^a-z0-9]/g, '');
+                  const topicSTs = subTopicsByTopic.get(topic.id) || [];
+                  for (const dbST of topicSTs) {
+                    // Try slug with hyphens→spaces then alphanumeric compare
+                    const slugNorm = dbST.slug.replace(/-/g, ' ').replace(/[^a-z0-9]/g, '').toLowerCase();
+                    if (normalizedAlpha === slugNorm) {
+                      // Only match if this sub-topic is in our selected set
+                      const inMap = Array.from(subTopicDbMap.values()).find(v => v.id === dbST.id);
+                      if (inMap) { matchedST = inMap; break; }
+                    }
+                    // Also try matching CDN name words as substring of slug or vice versa
+                    // e.g. CDN "choosing an ide vs code codeblocks devcpp" contains most words from
+                    // slug "choosing-setting-up-c-programming-ides"
+                    if (dbST.name) {
+                      const dbNameNorm = normalizeCdnName(dbST.name.replace(/-/g, '_').replace(/\s+/g, '_'));
+                      if (dbNameNorm === normalized) {
+                        const inMap = Array.from(subTopicDbMap.values()).find(v => v.id === dbST.id);
+                        if (inMap) { matchedST = inMap; break; }
+                      }
+                    }
+                  }
+                }
+
+                // Attempt 4: Word-overlap heuristic — if >70% of CDN words appear in a DB sub-topic name
+                if (!matchedST && topic.id > 0) {
+                  const cdnWords = normalized.split(/\s+/).filter(w => w.length > 1);
+                  if (cdnWords.length >= 3) {
+                    let bestMatch: { id: number; slug: string } | undefined;
+                    let bestOverlap = 0;
+                    const topicSTs = subTopicsByTopic.get(topic.id) || [];
+                    for (const dbST of topicSTs) {
+                      if (!dbST.name) continue;
+                      const inMap = Array.from(subTopicDbMap.values()).find(v => v.id === dbST.id);
+                      if (!inMap) continue;
+                      const dbWords = new Set(normalizeTxtName(dbST.name).split(/\s+/).filter(w => w.length > 1));
+                      const overlap = cdnWords.filter(w => dbWords.has(w)).length;
+                      const ratio = overlap / cdnWords.length;
+                      if (ratio > 0.7 && overlap > bestOverlap) {
+                        bestOverlap = overlap;
+                        bestMatch = inMap;
+                      }
+                    }
+                    if (bestMatch) matchedST = bestMatch;
                   }
                 }
 
@@ -6193,12 +6298,10 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
 
     if (generate_all) {
       // Auto-discover: fetch all active entities and find those with missing/empty translations
-      const { data: allEntities } = await supabase
-        .from(cfg.table)
-        .select('id')
-        .eq('is_active', true)
-        .is('deleted_at', null)
-        .order('id');
+      const allEntities = await fetchAll<{ id: number }>(cfg.table, 'id', {
+        filters: q => q.eq('is_active', true).is('deleted_at', null),
+        order: 'id',
+      });
 
       if (!allEntities || allEntities.length === 0) {
         return ok(res, { results: [], summary: { total: 0, success: 0, skipped: 0, errors: 0 } }, 'No active entities found');
@@ -6214,14 +6317,13 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
       // Fetch all translations to find entities needing content
       const contentFields = cfg.fields.filter(f => f !== 'name');
       const selectFields = [cfg.idField, 'language_id', ...contentFields].join(', ');
-      const { data: allTranslations } = await supabase
-        .from(cfg.translationTable)
-        .select(selectFields)
-        .is('deleted_at', null);
+      const allTranslations = await fetchAll<Record<string, any>>(cfg.translationTable, selectFields, {
+        filters: q => q.is('deleted_at', null),
+      });
 
       const transMap = new Map<number, number>(); // entity_id → count of translations with content
       const totalTransMap = new Map<number, number>(); // entity_id → total translation count
-      for (const t of (allTranslations || []) as Record<string, any>[]) {
+      for (const t of allTranslations) {
         const eid = t[cfg.idField];
         totalTransMap.set(eid, (totalTransMap.get(eid) || 0) + 1);
         const hasContent = contentFields.some((f: string) => {
