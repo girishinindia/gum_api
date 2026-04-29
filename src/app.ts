@@ -58,6 +58,14 @@ import aiRoutes from './modules/ai/ai.routes';
 import resumeRoutes from './modules/resume/resume.routes';
 import materialTreeRoutes from './modules/material-tree/materialTree.routes';
 import youtubeDescriptionRoutes from './modules/youtube-descriptions/youtubeDescription.routes';
+import courseRoutes from './modules/courses/course.routes';
+import courseTranslationRoutes from './modules/course-translations/courseTranslation.routes';
+import courseSubCategoryRoutes from './modules/course-sub-categories/courseSubCategory.routes';
+import courseModuleRoutes from './modules/course-modules/courseModule.routes';
+import courseModuleTranslationRoutes from './modules/course-module-translations/courseModuleTranslation.routes';
+import courseModuleSubjectRoutes from './modules/course-module-subjects/courseModuleSubject.routes';
+import courseChapterRoutes from './modules/course-chapters/courseChapter.routes';
+import courseChapterTopicRoutes from './modules/course-chapter-topics/courseChapterTopic.routes';
 
 const app = express();
 
@@ -137,6 +145,14 @@ app.use(`${api}/ai`,                        aiRoutes);
 app.use(`${api}/resume`,                    resumeRoutes);
 app.use(`${api}/material-tree`,             materialTreeRoutes);
 app.use(`${api}/youtube-descriptions`,     youtubeDescriptionRoutes);
+app.use(`${api}/courses`,                  courseRoutes);
+app.use(`${api}/course-translations`,      courseTranslationRoutes);
+app.use(`${api}/course-sub-categories`,    courseSubCategoryRoutes);
+app.use(`${api}/course-modules`,           courseModuleRoutes);
+app.use(`${api}/course-module-translations`, courseModuleTranslationRoutes);
+app.use(`${api}/course-module-subjects`,     courseModuleSubjectRoutes);
+app.use(`${api}/course-chapters`,            courseChapterRoutes);
+app.use(`${api}/course-chapter-topics`,      courseChapterTopicRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
