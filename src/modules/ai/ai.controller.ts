@@ -5614,68 +5614,43 @@ export async function importFromCdn(req: Request, res: Response) {
     }
 
     // ─── Phase 6: Generate AI translations for all newly created entities ───
+    // Uses concurrent batches of 3 to reduce wall-clock time by ~3x
     if (!isDryRun) {
       const aiProvider: AIProvider = 'gemini';
       const totalNew = newSubjectIds.length + newChapterIds.length + newTopicIds.length + newSubTopicIds.length;
+      const PHASE6_CONCURRENCY = 3;
 
       if (totalNew > 0) {
-        console.log(`Phase 6: Generating AI translations for ${totalNew} new entities...`);
+        console.log(`Phase 6: Generating AI translations for ${totalNew} new entities (concurrency: ${PHASE6_CONCURRENCY})...`);
 
-        // Subjects
-        for (const id of newSubjectIds) {
-          try {
-            const { results } = await generateAllTranslationsForEntity('subject', id, userId, aiProvider);
-            const success = results.filter(r => r.status === 'success').length;
-            report.ai_translations.subjects++;
-            report.ai_translations.total_generated += success;
-            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
-          } catch (aiErr: any) {
-            report.errors.push(`AI translation for subject ${id}: ${aiErr.message}`);
-            report.ai_translations.errors++;
+        // Helper to process a list of entity IDs with concurrency
+        const processEntityBatch = async (entityType: MaterialEntityType, ids: number[], reportKey: 'subjects' | 'chapters' | 'topics' | 'sub_topics') => {
+          for (let i = 0; i < ids.length; i += PHASE6_CONCURRENCY) {
+            const batch = ids.slice(i, i + PHASE6_CONCURRENCY);
+            const settled = await Promise.allSettled(
+              batch.map(id => generateAllTranslationsForEntity(entityType, id, userId, aiProvider))
+            );
+            for (let j = 0; j < settled.length; j++) {
+              if (settled[j].status === 'fulfilled') {
+                const { results } = (settled[j] as PromiseFulfilledResult<any>).value;
+                const success = results.filter((r: any) => r.status === 'success').length;
+                (report.ai_translations as any)[reportKey]++;
+                report.ai_translations.total_generated += success;
+                report.ai_translations.errors += results.filter((r: any) => r.status === 'error').length;
+              } else {
+                const reason = (settled[j] as PromiseRejectedResult).reason;
+                report.errors.push(`AI translation for ${entityType} ${batch[j]}: ${reason?.message || 'Unknown error'}`);
+                report.ai_translations.errors++;
+              }
+            }
           }
-        }
+        };
 
-        // Chapters
-        for (const id of newChapterIds) {
-          try {
-            const { results } = await generateAllTranslationsForEntity('chapter', id, userId, aiProvider);
-            const success = results.filter(r => r.status === 'success').length;
-            report.ai_translations.chapters++;
-            report.ai_translations.total_generated += success;
-            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
-          } catch (aiErr: any) {
-            report.errors.push(`AI translation for chapter ${id}: ${aiErr.message}`);
-            report.ai_translations.errors++;
-          }
-        }
-
-        // Topics
-        for (const id of newTopicIds) {
-          try {
-            const { results } = await generateAllTranslationsForEntity('topic', id, userId, aiProvider);
-            const success = results.filter(r => r.status === 'success').length;
-            report.ai_translations.topics++;
-            report.ai_translations.total_generated += success;
-            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
-          } catch (aiErr: any) {
-            report.errors.push(`AI translation for topic ${id}: ${aiErr.message}`);
-            report.ai_translations.errors++;
-          }
-        }
-
-        // Sub-Topics
-        for (const id of newSubTopicIds) {
-          try {
-            const { results } = await generateAllTranslationsForEntity('sub_topic', id, userId, aiProvider);
-            const success = results.filter(r => r.status === 'success').length;
-            report.ai_translations.sub_topics++;
-            report.ai_translations.total_generated += success;
-            report.ai_translations.errors += results.filter(r => r.status === 'error').length;
-          } catch (aiErr: any) {
-            report.errors.push(`AI translation for sub-topic ${id}: ${aiErr.message}`);
-            report.ai_translations.errors++;
-          }
-        }
+        // Process each entity type (subjects first since they're fewest)
+        await processEntityBatch('subject', newSubjectIds, 'subjects');
+        await processEntityBatch('chapter', newChapterIds, 'chapters');
+        await processEntityBatch('topic', newTopicIds, 'topics');
+        await processEntityBatch('sub_topic', newSubTopicIds, 'sub_topics');
 
         console.log(`Phase 6 complete: ${report.ai_translations.total_generated} translations generated, ${report.ai_translations.errors} errors`);
       }
@@ -6072,30 +6047,42 @@ export async function generateYoutubeDescription(req: Request, res: Response) {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
+    // ── Phase 1: Pre-fetch all English translations and HTML content in parallel ──
+    const enTransIds = subTopicIds;
+    const { data: allEnTrans } = await supabase
+      .from('sub_topic_translations')
+      .select('sub_topic_id, name, page, short_intro, long_intro')
+      .in('sub_topic_id', enTransIds)
+      .eq('language_id', enLang.id)
+      .is('deleted_at', null);
+    const enTransMap = new Map((allEnTrans || []).map((t: any) => [t.sub_topic_id, t]));
+
+    // Pre-process each sub-topic: download HTML and extract text content
+    interface PreparedSubTopic {
+      st: any;
+      subTopicName: string;
+      subjectName: string;
+      chapterSlug: string;
+      topicSlug: string;
+      fileContent: string;
+      sourceFilePath: string;
+    }
+    const prepared: PreparedSubTopic[] = [];
+
     for (const st of subTopics) {
       const topic = (st as any).topics;
       const chapter = topic.chapters;
       const subject = chapter.subjects;
-
-      // Get English translation to find the page (HTML file) URL
-      const { data: enTrans } = await supabase
-        .from('sub_topic_translations')
-        .select('name, page, short_intro, long_intro')
-        .eq('sub_topic_id', st.id)
-        .eq('language_id', enLang.id)
-        .is('deleted_at', null)
-        .single();
-
+      const enTrans = enTransMap.get(st.id);
       const subTopicName = enTrans?.name || st.slug;
+      const subjectName = subject.name || subject.code || subject.slug;
 
-      // Try to download the English HTML file from CDN
       let fileContent = '';
       let sourceFilePath = '';
       if (enTrans?.page) {
         try {
           sourceFilePath = (enTrans.page as string).replace(config.bunny.cdnUrl + '/', '').split('?')[0];
           const rawHtml = await downloadBunnyFile(sourceFilePath);
-          // Strip HTML tags to get plain text
           fileContent = rawHtml
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -6112,7 +6099,6 @@ export async function generateYoutubeDescription(req: Request, res: Response) {
         }
       }
 
-      // If no file content, use available translation fields as context
       if (!fileContent) {
         const parts: string[] = [];
         if (enTrans?.short_intro) parts.push(enTrans.short_intro);
@@ -6120,35 +6106,57 @@ export async function generateYoutubeDescription(req: Request, res: Response) {
         if (parts.length > 0) {
           fileContent = parts.join('\n\n');
         } else {
-          // Still generate based on name alone
-          fileContent = `Topic: ${subTopicName} (part of ${subject.name || subject.code} course)`;
+          fileContent = `Topic: ${subTopicName} (part of ${subjectName} course)`;
         }
       }
 
-      const subjectName = subject.name || subject.code || subject.slug;
+      prepared.push({ st, subTopicName, subjectName, chapterSlug: chapter.slug, topicSlug: topic.slug, fileContent, sourceFilePath });
+    }
 
-      // Build AI prompt
-      const systemPrompt = `You are a YouTube content strategist and SEO expert. Generate a YouTube video title and description for an educational video.
+    // ── Phase 2: Batch AI generation — 5 sub-topics per AI call ──
+    const BATCH_SIZE = 5;
+    // Truncate content per sub-topic to fit multiple in one prompt (2500 chars each vs 12000 solo)
+    const CONTENT_LIMIT_PER_ITEM = 2500;
+
+    for (let batchStart = 0; batchStart < prepared.length; batchStart += BATCH_SIZE) {
+      const batch = prepared.slice(batchStart, batchStart + BATCH_SIZE);
+
+      // Build batched user content with numbered items
+      const itemsBlock = batch.map((item, idx) => {
+        return `--- ITEM ${idx + 1} (sub_topic_id: ${item.st.id}) ---
+Subject/Course: ${item.subjectName}
+Chapter: ${item.chapterSlug}
+Topic: ${item.topicSlug}
+Sub-Topic Name: ${item.subTopicName}
+
+Content from the lesson file:
+${item.fileContent.substring(0, CONTENT_LIMIT_PER_ITEM)}`;
+      }).join('\n\n');
+
+      // Use first item's subject for template placeholders (all should be same subject in typical usage)
+      const refSubjectName = batch[0].subjectName;
+
+      const systemPrompt = `You are a YouTube content strategist and SEO expert. Generate YouTube video titles and descriptions for ${batch.length} educational videos.
 
 STRICT RULES:
-1. The total description MUST be strictly under 5000 English characters
-2. Follow the EXACT template structure provided below
-3. Return valid JSON with keys: "video_title" and "description"
-4. VIDEO TITLE FORMAT: "${subTopicName}? [Key Aspects & Descriptive Words] | ${subjectName} Course"
+1. Return a JSON object with key "items" containing an ARRAY of ${batch.length} objects
+2. Each object MUST have keys: "sub_topic_id" (number), "video_title" (string), "description" (string)
+3. The total description for EACH item MUST be strictly under 5000 English characters
+4. Follow the EXACT template structure provided below FOR EACH item
+5. VIDEO TITLE FORMAT: "[Sub-Topic Name]? [Key Aspects & Descriptive Words] | [Subject] Course"
    Example: "What is C Programming? History, Evolution & Complete Beginner Guide | C Programming Course"
    - Must include the sub-topic name, a few descriptive/SEO-rich words, and the course name separated by |
-5. NEVER write "In this video," or "In this tutorial," anywhere in the description
-6. The FIRST LINE must be an extremely catchy, attention-grabbing hook that creates curiosity or excitement — make it feel urgent, surprising, or thought-provoking
-7. Use appropriate icons/emojis throughout ALL sections to make the description visually appealing and scannable
-8. Use the actual content provided to generate relevant learning points
-9. Generate relevant SEO keywords and hashtags based on the actual content
-10. Replace placeholder links with [Add Link] placeholders
+6. NEVER write "In this video," or "In this tutorial," anywhere in any description
+7. The FIRST LINE of each description must be an extremely catchy, attention-grabbing hook
+8. Use appropriate icons/emojis throughout ALL sections
+9. Use the actual content provided per item to generate relevant learning points
+10. Generate relevant SEO keywords and hashtags based on actual content per item
 
-TEMPLATE STRUCTURE:
+TEMPLATE STRUCTURE FOR EACH DESCRIPTION:
 ---
 🔥 [Extremely catchy first line — a bold statement, surprising fact, or thought-provoking question that hooks the reader instantly. NO "In this video" type phrases.]
 
-[2-3 sentence paragraph explaining what this lesson covers and why it matters, mentioning the course name "${subjectName}". Use a conversational, energetic tone. Add relevant icons.]
+[2-3 sentence paragraph explaining what this lesson covers and why it matters, mentioning the course name. Use a conversational, energetic tone. Add relevant icons.]
 
 📖 What You'll Learn:
 ✅ [Point 1 based on actual content]
@@ -6182,7 +6190,7 @@ ${langCheckboxes}
 💼 LinkedIn: [Add LinkedIn Link]
 
 🎬 Explore More Playlists
-▶️ ${subjectName} Complete Course: [Add Playlist Link]
+▶️ ${refSubjectName} Complete Course: [Add Playlist Link]
 ▶️ Full Stack Development Playlist: [Add Playlist Link]
 ▶️ Flutter Development Playlist: [Add Playlist Link]
 
@@ -6206,44 +6214,146 @@ ${langCheckboxes}
 [Generate 15-25 relevant hashtags starting with #]
 ---`;
 
-      const userContent = `Subject/Course: ${subjectName}
-Chapter: ${chapter.slug}
-Topic: ${topic.slug}
-Sub-Topic Name: ${subTopicName}
-
-Content from the lesson file:
-${fileContent.substring(0, 12000)}`;
-
       try {
-        const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, 8192);
+        const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, itemsBlock, 8192 * batch.length);
         totalInputTokens += inputTokens;
         totalOutputTokens += outputTokens;
 
         const parsed = parseJSON(text);
-        const videoTitle = parsed.video_title || `${subTopicName} | ${subjectName}`;
-        const description = parsed.description || '';
+        const items: any[] = parsed.items || (Array.isArray(parsed) ? parsed : [parsed]);
 
-        // Upsert into youtube_descriptions
-        const { error: upsertErr } = await supabase
-          .from('youtube_descriptions')
-          .upsert({
-            sub_topic_id: st.id,
-            video_title: videoTitle,
-            description: description,
-            source_file_path: sourceFilePath || null,
-            generated_by: userId,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'sub_topic_id' });
-
-        if (upsertErr) {
-          console.error(`Failed to save youtube description for sub-topic ${st.id}:`, upsertErr);
-          results.push({ sub_topic_id: st.id, slug: st.slug, status: 'error', error: upsertErr.message });
-        } else {
-          results.push({ sub_topic_id: st.id, slug: st.slug, status: 'success', video_title: videoTitle });
+        // Build a map of sub_topic_id → result for easy lookup
+        const resultMap = new Map<number, any>();
+        for (const item of items) {
+          if (item.sub_topic_id) resultMap.set(item.sub_topic_id, item);
         }
-      } catch (aiErr: any) {
-        console.error(`AI generation failed for sub-topic ${st.id}:`, aiErr);
-        results.push({ sub_topic_id: st.id, slug: st.slug, status: 'error', error: aiErr.message });
+
+        // Save each result
+        for (const bItem of batch) {
+          const aiResult = resultMap.get(bItem.st.id);
+          if (aiResult && (aiResult.video_title || aiResult.description)) {
+            const videoTitle = aiResult.video_title || `${bItem.subTopicName} | ${bItem.subjectName}`;
+            const description = aiResult.description || '';
+
+            const { error: upsertErr } = await supabase
+              .from('youtube_descriptions')
+              .upsert({
+                sub_topic_id: bItem.st.id,
+                video_title: videoTitle,
+                description: description,
+                source_file_path: bItem.sourceFilePath || null,
+                generated_by: userId,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'sub_topic_id' });
+
+            if (upsertErr) {
+              console.error(`Failed to save youtube description for sub-topic ${bItem.st.id}:`, upsertErr);
+              results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'error', error: upsertErr.message });
+            } else {
+              results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'success', video_title: videoTitle });
+            }
+          } else {
+            // Batch didn't return this item — fallback to individual call
+            console.warn(`Batch missing result for sub-topic ${bItem.st.id}, falling back to individual call`);
+            try {
+              const soloSystem = `You are a YouTube content strategist and SEO expert. Generate a YouTube video title and description for an educational video.
+
+STRICT RULES:
+1. The total description MUST be strictly under 5000 English characters
+2. Follow the EXACT template structure provided in the user content
+3. Return valid JSON with keys: "video_title" and "description"
+4. VIDEO TITLE FORMAT: "${bItem.subTopicName}? [Key Aspects & Descriptive Words] | ${bItem.subjectName} Course"
+5. NEVER write "In this video," or "In this tutorial," anywhere in the description
+6. The FIRST LINE must be an extremely catchy, attention-grabbing hook
+7. Use appropriate icons/emojis throughout ALL sections
+8. Use the actual content provided to generate relevant learning points`;
+
+              const soloUser = `Subject/Course: ${bItem.subjectName}
+Chapter: ${bItem.chapterSlug}
+Topic: ${bItem.topicSlug}
+Sub-Topic Name: ${bItem.subTopicName}
+
+Content from the lesson file:
+${bItem.fileContent.substring(0, 12000)}`;
+
+              const { text: soloText, inputTokens: soloIn, outputTokens: soloOut } = await callAI(provider, soloSystem, soloUser, 8192);
+              totalInputTokens += soloIn;
+              totalOutputTokens += soloOut;
+              const soloParsed = parseJSON(soloText);
+              const videoTitle = soloParsed.video_title || `${bItem.subTopicName} | ${bItem.subjectName}`;
+              const description = soloParsed.description || '';
+
+              const { error: upsertErr } = await supabase
+                .from('youtube_descriptions')
+                .upsert({
+                  sub_topic_id: bItem.st.id,
+                  video_title: videoTitle,
+                  description: description,
+                  source_file_path: bItem.sourceFilePath || null,
+                  generated_by: userId,
+                  updated_at: new Date().toISOString(),
+                }, { onConflict: 'sub_topic_id' });
+
+              if (upsertErr) {
+                results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'error', error: upsertErr.message });
+              } else {
+                results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'success', video_title: videoTitle });
+              }
+            } catch (soloErr: any) {
+              results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'error', error: soloErr.message });
+            }
+          }
+        }
+      } catch (batchErr: any) {
+        // Entire batch failed — fall back to individual calls for each item
+        console.error(`Batch AI call failed, falling back to individual calls:`, batchErr);
+        for (const bItem of batch) {
+          try {
+            const soloSystem = `You are a YouTube content strategist and SEO expert. Generate a YouTube video title and description for an educational video.
+
+STRICT RULES:
+1. The total description MUST be strictly under 5000 English characters
+2. Return valid JSON with keys: "video_title" and "description"
+3. VIDEO TITLE FORMAT: "${bItem.subTopicName}? [Key Aspects & Descriptive Words] | ${bItem.subjectName} Course"
+4. NEVER write "In this video," or "In this tutorial," anywhere in the description
+5. The FIRST LINE must be an extremely catchy, attention-grabbing hook
+6. Use appropriate icons/emojis throughout ALL sections`;
+
+            const soloUser = `Subject/Course: ${bItem.subjectName}
+Chapter: ${bItem.chapterSlug}
+Topic: ${bItem.topicSlug}
+Sub-Topic Name: ${bItem.subTopicName}
+
+Content from the lesson file:
+${bItem.fileContent.substring(0, 12000)}`;
+
+            const { text: soloText, inputTokens: soloIn, outputTokens: soloOut } = await callAI(provider, soloSystem, soloUser, 8192);
+            totalInputTokens += soloIn;
+            totalOutputTokens += soloOut;
+            const soloParsed = parseJSON(soloText);
+            const videoTitle = soloParsed.video_title || `${bItem.subTopicName} | ${bItem.subjectName}`;
+            const description = soloParsed.description || '';
+
+            const { error: upsertErr } = await supabase
+              .from('youtube_descriptions')
+              .upsert({
+                sub_topic_id: bItem.st.id,
+                video_title: videoTitle,
+                description: description,
+                source_file_path: bItem.sourceFilePath || null,
+                generated_by: userId,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'sub_topic_id' });
+
+            if (upsertErr) {
+              results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'error', error: upsertErr.message });
+            } else {
+              results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'success', video_title: videoTitle });
+            }
+          } catch (soloErr: any) {
+            results.push({ sub_topic_id: bItem.st.id, slug: bItem.st.slug, status: 'error', error: soloErr.message });
+          }
+        }
       }
     }
 
@@ -6363,25 +6473,42 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
     let errorCount = 0;
     let skippedCount = 0;
 
-    for (const entityId of entity_ids) {
-      try {
-        const { results: langResults, totalInputTokens: inTok, totalOutputTokens: outTok } =
-          await generateAllTranslationsForEntity(entity_type, entityId, String(userId), provider, prompt || undefined);
+    // Process entities in parallel batches of 3 for cost-effective concurrency
+    // Each entity still makes 1-2 AI calls internally, but running 3 concurrently
+    // reduces wall-clock time by ~3x without increasing API cost.
+    const CONCURRENCY = 3;
+    for (let i = 0; i < entity_ids.length; i += CONCURRENCY) {
+      const batch = entity_ids.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (entityId) => {
+          const { results: langResults, totalInputTokens: inTok, totalOutputTokens: outTok } =
+            await generateAllTranslationsForEntity(entity_type, entityId, String(userId), provider, prompt || undefined);
+          return { entityId, langResults, inTok, outTok };
+        })
+      );
 
-        totalInputTokens += inTok;
-        totalOutputTokens += outTok;
+      for (const settled of batchResults) {
+        if (settled.status === 'fulfilled') {
+          const { entityId, langResults, inTok, outTok } = settled.value;
+          totalInputTokens += inTok;
+          totalOutputTokens += outTok;
 
-        if (langResults.length === 0) {
-          results.push({ entity_id: entityId, status: 'skipped', languages_generated: 0 });
-          skippedCount++;
+          if (langResults.length === 0) {
+            results.push({ entity_id: entityId, status: 'skipped', languages_generated: 0 });
+            skippedCount++;
+          } else {
+            const generated = langResults.filter((r: any) => r.status === 'created' || r.status === 'restored' || r.status === 'updated').length;
+            results.push({ entity_id: entityId, status: 'success', languages_generated: generated });
+            successCount++;
+          }
         } else {
-          const generated = langResults.filter((r: any) => r.status === 'created' || r.status === 'restored' || r.status === 'updated').length;
-          results.push({ entity_id: entityId, status: 'success', languages_generated: generated });
-          successCount++;
+          // Promise.allSettled rejection — extract entityId from the batch
+          const idx = batchResults.indexOf(settled);
+          const entityId = batch[idx];
+          const error = settled.reason;
+          results.push({ entity_id: entityId, status: 'error', languages_generated: 0, error: error?.message || 'Unknown error' });
+          errorCount++;
         }
-      } catch (error: any) {
-        results.push({ entity_id: entityId, status: 'error', languages_generated: 0, error: error.message });
-        errorCount++;
       }
     }
 
