@@ -77,6 +77,8 @@ import owQuestionRoutes from './modules/ow-questions/owQuestion.routes';
 import owQuestionTranslationRoutes from './modules/ow-question-translations/owQuestionTranslation.routes';
 import owSynonymRoutes from './modules/ow-synonyms/owSynonym.routes';
 import owSynonymTranslationRoutes from './modules/ow-synonym-translations/owSynonymTranslation.routes';
+import descQuestionRoutes from './modules/desc-questions/descQuestion.routes';
+import descQuestionTranslationRoutes from './modules/desc-question-translations/descQuestionTranslation.routes';
 
 const app = express();
 
@@ -175,6 +177,8 @@ app.use(`${api}/ow-questions`,               owQuestionRoutes);
 app.use(`${api}/ow-question-translations`,   owQuestionTranslationRoutes);
 app.use(`${api}/ow-synonyms`,               owSynonymRoutes);
 app.use(`${api}/ow-synonym-translations`,    owSynonymTranslationRoutes);
+app.use(`${api}/desc-questions`,              descQuestionRoutes);
+app.use(`${api}/desc-question-translations`,  descQuestionTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
