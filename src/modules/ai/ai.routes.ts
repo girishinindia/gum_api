@@ -95,4 +95,10 @@ r.post('/auto-generate-desc', requirePermission('desc_question', 'create'), ctrl
 // Auto translate existing Descriptive questions to missing languages
 r.post('/auto-translate-desc', requirePermission('desc_question_translation', 'create'), ctrl.autoTranslateDesc);
 
+// Auto Matching generation from topic tutorials
+r.post('/auto-generate-matching', requirePermission('matching_question', 'create'), ctrl.autoGenerateMatching);
+
+// Auto translate existing Matching questions to missing languages
+r.post('/auto-translate-matching', requirePermission('matching_question_translation', 'create'), ctrl.autoTranslateMatching);
+
 export default r;

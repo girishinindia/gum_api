@@ -65,23 +65,23 @@ export async function list(req: Request, res: Response) {
   const isTrash = req.query.show_deleted === 'true';
   let englishMap: Record<number, { question_text: string; correct_answer: string }> = {};
   if (questionIds.length > 0) {
-    let tQ = supabase.from('one_word_question_translations').select('ow_question_id, question_text, correct_answer').eq('language_id', 7).in('ow_question_id', questionIds);
+    let tQ = supabase.from('one_word_question_translations').select('one_word_question_id, question_text, correct_answer').eq('language_id', 7).in('one_word_question_id', questionIds);
     if (!isTrash) tQ = tQ.is('deleted_at', null);
     const { data: translations } = await tQ;
     if (translations) {
-      for (const t of translations) englishMap[t.ow_question_id] = { question_text: t.question_text, correct_answer: t.correct_answer };
+      for (const t of translations) englishMap[t.one_word_question_id] = { question_text: t.question_text, correct_answer: t.correct_answer };
     }
   }
 
   // Fetch translation count
   let translationCountMap: Record<number, number> = {};
   if (questionIds.length > 0) {
-    let tQ = supabase.from('one_word_question_translations').select('ow_question_id').in('ow_question_id', questionIds);
+    let tQ = supabase.from('one_word_question_translations').select('one_word_question_id').in('one_word_question_id', questionIds);
     if (!isTrash) tQ = tQ.is('deleted_at', null);
     const { data: translations } = await tQ;
     if (translations) {
       for (const t of translations) {
-        translationCountMap[t.ow_question_id] = (translationCountMap[t.ow_question_id] || 0) + 1;
+        translationCountMap[t.one_word_question_id] = (translationCountMap[t.one_word_question_id] || 0) + 1;
       }
     }
   }
@@ -89,12 +89,12 @@ export async function list(req: Request, res: Response) {
   // Fetch synonym count
   let synonymCountMap: Record<number, number> = {};
   if (questionIds.length > 0) {
-    let sQ = supabase.from('one_word_synonyms').select('ow_question_id').in('ow_question_id', questionIds);
+    let sQ = supabase.from('one_word_synonyms').select('one_word_question_id').in('one_word_question_id', questionIds);
     if (!isTrash) sQ = sQ.is('deleted_at', null);
     const { data: synonyms } = await sQ;
     if (synonyms) {
       for (const s of synonyms) {
-        synonymCountMap[s.ow_question_id] = (synonymCountMap[s.ow_question_id] || 0) + 1;
+        synonymCountMap[s.one_word_question_id] = (synonymCountMap[s.one_word_question_id] || 0) + 1;
       }
     }
   }
@@ -194,15 +194,15 @@ export async function softDelete(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   // Cascade soft-delete to translations
-  await supabase.from('one_word_question_translations').update({ deleted_at: now, is_active: false }).eq('ow_question_id', id).is('deleted_at', null);
+  await supabase.from('one_word_question_translations').update({ deleted_at: now, is_active: false }).eq('one_word_question_id', id).is('deleted_at', null);
 
   // Cascade soft-delete to synonyms
-  const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('ow_question_id', id).is('deleted_at', null);
+  const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('one_word_question_id', id).is('deleted_at', null);
   if (synonyms && synonyms.length > 0) {
     const synonymIds = synonyms.map((s: any) => s.id);
     await supabase.from('one_word_synonyms').update({ deleted_at: now, is_active: false }).in('id', synonymIds);
     // Cascade to synonym translations
-    await supabase.from('one_word_synonym_translations').update({ deleted_at: now, is_active: false }).in('ow_synonym_id', synonymIds).is('deleted_at', null);
+    await supabase.from('one_word_synonym_translations').update({ deleted_at: now, is_active: false }).in('one_word_synonym_id', synonymIds).is('deleted_at', null);
   }
 
   await clearCache(old.topic_id);
@@ -223,14 +223,14 @@ export async function restore(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   // Cascade restore translations
-  await supabase.from('one_word_question_translations').update({ deleted_at: null, is_active: true }).eq('ow_question_id', id).not('deleted_at', 'is', null);
+  await supabase.from('one_word_question_translations').update({ deleted_at: null, is_active: true }).eq('one_word_question_id', id).not('deleted_at', 'is', null);
 
   // Cascade restore synonyms + synonym translations
-  const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('ow_question_id', id).not('deleted_at', 'is', null);
+  const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('one_word_question_id', id).not('deleted_at', 'is', null);
   if (synonyms && synonyms.length > 0) {
     const synonymIds = synonyms.map((s: any) => s.id);
     await supabase.from('one_word_synonyms').update({ deleted_at: null, is_active: true }).in('id', synonymIds);
-    await supabase.from('one_word_synonym_translations').update({ deleted_at: null, is_active: true }).in('ow_synonym_id', synonymIds).not('deleted_at', 'is', null);
+    await supabase.from('one_word_synonym_translations').update({ deleted_at: null, is_active: true }).in('one_word_synonym_id', synonymIds).not('deleted_at', 'is', null);
   }
 
   await clearCache(old.topic_id);
@@ -247,18 +247,18 @@ export async function remove(req: Request, res: Response) {
     // Cascade permanent delete: bottom-up
 
     // 1. Get all synonyms for this question
-    const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('ow_question_id', id);
+    const { data: synonyms } = await supabase.from('one_word_synonyms').select('id').eq('one_word_question_id', id);
     const synonymIds = (synonyms || []).map((s: any) => s.id);
 
     if (synonymIds.length > 0) {
       // 1a. Delete synonym translations
-      await supabase.from('one_word_synonym_translations').delete().in('ow_synonym_id', synonymIds);
+      await supabase.from('one_word_synonym_translations').delete().in('one_word_synonym_id', synonymIds);
       // 1b. Delete synonyms
-      await supabase.from('one_word_synonyms').delete().eq('ow_question_id', id);
+      await supabase.from('one_word_synonyms').delete().eq('one_word_question_id', id);
     }
 
     // 2. Delete question translation images from CDN
-    const { data: qTranslations } = await supabase.from('one_word_question_translations').select('id, image_1, image_2').eq('ow_question_id', id);
+    const { data: qTranslations } = await supabase.from('one_word_question_translations').select('id, image_1, image_2').eq('one_word_question_id', id);
     if (qTranslations) {
       for (const t of qTranslations) {
         if (t.image_1) { try { await deleteImage(extractBunnyPath(t.image_1), t.image_1); } catch {} }
@@ -266,7 +266,7 @@ export async function remove(req: Request, res: Response) {
       }
     }
     // 2b. Delete question translations
-    await supabase.from('one_word_question_translations').delete().eq('ow_question_id', id);
+    await supabase.from('one_word_question_translations').delete().eq('one_word_question_id', id);
 
     // 3. Delete the question itself
     const { error: e } = await supabase.from('one_word_questions').delete().eq('id', id);

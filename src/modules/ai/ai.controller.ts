@@ -9169,3 +9169,897 @@ Return ONLY valid JSON:
     return err(res, error.message || 'Failed to auto-translate descriptive questions', 500);
   }
 }
+
+// ─── Auto-Generate Matching Questions ───────────────────────────────────────
+/**
+ * POST /ai/auto-generate-matching
+ * Reads sub-topic tutorial HTML from Bunny CDN, sends to AI, and bulk-creates
+ * matching_questions + matching_question_translations + matching_pairs + matching_pair_translations.
+ *
+ * Body: {
+ *   topic_id: number,
+ *   sub_topic_id?: number,
+ *   num_questions?: number (0 = AI decides),
+ *   difficulty_mix?: 'auto' | 'easy' | 'medium' | 'hard' | 'mixed',
+ *   provider?: 'anthropic' | 'openai' | 'gemini',
+ *   auto_translate?: boolean
+ * }
+ */
+export async function autoGenerateMatching(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const {
+      topic_id,
+      sub_topic_id,
+      num_questions = 0,
+      difficulty_mix,
+      provider: reqProvider,
+      auto_translate = false,
+    } = req.body;
+
+    if (!topic_id) return err(res, 'topic_id is required', 400);
+    const rawNumQ = parseInt(num_questions) || 0;
+    const isAutoCount = rawNumQ <= 0;
+    const numQ = isAutoCount ? 0 : Math.max(1, rawNumQ);
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Validate topic exists
+    const { data: topic } = await supabase.from('topics').select('id, slug, name').eq('id', topic_id).single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    // Find sub-topics with English tutorial pages
+    let subTopicQuery = supabase
+      .from('sub_topic_translations')
+      .select('sub_topic_id, page, sub_topics!inner(id, slug, name, topic_id)')
+      .eq('language_id', 7)
+      .eq('sub_topics.topic_id', topic_id)
+      .not('page', 'is', null)
+      .is('deleted_at', null);
+
+    if (sub_topic_id) {
+      subTopicQuery = subTopicQuery.eq('sub_topic_id', sub_topic_id);
+    }
+
+    const { data: subTopicTranslations, error: stErr } = await subTopicQuery;
+    if (stErr) return err(res, stErr.message, 500);
+    if (!subTopicTranslations || subTopicTranslations.length === 0) {
+      return err(res, 'No sub-topics with English tutorial pages found for this topic', 404);
+    }
+
+    // Helper to strip HTML
+    function stripHtml(html: string): string {
+      return html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    // Get max display_order for existing questions in this topic
+    const { data: existingQs } = await supabase
+      .from('matching_questions')
+      .select('display_order')
+      .eq('topic_id', topic_id)
+      .eq('is_deleted', false)
+      .order('display_order', { ascending: false })
+      .limit(1);
+    let nextDisplayOrder = ((existingQs?.[0]?.display_order) || 0) + 1;
+
+    // Get material languages for translation
+    let materialLangs: any[] = [];
+    if (auto_translate) {
+      const { data: langs } = await supabase
+        .from('languages')
+        .select('id, iso_code, name')
+        .eq('is_active', true)
+        .eq('for_material', true)
+        .neq('id', 7)
+        .order('id');
+      materialLangs = langs || [];
+    }
+
+    const results: any[] = [];
+    let totalQuestionsCreated = 0;
+    let totalPairsCreated = 0;
+    let totalTranslationsCreated = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    // Process each sub-topic
+    for (const st of subTopicTranslations) {
+      const subTopic = (st as any).sub_topics;
+      const pageUrl = st.page;
+      if (!pageUrl) continue;
+
+      // Download HTML from Bunny CDN
+      const cdnPath = pageUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+      let htmlContent: string;
+      try {
+        htmlContent = await downloadBunnyFile(cdnPath);
+      } catch (downloadErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `Failed to download HTML: ${downloadErr.message}` });
+        continue;
+      }
+
+      const plainText = stripHtml(htmlContent);
+      if (!plainText || plainText.length < 50) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'skipped', error: 'Tutorial content too short' });
+        continue;
+      }
+      const contentForAI = plainText.length > 30000 ? plainText.slice(0, 30000) : plainText;
+
+      // Build difficulty instruction
+      const diffMode = typeof difficulty_mix === 'string' ? difficulty_mix : 'auto';
+      let difficultyInstruction = '';
+      if (diffMode === 'easy') difficultyInstruction = 'ALL questions should be EASY difficulty (factual recall, basic definitions).';
+      else if (diffMode === 'medium') difficultyInstruction = 'ALL questions should be MEDIUM difficulty (understanding concepts, applying knowledge).';
+      else if (diffMode === 'hard') difficultyInstruction = 'ALL questions should be HARD difficulty (analysis, comparison, deeper reasoning).';
+      else if (diffMode === 'mixed' && !isAutoCount) {
+        const easyCount = Math.round(numQ * 0.3);
+        const hardCount = Math.round(numQ * 0.2);
+        const mediumCount = numQ - easyCount - hardCount;
+        difficultyInstruction = `Distribute difficulty: ${easyCount} easy, ${mediumCount} medium, ${hardCount} hard.`;
+      } else {
+        difficultyInstruction = 'Automatically distribute difficulty (easy/medium/hard) based on content complexity — more easy questions for introductory content, more hard for advanced/complex content. Use your best judgment.';
+      }
+
+      const quantityInstruction = isAutoCount
+        ? `Generate ALL possible meaningful matching questions from the content. There is NO LIMIT — generate as many as the content supports.
+
+YOUR GOAL IS EXHAUSTIVE, COMPREHENSIVE COVERAGE:
+- Create matching questions for EVERY group of related concepts, definitions, terms, syntax elements, and examples
+- Include INTERVIEW-LEVEL matching that tests deep understanding of relationships
+- Cover ALL cognitive levels: recall, understanding, application, analysis
+- For code/programming content: match syntax with descriptions, functions with return types, keywords with meanings
+- For theoretical content: match terms with definitions, concepts with examples, causes with effects
+- Do NOT skip ANY teachable grouping — if related items appear in the tutorial, create a matching question
+- Create multiple matching questions from different angles for important concept groups
+- Each question must be UNIQUE — different grouping, different aspect
+- Generate 10-30+ questions for rich content — DO NOT artificially limit yourself
+- Each question should have 3-6 pairs (matching items)
+- More content = more questions. Short tutorials = 8-12, medium = 12-20, long/detailed = 20-30+`
+        : `Generate EXACTLY ${numQ} matching questions based on the content.`;
+
+      const systemPrompt = `You are an expert educational content analyst for GrowUpMore — an online learning platform.
+Read the provided tutorial content and generate matching questions (match left items to right items) based on it.
+
+Sub-topic: "${subTopic?.name || subTopic?.slug}"
+Topic: "${topic.name || topic.slug}"
+
+QUANTITY: ${quantityInstruction}
+
+DIFFICULTY: ${difficultyInstruction}
+
+IMPORTANT GUIDELINES:
+- Each matching question should have 3-6 pairs of items to match
+- Left items are terms/concepts/code, right items are their definitions/descriptions/outputs
+- Questions should test real understanding of relationships between concepts
+- Always generate a helpful hint that nudges toward the answer without revealing it
+- Always generate a detailed explanation of WHY the correct matching is correct
+- Auto-assign points: easy=1, medium=2, hard=3
+- Generate a short unique code for each question (e.g., "match-c-data-types-01")
+- partial_scoring: set to true for questions with 4 or more pairs (allow partial credit), false for 3 or fewer pairs
+- CRITICAL: Vary difficulty throughout — do NOT cluster same difficulties together
+
+Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
+{
+  "questions": [
+    {
+      "code": "match-unique-code",
+      "question_text": "Match the following terms with their definitions",
+      "difficulty_level": "easy",
+      "points": 1,
+      "partial_scoring": false,
+      "hint": "Think about what each term means",
+      "explanation": "Detailed explanation of the correct matching",
+      "pairs": [
+        { "left_text": "HTML", "right_text": "HyperText Markup Language" },
+        { "left_text": "CSS", "right_text": "Cascading Style Sheets" },
+        { "left_text": "JS", "right_text": "JavaScript" }
+      ]
+    }
+  ]
+}`;
+
+      let aiResult;
+      try {
+        aiResult = await callAI(provider, systemPrompt, contentForAI, isAutoCount ? 65536 : Math.max(8192, numQ * 2048));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+      } catch (aiErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `AI call failed: ${aiErr.message}` });
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = parseJSON(aiResult.text);
+      } catch (parseErr: any) {
+        console.error(`MATCHING JSON parse error for sub-topic ${st.sub_topic_id}:`, parseErr.message, 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned invalid JSON' });
+        continue;
+      }
+
+      const questions = parsed.questions || (Array.isArray(parsed) ? parsed : []);
+      if (!questions.length) {
+        console.error(`MATCHING no questions for sub-topic ${st.sub_topic_id}. Parsed keys:`, Object.keys(parsed || {}), 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned no questions' });
+        continue;
+      }
+
+      console.log(`MATCHING: AI generated ${questions.length} questions for sub-topic ${st.sub_topic_id} (${subTopic?.name}).`);
+
+      let stQuestionsCreated = 0;
+      let stPairsCreated = 0;
+      let stTranslationsCreated = 0;
+      const createdQuestionIds: number[] = [];
+      const stTranslationsCreatedLangs: string[] = [];
+
+      // ─── BATCH PHASE 1: Prepare all questions and generate slugs ───
+      const validQuestions: any[] = [];
+      for (const q of questions) {
+        if (!q.question_text || !q.pairs || !Array.isArray(q.pairs) || q.pairs.length < 2) continue;
+        const diffLevel = ['easy', 'medium', 'hard'].includes(q.difficulty_level) ? q.difficulty_level : 'medium';
+        const code = (q.code || `match-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 80);
+        const slug = await generateUniqueSlug(supabase, 'matching_questions', code, undefined, { column: 'topic_id', value: topic_id });
+        const partialScoring = q.partial_scoring === true || (q.pairs.length >= 4);
+        validQuestions.push({ ...q, _diffLevel: diffLevel, _code: code, _slug: slug, _displayOrder: nextDisplayOrder++, _partialScoring: partialScoring });
+      }
+
+      if (validQuestions.length === 0) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'No valid questions generated' });
+        continue;
+      }
+
+      // ─── BATCH PHASE 2: Bulk insert all matching_questions at once ───
+      const questionInserts = validQuestions.map(q => ({
+        topic_id,
+        code: q._code,
+        slug: q._slug,
+        difficulty_level: q._diffLevel,
+        points: q.points || (q._diffLevel === 'easy' ? 1 : q._diffLevel === 'medium' ? 2 : 3),
+        partial_scoring: q._partialScoring,
+        display_order: q._displayOrder,
+        is_mandatory: false,
+        is_active: true,
+        created_by: userId,
+      }));
+
+      const { data: newQuestions, error: bulkQErr } = await supabase
+        .from('matching_questions')
+        .insert(questionInserts)
+        .select('id, code, display_order');
+
+      if (bulkQErr || !newQuestions || newQuestions.length === 0) {
+        console.error(`MATCHING bulk insert failed for sub-topic ${st.sub_topic_id}:`, bulkQErr?.message, 'First insert:', JSON.stringify(questionInserts[0]));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `DB insert failed: ${bulkQErr?.message || 'unknown'}` });
+        continue;
+      }
+
+      // Map new question IDs back to validQuestions by display_order
+      const questionIdMap = new Map<number, number>();
+      for (const nq of newQuestions) {
+        questionIdMap.set(nq.display_order, nq.id);
+        createdQuestionIds.push(nq.id);
+      }
+      stQuestionsCreated = newQuestions.length;
+
+      // ─── BATCH PHASE 3: Bulk insert English matching_question_translations ───
+      const qTransInserts: any[] = [];
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+        qTransInserts.push({
+          matching_question_id: qId,
+          language_id: 7,
+          question_text: q.question_text,
+          hint: q.hint || null,
+          explanation: q.explanation || null,
+          is_active: true,
+          created_by: userId,
+        });
+      }
+      if (qTransInserts.length > 0) {
+        await supabase.from('matching_question_translations').insert(qTransInserts);
+      }
+
+      // ─── BATCH PHASE 4: For each question, bulk insert matching_pairs + English matching_pair_translations ───
+      const questionPairIds: Map<number, { id: number; leftText: string; rightText: string; displayOrder: number }[]> = new Map();
+
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+        if (!q.pairs || !Array.isArray(q.pairs) || q.pairs.length === 0) continue;
+
+        // Batch insert all pairs for this question
+        const pairInserts = q.pairs
+          .filter((p: any) => p.left_text && p.right_text)
+          .map((p: any, pi: number) => ({
+            matching_question_id: qId,
+            display_order: pi + 1,
+            is_active: true,
+            created_by: userId,
+          }));
+
+        if (pairInserts.length === 0) continue;
+
+        const { data: newPairs, error: pairErr } = await supabase
+          .from('matching_pairs')
+          .insert(pairInserts)
+          .select('id, display_order');
+
+        if (pairErr || !newPairs) continue;
+        stPairsCreated += newPairs.length;
+
+        // Build English pair translations for batch insert
+        const pairIdList: { id: number; leftText: string; rightText: string; displayOrder: number }[] = [];
+        const validPairs = q.pairs.filter((p: any) => p.left_text && p.right_text);
+        const allPairTransInserts: any[] = [];
+        for (const np of newPairs) {
+          const matchingPair = validPairs[np.display_order - 1];
+          if (matchingPair) {
+            allPairTransInserts.push({
+              matching_pair_id: np.id,
+              language_id: 7,
+              left_text: matchingPair.left_text,
+              right_text: matchingPair.right_text,
+              is_active: true,
+              created_by: userId,
+            });
+            pairIdList.push({ id: np.id, leftText: matchingPair.left_text, rightText: matchingPair.right_text, displayOrder: np.display_order });
+          }
+        }
+        if (allPairTransInserts.length > 0) {
+          await supabase.from('matching_pair_translations').insert(allPairTransInserts);
+        }
+        questionPairIds.set(qId, pairIdList);
+      }
+
+      // ─── BATCH PHASE 5: BATCH translate ALL questions + pairs in ONE AI call ───
+      if (auto_translate && materialLangs.length > 0 && validQuestions.length > 0) {
+        try {
+          const batchItems = validQuestions.map((q, idx) => {
+            const validPairs = (q.pairs || []).filter((p: any) => p.left_text && p.right_text);
+            return {
+              index: idx + 1,
+              question_text: q.question_text,
+              hint: q.hint || '',
+              explanation: q.explanation || '',
+              pairs: validPairs.map((p: any) => ({ left_text: p.left_text, right_text: p.right_text })),
+            };
+          });
+
+          const batchTranslatePrompt = `Translate ALL ${batchItems.length} matching questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${materialLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+hint: "${item.hint}"
+explanation: "${item.explanation}"
+pairs: ${JSON.stringify(item.pairs)}`).join('\n')}
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें।" — WRONG
+
+IMPORTANT: For pair left_text and right_text — if they are technical keywords, code terms, or programming constructs, keep them EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if they are natural language words.
+
+Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
+{
+  "translations": [
+    {
+      "index": 1,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint": "...",
+        "explanation": "...",
+        "pairs": [
+          { "left_text": "...", "right_text": "..." }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint": "...",
+        "explanation": "...",
+        "pairs": [
+          { "left_text": "...", "right_text": "..." }
+        ]
+      }
+    }
+  ]
+}`;
+
+          const transMaxTokens = Math.max(8192, validQuestions.length * materialLangs.length * 1024);
+          const transResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+          totalInputTokens += transResult.inputTokens;
+          totalOutputTokens += transResult.outputTokens;
+
+          const transData = parseJSON(transResult.text);
+          const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+          // Process each translated question
+          const allQTransInserts: any[] = [];
+          const allPairTransInserts: any[] = [];
+
+          for (let qi = 0; qi < validQuestions.length; qi++) {
+            const q = validQuestions[qi];
+            const qId = questionIdMap.get(q._displayOrder);
+            if (!qId) continue;
+
+            const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+            if (!transEntry) continue;
+
+            const pairIds = questionPairIds.get(qId) || [];
+
+            for (const lang of materialLangs) {
+              const langData = transEntry[lang.iso_code];
+              if (!langData) continue;
+
+              // Queue question translation
+              allQTransInserts.push({
+                matching_question_id: qId,
+                language_id: lang.id,
+                question_text: langData.question_text || q.question_text,
+                hint: langData.hint || null,
+                explanation: langData.explanation || null,
+                is_active: true,
+                created_by: userId,
+              });
+              stTranslationsCreated++;
+              if (!stTranslationsCreatedLangs.includes(lang.name)) stTranslationsCreatedLangs.push(lang.name);
+
+              // Queue pair translations
+              if (langData.pairs && Array.isArray(langData.pairs)) {
+                for (let pi = 0; pi < Math.min(langData.pairs.length, pairIds.length); pi++) {
+                  allPairTransInserts.push({
+                    matching_pair_id: pairIds[pi].id,
+                    language_id: lang.id,
+                    left_text: langData.pairs[pi].left_text || pairIds[pi].leftText,
+                    right_text: langData.pairs[pi].right_text || pairIds[pi].rightText,
+                    is_active: true,
+                    created_by: userId,
+                  });
+                }
+              }
+            }
+          }
+
+          // Bulk insert all translated question translations
+          if (allQTransInserts.length > 0) {
+            for (let bi = 0; bi < allQTransInserts.length; bi += 100) {
+              await supabase.from('matching_question_translations').insert(allQTransInserts.slice(bi, bi + 100));
+            }
+          }
+
+          // Bulk insert all translated pair translations
+          if (allPairTransInserts.length > 0) {
+            for (let bi = 0; bi < allPairTransInserts.length; bi += 100) {
+              await supabase.from('matching_pair_translations').insert(allPairTransInserts.slice(bi, bi + 100));
+            }
+          }
+        } catch (transErr: any) {
+          console.error('MATCHING batch translation error:', transErr.message);
+        }
+      }
+
+      totalQuestionsCreated += stQuestionsCreated;
+      totalPairsCreated += stPairsCreated;
+      totalTranslationsCreated += stTranslationsCreated;
+
+      results.push({
+        sub_topic_id: st.sub_topic_id,
+        sub_topic_name: subTopic?.name || subTopic?.slug,
+        status: 'success',
+        questions_created: stQuestionsCreated,
+        pairs_created: stPairsCreated,
+        translations_created: stTranslationsCreated,
+        translations_languages: stTranslationsCreatedLangs,
+        question_ids: createdQuestionIds,
+      });
+    }
+
+    // Clear matching caches
+    await redis.del('matching_questions:all');
+    await redis.del('matching_question_translations:all');
+
+    // Collect all created question IDs across sub-topics
+    const allCreatedIds = results.flatMap((r: any) => r.question_ids || []);
+
+    // Fetch full question details for the response
+    let questions: any[] = [];
+    if (allCreatedIds.length > 0) {
+      const { data: qRows } = await supabase
+        .from('matching_questions')
+        .select('id, code, slug, difficulty_level, points, partial_scoring, display_order')
+        .in('id', allCreatedIds)
+        .order('display_order');
+
+      for (const qr of (qRows || [])) {
+        // Get English translation
+        const { data: engTrans } = await supabase
+          .from('matching_question_translations')
+          .select('question_text, hint, explanation')
+          .eq('matching_question_id', qr.id)
+          .eq('language_id', 7)
+          .single();
+
+        // Get pairs with English text
+        const { data: pairs } = await supabase
+          .from('matching_pairs')
+          .select('id, display_order')
+          .eq('matching_question_id', qr.id)
+          .eq('is_deleted', false)
+          .order('display_order');
+
+        const pairDetails: any[] = [];
+        for (const pair of (pairs || [])) {
+          const { data: pairTrans } = await supabase
+            .from('matching_pair_translations')
+            .select('left_text, right_text')
+            .eq('matching_pair_id', pair.id)
+            .eq('language_id', 7)
+            .single();
+          pairDetails.push({
+            id: pair.id,
+            left_text: pairTrans?.left_text || '',
+            right_text: pairTrans?.right_text || '',
+          });
+        }
+
+        // Get which languages have translations
+        const { data: langTrans } = await supabase
+          .from('matching_question_translations')
+          .select('language_id, languages(name)')
+          .eq('matching_question_id', qr.id)
+          .neq('language_id', 7)
+          .eq('is_deleted', false);
+        const translatedLangs = (langTrans || []).map((lt: any) => lt.languages?.name || '').filter(Boolean);
+
+        questions.push({
+          matching_question_id: qr.id,
+          code: qr.code,
+          slug: qr.slug,
+          difficulty_level: qr.difficulty_level,
+          points: qr.points,
+          partial_scoring: qr.partial_scoring,
+          question_text: engTrans?.question_text || '',
+          hint: engTrans?.hint || null,
+          explanation: engTrans?.explanation || null,
+          pairs: pairDetails,
+          translations_created: translatedLangs,
+        });
+      }
+    }
+
+    // Log admin activity (non-blocking — never let this kill the response)
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'matching_auto_generated',
+        targetType: 'matching_question',
+        targetId: topic_id,
+        targetName: topic.name || topic.slug,
+        changes: { questions_created: totalQuestionsCreated, pairs_created: totalPairsCreated, translations_created: totalTranslationsCreated },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('MATCHING logAdmin error (non-fatal):', logErr.message);
+    }
+
+    console.log(`MATCHING generation complete: ${totalQuestionsCreated} questions, ${totalPairsCreated} pairs, ${totalTranslationsCreated} translations`);
+
+    return ok(res, {
+      questions,
+      results,
+      summary: {
+        sub_topics_processed: results.length,
+        sub_topics_success: results.filter((r: any) => r.status === 'success').length,
+        sub_topics_error: results.filter((r: any) => r.status === 'error').length,
+        total_questions_created: totalQuestionsCreated,
+        total_pairs_created: totalPairsCreated,
+        total_translations_created: totalTranslationsCreated,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Generated ${totalQuestionsCreated} matching questions with ${totalPairsCreated} pairs`);
+  } catch (error: any) {
+    console.error('autoGenerateMatching error:', error);
+    return err(res, error.message || 'Failed to auto-generate matching questions', 500);
+  }
+}
+
+// ─── Auto-Translate Existing Matching Questions ─────────────────────────────
+/**
+ * POST /ai/auto-translate-matching
+ * Translates existing English matching questions + pairs to all material languages.
+ *
+ * Body: {
+ *   topic_id?: number (translate all questions under topic),
+ *   question_ids?: number[] (translate specific questions),
+ *   provider?: 'anthropic' | 'openai' | 'gemini'
+ * }
+ */
+export async function autoTranslateMatching(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, question_ids, provider: reqProvider } = req.body;
+    if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
+      return err(res, 'topic_id or question_ids[] is required', 400);
+    }
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Get target languages (non-English material languages)
+    const { data: materialLangs } = await supabase
+      .from('languages')
+      .select('id, iso_code, name')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .neq('id', 7)
+      .order('id');
+    if (!materialLangs || materialLangs.length === 0) return err(res, 'No target languages found', 404);
+
+    // Find questions to translate
+    let questionsQuery = supabase
+      .from('matching_questions')
+      .select('id, code, slug, topic_id')
+      .eq('is_deleted', false)
+      .eq('is_active', true);
+
+    if (question_ids && question_ids.length > 0) {
+      questionsQuery = questionsQuery.in('id', question_ids);
+    } else {
+      questionsQuery = questionsQuery.eq('topic_id', topic_id);
+    }
+
+    const { data: questions, error: qErr } = await questionsQuery;
+    if (qErr) return err(res, qErr.message, 500);
+    if (!questions || questions.length === 0) return err(res, 'No questions found to translate', 404);
+
+    let totalTranslated = 0;
+    let totalErrors = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const results: any[] = [];
+
+    // ─── PHASE 1: Gather all question data and find missing languages ───
+    type QueuedMatchingQuestion = {
+      question_id: number;
+      engText: string;
+      engHint: string;
+      engExplanation: string;
+      engPairs: { left_text: string; right_text: string }[];
+      pairs: { id: number; display_order: number }[];
+      missingLangs: typeof materialLangs;
+    };
+    const translationQueue: QueuedMatchingQuestion[] = [];
+
+    for (const question of questions) {
+      // Get English question translation
+      const { data: engQTrans } = await supabase
+        .from('matching_question_translations')
+        .select('question_text, hint, explanation')
+        .eq('matching_question_id', question.id)
+        .eq('language_id', 7)
+        .eq('is_deleted', false)
+        .single();
+
+      if (!engQTrans || !engQTrans.question_text) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'No English translation' });
+        continue;
+      }
+
+      // Find which languages are missing
+      const { data: existingTrans } = await supabase
+        .from('matching_question_translations')
+        .select('language_id')
+        .eq('matching_question_id', question.id)
+        .eq('is_deleted', false);
+      const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
+      const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
+      if (missingLangs.length === 0) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'All languages exist' });
+        continue;
+      }
+
+      // Get pairs and their English texts
+      const { data: pairs } = await supabase
+        .from('matching_pairs')
+        .select('id, display_order')
+        .eq('matching_question_id', question.id)
+        .eq('is_deleted', false)
+        .order('display_order');
+
+      const pairIds = (pairs || []).map(p => p.id);
+      let engPairTexts: { left_text: string; right_text: string }[] = [];
+      if (pairIds.length > 0) {
+        const { data: engPTrans } = await supabase
+          .from('matching_pair_translations')
+          .select('matching_pair_id, left_text, right_text')
+          .in('matching_pair_id', pairIds)
+          .eq('language_id', 7)
+          .eq('is_deleted', false);
+        engPairTexts = (pairs || []).map(p => {
+          const t = (engPTrans || []).find(t => t.matching_pair_id === p.id);
+          return { left_text: t?.left_text || '', right_text: t?.right_text || '' };
+        });
+      }
+
+      translationQueue.push({
+        question_id: question.id,
+        engText: engQTrans.question_text,
+        engHint: engQTrans.hint || '',
+        engExplanation: engQTrans.explanation || '',
+        engPairs: engPairTexts,
+        pairs: pairs || [],
+        missingLangs,
+      });
+    }
+
+    // ─── PHASE 2: Batch translate in chunks (max 10 questions per AI call) ───
+    const BATCH_SIZE = 10;
+    for (let bi = 0; bi < translationQueue.length; bi += BATCH_SIZE) {
+      const batch = translationQueue.slice(bi, bi + BATCH_SIZE);
+      const allMissingLangs = materialLangs;
+
+      try {
+        const batchItems = batch.map((item, idx) => ({
+          index: idx + 1,
+          question_text: item.engText,
+          hint: item.engHint,
+          explanation: item.engExplanation,
+          pairs: item.engPairs,
+        }));
+
+        const batchTranslatePrompt = `Translate ALL ${batchItems.length} matching questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${allMissingLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+hint: "${item.hint}"
+explanation: "${item.explanation}"
+pairs: ${JSON.stringify(item.pairs)}`).join('\n')}
+
+MOST IMPORTANT RULE:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
+
+IMPORTANT: For pair left_text and right_text — if they are technical keywords, code terms, or programming constructs, keep them EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if they are natural language words.
+
+Return ONLY valid JSON:
+{
+  "translations": [
+    {
+      "index": 1,
+      "${allMissingLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint": "...",
+        "explanation": "...",
+        "pairs": [
+          { "left_text": "...", "right_text": "..." }
+        ]
+      }
+    }
+  ]
+}`;
+
+        const transMaxTokens = Math.max(8192, batch.length * allMissingLangs.length * 1024);
+        const aiResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+
+        const transData = parseJSON(aiResult.text);
+        const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+        // Process each question's translations and batch DB inserts
+        const allQTransInserts: any[] = [];
+        const allPairTransInserts: any[] = [];
+
+        for (let qi = 0; qi < batch.length; qi++) {
+          const item = batch[qi];
+          const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+          if (!transEntry) {
+            results.push({ question_id: item.question_id, status: 'error', error: 'No translation returned' });
+            totalErrors++;
+            continue;
+          }
+
+          let langsDone = 0;
+
+          for (const lang of item.missingLangs) {
+            const langData = transEntry[lang.iso_code];
+            if (!langData) continue;
+
+            allQTransInserts.push({
+              matching_question_id: item.question_id,
+              language_id: lang.id,
+              question_text: langData.question_text || item.engText,
+              hint: langData.hint || null,
+              explanation: langData.explanation || null,
+              is_active: true,
+              created_by: userId,
+            });
+            langsDone++;
+
+            if (langData.pairs && Array.isArray(langData.pairs)) {
+              for (let pi = 0; pi < Math.min(langData.pairs.length, item.pairs.length); pi++) {
+                allPairTransInserts.push({
+                  matching_pair_id: item.pairs[pi].id,
+                  language_id: lang.id,
+                  left_text: langData.pairs[pi].left_text || item.engPairs[pi]?.left_text || '',
+                  right_text: langData.pairs[pi].right_text || item.engPairs[pi]?.right_text || '',
+                  is_active: true,
+                  created_by: userId,
+                });
+              }
+            }
+          }
+
+          totalTranslated += langsDone;
+          results.push({ question_id: item.question_id, status: 'success', languages_added: langsDone });
+        }
+
+        // Bulk insert all translations
+        if (allQTransInserts.length > 0) {
+          for (let ci = 0; ci < allQTransInserts.length; ci += 100) {
+            await supabase.from('matching_question_translations').insert(allQTransInserts.slice(ci, ci + 100));
+          }
+        }
+        if (allPairTransInserts.length > 0) {
+          for (let ci = 0; ci < allPairTransInserts.length; ci += 100) {
+            await supabase.from('matching_pair_translations').insert(allPairTransInserts.slice(ci, ci + 100));
+          }
+        }
+      } catch (batchErr: any) {
+        console.error('MATCHING batch translation error:', batchErr.message);
+        for (const item of batch) {
+          totalErrors++;
+          results.push({ question_id: item.question_id, status: 'error', error: batchErr.message });
+        }
+      }
+    }
+
+    // Clear caches
+    await redis.del('matching_question_translations:all');
+    await redis.del('matching_questions:all');
+
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'matching_auto_translated',
+        targetType: 'matching_question',
+        targetId: topic_id || 0,
+        targetName: `${questions.length} questions`,
+        changes: { total_translated: totalTranslated, errors: totalErrors },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('MATCHING translate logAdmin error (non-fatal):', logErr.message);
+    }
+
+    return ok(res, {
+      results,
+      summary: {
+        questions_processed: questions.length,
+        translations_created: totalTranslated,
+        errors: totalErrors,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Translated ${totalTranslated} question translations across ${questions.length} questions`);
+  } catch (error: any) {
+    console.error('autoTranslateMatching error:', error);
+    return err(res, error.message || 'Failed to auto-translate matching questions', 500);
+  }
+}

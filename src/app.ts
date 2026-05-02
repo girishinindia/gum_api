@@ -79,6 +79,10 @@ import owSynonymRoutes from './modules/ow-synonyms/owSynonym.routes';
 import owSynonymTranslationRoutes from './modules/ow-synonym-translations/owSynonymTranslation.routes';
 import descQuestionRoutes from './modules/desc-questions/descQuestion.routes';
 import descQuestionTranslationRoutes from './modules/desc-question-translations/descQuestionTranslation.routes';
+import matchingQuestionRoutes from './modules/matching-questions/matchingQuestion.routes';
+import matchingQuestionTranslationRoutes from './modules/matching-question-translations/matchingQuestionTranslation.routes';
+import matchingPairRoutes from './modules/matching-pairs/matchingPair.routes';
+import matchingPairTranslationRoutes from './modules/matching-pair-translations/matchingPairTranslation.routes';
 
 const app = express();
 
@@ -179,6 +183,10 @@ app.use(`${api}/ow-synonyms`,               owSynonymRoutes);
 app.use(`${api}/ow-synonym-translations`,    owSynonymTranslationRoutes);
 app.use(`${api}/desc-questions`,              descQuestionRoutes);
 app.use(`${api}/desc-question-translations`,  descQuestionTranslationRoutes);
+app.use(`${api}/matching-questions`,              matchingQuestionRoutes);
+app.use(`${api}/matching-question-translations`,  matchingQuestionTranslationRoutes);
+app.use(`${api}/matching-pairs`,                  matchingPairRoutes);
+app.use(`${api}/matching-pair-translations`,      matchingPairTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
