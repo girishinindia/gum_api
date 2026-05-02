@@ -69,6 +69,14 @@ import courseChapterTopicRoutes from './modules/course-chapter-topics/courseChap
 import bundleRoutes from './modules/bundles/bundle.routes';
 import bundleTranslationRoutes from './modules/bundle-translations/bundleTranslation.routes';
 import bundleCourseRoutes from './modules/bundle-courses/bundleCourse.routes';
+import mcqQuestionRoutes from './modules/mcq-questions/mcqQuestion.routes';
+import mcqQuestionTranslationRoutes from './modules/mcq-question-translations/mcqQuestionTranslation.routes';
+import mcqOptionRoutes from './modules/mcq-options/mcqOption.routes';
+import mcqOptionTranslationRoutes from './modules/mcq-option-translations/mcqOptionTranslation.routes';
+import owQuestionRoutes from './modules/ow-questions/owQuestion.routes';
+import owQuestionTranslationRoutes from './modules/ow-question-translations/owQuestionTranslation.routes';
+import owSynonymRoutes from './modules/ow-synonyms/owSynonym.routes';
+import owSynonymTranslationRoutes from './modules/ow-synonym-translations/owSynonymTranslation.routes';
 
 const app = express();
 
@@ -159,6 +167,14 @@ app.use(`${api}/course-chapter-topics`,      courseChapterTopicRoutes);
 app.use(`${api}/bundles`,                    bundleRoutes);
 app.use(`${api}/bundle-translations`,        bundleTranslationRoutes);
 app.use(`${api}/bundle-courses`,             bundleCourseRoutes);
+app.use(`${api}/mcq-questions`,              mcqQuestionRoutes);
+app.use(`${api}/mcq-question-translations`,  mcqQuestionTranslationRoutes);
+app.use(`${api}/mcq-options`,                mcqOptionRoutes);
+app.use(`${api}/mcq-option-translations`,    mcqOptionTranslationRoutes);
+app.use(`${api}/ow-questions`,               owQuestionRoutes);
+app.use(`${api}/ow-question-translations`,   owQuestionTranslationRoutes);
+app.use(`${api}/ow-synonyms`,               owSynonymRoutes);
+app.use(`${api}/ow-synonym-translations`,    owSynonymTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

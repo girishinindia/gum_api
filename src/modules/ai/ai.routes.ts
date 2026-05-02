@@ -77,4 +77,16 @@ r.post('/generate-youtube-description', requirePermission('ai', 'create'), ctrl.
 // Bulk generate missing content for multiple entities (subjects/chapters/topics/sub-topics)
 r.post('/bulk-generate-missing-content', requirePermission('ai', 'create'), ctrl.bulkGenerateMissingContent);
 
+// Auto MCQ generation from topic tutorials
+r.post('/auto-generate-mcq', requirePermission('mcq_question', 'create'), ctrl.autoGenerateMcq);
+
+// Auto translate existing MCQ questions to missing languages
+r.post('/auto-translate-mcq', requirePermission('mcq_question_translation', 'create'), ctrl.autoTranslateMcq);
+
+// Auto One Word generation from topic tutorials
+r.post('/auto-generate-ow', requirePermission('ow_question', 'create'), ctrl.autoGenerateOw);
+
+// Auto translate existing One Word questions to missing languages
+r.post('/auto-translate-ow', requirePermission('ow_question_translation', 'create'), ctrl.autoTranslateOw);
+
 export default r;

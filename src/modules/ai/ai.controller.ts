@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { supabase } from '../../config/supabase';
+import { redis } from '../../config/redis';
 import { ok, err } from '../../utils/response';
 import { logAdmin } from '../../services/activityLog.service';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
@@ -6531,5 +6532,1879 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
   } catch (error: any) {
     console.error('bulkGenerateMissingContent error:', error);
     return err(res, error.message || 'Failed to bulk generate content', 500);
+  }
+}
+
+// ─── Auto-Generate MCQ Questions from Tutorial Content ───────────────────────
+/**
+ * POST /ai/auto-generate-mcq
+ * Reads English tutorial HTML files for sub-topics under a topic,
+ * sends content to AI, generates MCQ questions + options + translations.
+ *
+ * Body: {
+ *   topic_id: number (required),
+ *   sub_topic_id?: number (optional - single sub-topic mode),
+ *   num_questions?: number (default 0 = auto; AI decides based on content richness),
+ *   difficulty_mix?: 'auto' | 'mixed' | 'easy' | 'medium' | 'hard',
+ *   mcq_types?: string[] (e.g. ['single_choice','multiple_choice','true_false']),
+ *   provider?: 'anthropic' | 'openai' | 'gemini',
+ *   auto_translate?: boolean (default false - also generate translations)
+ * }
+ */
+export async function autoGenerateMcq(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const {
+      topic_id,
+      sub_topic_id,
+      num_questions = 0,
+      difficulty_mix,
+      mcq_types = ['single_choice', 'multiple_choice', 'true_false'],
+      provider: reqProvider,
+      auto_translate = false,
+    } = req.body;
+
+    if (!topic_id) return err(res, 'topic_id is required', 400);
+    const rawNumQ = parseInt(num_questions) || 0;
+    const isAutoCount = rawNumQ <= 0; // 0 or unset = AI decides
+    const numQ = isAutoCount ? 0 : Math.max(1, rawNumQ); // no upper cap
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Validate topic exists
+    const { data: topic } = await supabase.from('topics').select('id, slug, name').eq('id', topic_id).single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    // Find sub-topics with English tutorial pages
+    let subTopicQuery = supabase
+      .from('sub_topic_translations')
+      .select('sub_topic_id, page, sub_topics!inner(id, slug, name, topic_id)')
+      .eq('language_id', 7) // English
+      .eq('sub_topics.topic_id', topic_id)
+      .not('page', 'is', null)
+      .is('deleted_at', null);
+
+    if (sub_topic_id) {
+      subTopicQuery = subTopicQuery.eq('sub_topic_id', sub_topic_id);
+    }
+
+    const { data: subTopicTranslations, error: stErr } = await subTopicQuery;
+    if (stErr) return err(res, stErr.message, 500);
+    if (!subTopicTranslations || subTopicTranslations.length === 0) {
+      return err(res, 'No sub-topics with English tutorial pages found for this topic', 404);
+    }
+
+    // Helper to strip HTML
+    function stripHtml(html: string): string {
+      return html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    // Get max display_order for existing questions in this topic
+    const { data: existingQs } = await supabase
+      .from('mcq_questions')
+      .select('display_order')
+      .eq('topic_id', topic_id)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: false })
+      .limit(1);
+    let nextDisplayOrder = ((existingQs?.[0]?.display_order) || 0) + 1;
+
+    // Get material languages for translation
+    let materialLangs: any[] = [];
+    if (auto_translate) {
+      const { data: langs } = await supabase
+        .from('languages')
+        .select('id, iso_code, name')
+        .eq('is_active', true)
+        .eq('for_material', true)
+        .neq('id', 7) // exclude English
+        .order('id');
+      materialLangs = langs || [];
+    }
+
+    const results: any[] = [];
+    let totalQuestionsCreated = 0;
+    let totalOptionsCreated = 0;
+    let totalTranslationsCreated = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    // Process each sub-topic
+    for (const st of subTopicTranslations) {
+      const subTopic = (st as any).sub_topics;
+      const pageUrl = st.page;
+      if (!pageUrl) continue;
+
+      // Download HTML from Bunny CDN
+      const cdnPath = pageUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+      let htmlContent: string;
+      try {
+        htmlContent = await downloadBunnyFile(cdnPath);
+      } catch (downloadErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `Failed to download HTML: ${downloadErr.message}` });
+        continue;
+      }
+
+      const plainText = stripHtml(htmlContent);
+      if (!plainText || plainText.length < 50) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'skipped', error: 'Tutorial content too short' });
+        continue;
+      }
+      const contentForAI = plainText.length > 30000 ? plainText.slice(0, 30000) : plainText;
+
+      // Build difficulty instruction
+      const diffMode = typeof difficulty_mix === 'string' ? difficulty_mix : 'auto';
+      let difficultyInstruction = '';
+      if (diffMode === 'easy') difficultyInstruction = 'ALL questions should be EASY difficulty (factual recall, basic definitions).';
+      else if (diffMode === 'medium') difficultyInstruction = 'ALL questions should be MEDIUM difficulty (understanding concepts, applying knowledge).';
+      else if (diffMode === 'hard') difficultyInstruction = 'ALL questions should be HARD difficulty (analysis, comparison, deeper reasoning).';
+      else if (diffMode === 'mixed' && !isAutoCount) {
+        const easyCount = Math.round(numQ * 0.3);
+        const hardCount = Math.round(numQ * 0.2);
+        const mediumCount = numQ - easyCount - hardCount;
+        difficultyInstruction = `Distribute difficulty: ${easyCount} easy, ${mediumCount} medium, ${hardCount} hard.`;
+      } else {
+        // auto mode
+        difficultyInstruction = 'Automatically distribute difficulty (easy/medium/hard) based on content complexity — more easy questions for introductory content, more hard for advanced/complex content. Use your best judgment.';
+      }
+
+      const typesList = Array.isArray(mcq_types) && mcq_types.length > 0 ? mcq_types : ['single_choice', 'multiple_choice', 'true_false'];
+
+      // Build type distribution instruction
+      const hasSingle = typesList.includes('single_choice');
+      const hasMultiple = typesList.includes('multiple_choice');
+      const hasTrueFalse = typesList.includes('true_false');
+      let typeDistribution = '';
+      if (hasSingle && hasMultiple && hasTrueFalse) {
+        typeDistribution = `You MUST use ALL THREE question types with this approximate distribution:
+- single_choice: ~50-60% of questions (this is the PRIMARY type — use for most concept/knowledge questions)
+- multiple_choice: ~25-35% of questions (use when a question naturally has 2-3 correct answers)
+- true_false: ~10-15% of questions (use SPARINGLY — only for clear factual statements)
+DO NOT generate only one type. You MUST mix all three types.`;
+      } else if (hasSingle && hasMultiple) {
+        typeDistribution = `Use BOTH question types: ~65% single_choice, ~35% multiple_choice. DO NOT use only one type.`;
+      } else if (hasSingle && hasTrueFalse) {
+        typeDistribution = `Use BOTH question types: ~75% single_choice, ~25% true_false. DO NOT use only one type.`;
+      } else if (hasMultiple && hasTrueFalse) {
+        typeDistribution = `Use BOTH question types: ~70% multiple_choice, ~30% true_false. DO NOT use only one type.`;
+      } else if (hasSingle) {
+        typeDistribution = `Generate ONLY single_choice questions.`;
+      } else if (hasMultiple) {
+        typeDistribution = `Generate ONLY multiple_choice questions.`;
+      } else {
+        typeDistribution = `Generate ONLY true_false questions.`;
+      }
+
+      const quantityInstruction = isAutoCount
+        ? `Generate ALL possible meaningful MCQ questions from the content. There is NO LIMIT — generate as many as the content supports.
+
+YOUR GOAL IS EXHAUSTIVE, COMPREHENSIVE COVERAGE:
+- Create questions for EVERY concept, definition, rule, syntax element, example, and important detail
+- Include INTERVIEW-LEVEL questions that test deep understanding, not just surface recall
+- Cover ALL cognitive levels: recall, understanding, application, analysis, comparison, evaluation
+- For code/programming content: test syntax, output prediction, error identification, debugging, best practices, edge cases, "what happens if..." scenarios
+- For theoretical content: test definitions, differences/comparisons, advantages/disadvantages, real-world applications, common misconceptions
+- Do NOT skip ANY teachable point — if it's mentioned in the tutorial, create questions about it
+- Create multiple questions from different angles for important concepts
+- Include tricky/nuanced questions that interviewers would ask
+- Each question must be UNIQUE — different angle, different depth, or different aspect
+- Generate 20-50+ questions for rich content — DO NOT artificially limit yourself
+- More content = more questions. Short tutorials = 15-20, medium = 25-40, long/detailed = 40-60+`
+        : `Generate EXACTLY ${numQ} MCQ questions based on the content.`;
+
+      const systemPrompt = `You are an expert educational content analyst for GrowUpMore — an online learning platform.
+Read the provided tutorial content and generate MCQ (Multiple Choice Question) questions based on it.
+
+Sub-topic: "${subTopic?.name || subTopic?.slug}"
+Topic: "${topic.name || topic.slug}"
+
+QUANTITY: ${quantityInstruction}
+
+DIFFICULTY: ${difficultyInstruction}
+
+QUESTION TYPE DISTRIBUTION (STRICTLY FOLLOW):
+${typeDistribution}
+
+RULES FOR EACH QUESTION TYPE:
+- "single_choice": Generate 4 options, exactly 1 correct. Use for concept testing, definitions, syntax, output questions.
+- "multiple_choice": Generate 4-6 options, 2-3 correct. Mark ALL correct ones. Use when multiple answers apply (e.g., "Which of the following are valid...").
+- "true_false": Generate exactly 2 options: "True" and "False". One is correct. Use ONLY for clear-cut factual statements. NEVER prefix the question_text with "True or False:" or any similar prefix — the type field already indicates it.
+
+IMPORTANT GUIDELINES:
+- Questions must test real understanding, not just trivial facts — think like a teacher preparing an exam AND an interviewer testing candidates
+- Include conceptual, practical, tricky, and application-based questions
+- Each question must be clearly answerable from the provided content
+- Options should be highly plausible — avoid obviously wrong distractors; include common misconceptions as wrong options
+- For "single_choice": create 4 strong options where at least 2 look correct but only 1 is right
+- For "multiple_choice": create 4-6 options where multiple are correct — test thorough understanding
+- Always generate a helpful hint that nudges toward the answer without revealing it
+- Always generate a detailed explanation of WHY the correct answer(s) is/are correct AND why wrong ones are wrong
+- Auto-assign points: easy=1, medium=2, hard=3
+- Generate a short unique code for each question (e.g., "q-html-basics-01")
+- CRITICAL: Vary question types throughout — do NOT cluster same types together
+- DO NOT hold back — generate every meaningful question the content supports
+
+Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
+{
+  "questions": [
+    {
+      "code": "short-unique-code",
+      "question_text": "The question text in English",
+      "mcq_type": "single_choice|multiple_choice|true_false",
+      "difficulty_level": "easy|medium|hard",
+      "points": 1,
+      "hint_text": "A helpful hint without giving away the answer",
+      "explanation_text": "Detailed explanation of the correct answer, referencing the tutorial content",
+      "options": [
+        { "option_text": "Option A text", "is_correct": false },
+        { "option_text": "Option B text", "is_correct": true },
+        { "option_text": "Option C text", "is_correct": false },
+        { "option_text": "Option D text", "is_correct": false }
+      ]
+    }
+  ]
+}`;
+
+      let aiResult;
+      try {
+        aiResult = await callAI(provider, systemPrompt, contentForAI, isAutoCount ? 65536 : Math.max(8192, numQ * 2048));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+      } catch (aiErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `AI call failed: ${aiErr.message}` });
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = parseJSON(aiResult.text);
+      } catch (parseErr: any) {
+        console.error(`MCQ JSON parse error for sub-topic ${st.sub_topic_id}:`, parseErr.message, 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned invalid JSON' });
+        continue;
+      }
+
+      const questions = parsed.questions || (Array.isArray(parsed) ? parsed : []);
+      if (!questions.length) {
+        console.error(`MCQ no questions for sub-topic ${st.sub_topic_id}. Parsed keys:`, Object.keys(parsed || {}), 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned no questions' });
+        continue;
+      }
+
+      console.log(`MCQ: AI generated ${questions.length} questions for sub-topic ${st.sub_topic_id} (${subTopic?.name}). Types: ${questions.map((q: any) => q.mcq_type).join(', ')}`);
+
+      let stQuestionsCreated = 0;
+      let stOptionsCreated = 0;
+      let stTranslationsCreated = 0;
+      const createdQuestionIds: number[] = [];
+      const stTranslationsCreatedLangs: string[] = [];
+
+      // ─── BATCH PHASE 1: Prepare all questions and generate slugs ───
+      const validQuestions: any[] = [];
+      for (const q of questions) {
+        if (!q.question_text || !q.options || !Array.isArray(q.options) || q.options.length < 2) continue;
+        // Strip any "True or False:" prefix from question text — the mcq_type field handles this
+        q.question_text = q.question_text.replace(/^(True\s*(or|\/)\s*False\s*[:.\-–—]\s*)/i, '').trim();
+        // Map AI type names to DB enum values: single_choice→single, multiple_choice→multiple, true_false stays
+        const typeMap: Record<string, string> = { single_choice: 'single', multiple_choice: 'multiple', true_false: 'true_false', single: 'single', multiple: 'multiple' };
+        const mcqType = typeMap[q.mcq_type] || 'single';
+        const diffLevel = ['easy', 'medium', 'hard'].includes(q.difficulty_level) ? q.difficulty_level : 'medium';
+        const code = (q.code || `q-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 80);
+        const slug = await generateUniqueSlug(supabase, 'mcq_questions', code, undefined, { column: 'topic_id', value: topic_id });
+        validQuestions.push({ ...q, _mcqType: mcqType, _diffLevel: diffLevel, _code: code, _slug: slug, _displayOrder: nextDisplayOrder++ });
+      }
+
+      if (validQuestions.length === 0) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'No valid questions generated' });
+        continue;
+      }
+
+      // ─── BATCH PHASE 2: Bulk insert all mcq_questions at once ───
+      const questionInserts = validQuestions.map(q => ({
+        topic_id,
+        code: q._code,
+        slug: q._slug,
+        mcq_type: q._mcqType,
+        difficulty_level: q._diffLevel,
+        points: q.points || (q._diffLevel === 'easy' ? 1 : q._diffLevel === 'medium' ? 2 : 3),
+        display_order: q._displayOrder,
+        is_mandatory: false,
+        is_active: true,
+        created_by: userId,
+      }));
+
+      const { data: newQuestions, error: bulkQErr } = await supabase
+        .from('mcq_questions')
+        .insert(questionInserts)
+        .select('id, code, display_order');
+
+      if (bulkQErr || !newQuestions || newQuestions.length === 0) {
+        console.error(`MCQ bulk insert failed for sub-topic ${st.sub_topic_id}:`, bulkQErr?.message, 'First insert:', JSON.stringify(questionInserts[0]));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `DB insert failed: ${bulkQErr?.message || 'unknown'}` });
+        continue;
+      }
+
+      // Map new question IDs back to validQuestions by display_order
+      const questionIdMap = new Map<number, number>(); // display_order -> id
+      for (const nq of newQuestions) {
+        questionIdMap.set(nq.display_order, nq.id);
+        createdQuestionIds.push(nq.id);
+      }
+      stQuestionsCreated = newQuestions.length;
+
+      // ─── BATCH PHASE 3: Bulk insert English question translations ───
+      const qTransInserts: any[] = [];
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+        qTransInserts.push({
+          mcq_question_id: qId,
+          language_id: 7,
+          question_text: q.question_text,
+          hint_text: q.hint_text || null,
+          explanation_text: q.explanation_text || null,
+          is_active: true,
+          created_by: userId,
+        });
+      }
+      if (qTransInserts.length > 0) {
+        await supabase.from('mcq_question_translations').insert(qTransInserts);
+      }
+
+      // ─── BATCH PHASE 4: Bulk insert all options + English option translations ───
+      // We need to insert options per-question to get IDs back, but we can batch the translations
+      const allOptionTransInserts: any[] = [];
+      // Track option IDs per question for translation phase
+      const questionOptionIds: Map<number, { id: number; optionText: string; displayOrder: number }[]> = new Map();
+
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+
+        // Batch insert all options for this question
+        const optInserts = q.options
+          .filter((o: any) => o.option_text)
+          .map((o: any, oi: number) => ({
+            mcq_question_id: qId,
+            is_correct: !!o.is_correct,
+            display_order: oi + 1,
+            is_active: true,
+            created_by: userId,
+          }));
+
+        if (optInserts.length === 0) continue;
+
+        const { data: newOpts, error: optErr } = await supabase
+          .from('mcq_options')
+          .insert(optInserts)
+          .select('id, display_order');
+
+        if (optErr || !newOpts) continue;
+        stOptionsCreated += newOpts.length;
+
+        // Build English option translations for batch insert
+        const optIdList: { id: number; optionText: string; displayOrder: number }[] = [];
+        const validOpts = q.options.filter((o: any) => o.option_text);
+        for (const no of newOpts) {
+          const matchingOpt = validOpts[no.display_order - 1];
+          if (matchingOpt) {
+            allOptionTransInserts.push({
+              mcq_option_id: no.id,
+              language_id: 7,
+              option_text: matchingOpt.option_text,
+              is_active: true,
+              created_by: userId,
+            });
+            optIdList.push({ id: no.id, optionText: matchingOpt.option_text, displayOrder: no.display_order });
+          }
+        }
+        questionOptionIds.set(qId, optIdList);
+      }
+
+      // Bulk insert all English option translations at once
+      if (allOptionTransInserts.length > 0) {
+        await supabase.from('mcq_option_translations').insert(allOptionTransInserts);
+      }
+
+      // ─── BATCH PHASE 5: BATCH translate ALL questions in ONE AI call ───
+      if (auto_translate && materialLangs.length > 0 && validQuestions.length > 0) {
+        try {
+          // Build a batch of all questions to translate in a single call
+          const batchItems = validQuestions.map((q, idx) => {
+            const validOpts = q.options.filter((o: any) => o.option_text).map((o: any) => o.option_text);
+            return {
+              index: idx + 1,
+              question_text: q.question_text,
+              hint_text: q.hint_text || '',
+              explanation_text: q.explanation_text || '',
+              options: validOpts,
+            };
+          });
+
+          const batchTranslatePrompt = `Translate ALL ${batchItems.length} MCQ questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${materialLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+hint_text: "${item.hint_text}"
+explanation_text: "${item.explanation_text}"
+options: ${JSON.stringify(item.options)}`).join('\n')}
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें।" — WRONG
+
+Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
+{
+  "translations": [
+    {
+      "index": 1,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "options": ["opt1", "opt2", "opt3", "opt4"]
+      }
+    },
+    {
+      "index": 2,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "options": ["opt1", "opt2", "opt3", "opt4"]
+      }
+    }
+  ]
+}`;
+
+          // Scale tokens based on question count — more questions need more output tokens
+          const transMaxTokens = Math.max(8192, validQuestions.length * materialLangs.length * 1024);
+          const transResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+          totalInputTokens += transResult.inputTokens;
+          totalOutputTokens += transResult.outputTokens;
+
+          const transData = parseJSON(transResult.text);
+          const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+          // Process each translated question
+          const allQTransInserts: any[] = [];
+          const allOptTransInserts: any[] = [];
+
+          for (let qi = 0; qi < validQuestions.length; qi++) {
+            const q = validQuestions[qi];
+            const qId = questionIdMap.get(q._displayOrder);
+            if (!qId) continue;
+
+            // Find matching translation entry by index
+            const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+            if (!transEntry) continue;
+
+            const optIds = questionOptionIds.get(qId) || [];
+
+            for (const lang of materialLangs) {
+              const langData = transEntry[lang.iso_code];
+              if (!langData) continue;
+
+              // Queue question translation
+              allQTransInserts.push({
+                mcq_question_id: qId,
+                language_id: lang.id,
+                question_text: langData.question_text || q.question_text,
+                hint_text: langData.hint_text || null,
+                explanation_text: langData.explanation_text || null,
+                is_active: true,
+                created_by: userId,
+              });
+              stTranslationsCreated++;
+              if (!stTranslationsCreatedLangs.includes(lang.name)) stTranslationsCreatedLangs.push(lang.name);
+
+              // Queue option translations
+              if (langData.options && Array.isArray(langData.options)) {
+                for (let oi = 0; oi < Math.min(langData.options.length, optIds.length); oi++) {
+                  allOptTransInserts.push({
+                    mcq_option_id: optIds[oi].id,
+                    language_id: lang.id,
+                    option_text: langData.options[oi],
+                    is_active: true,
+                    created_by: userId,
+                  });
+                }
+              }
+            }
+          }
+
+          // Bulk insert all translated question translations
+          if (allQTransInserts.length > 0) {
+            // Insert in batches of 100 to avoid Supabase payload limits
+            for (let bi = 0; bi < allQTransInserts.length; bi += 100) {
+              await supabase.from('mcq_question_translations').insert(allQTransInserts.slice(bi, bi + 100));
+            }
+          }
+
+          // Bulk insert all translated option translations
+          if (allOptTransInserts.length > 0) {
+            for (let bi = 0; bi < allOptTransInserts.length; bi += 100) {
+              await supabase.from('mcq_option_translations').insert(allOptTransInserts.slice(bi, bi + 100));
+            }
+          }
+        } catch (transErr: any) {
+          console.error('MCQ batch translation error:', transErr.message);
+        }
+      }
+
+      totalQuestionsCreated += stQuestionsCreated;
+      totalOptionsCreated += stOptionsCreated;
+      totalTranslationsCreated += stTranslationsCreated;
+
+      results.push({
+        sub_topic_id: st.sub_topic_id,
+        sub_topic_name: subTopic?.name || subTopic?.slug,
+        status: 'success',
+        questions_created: stQuestionsCreated,
+        options_created: stOptionsCreated,
+        translations_created: stTranslationsCreated,
+        translations_languages: stTranslationsCreatedLangs,
+        question_ids: createdQuestionIds,
+      });
+    }
+
+    // Clear MCQ caches
+    await redis.del('mcq_questions:all');
+    await redis.del('mcq_question_translations:all');
+
+    // Collect all created question IDs across sub-topics
+    const allCreatedIds = results.flatMap((r: any) => r.question_ids || []);
+
+    // Fetch full question details for the response
+    let questions: any[] = [];
+    if (allCreatedIds.length > 0) {
+      const { data: qRows } = await supabase
+        .from('mcq_questions')
+        .select('id, code, slug, mcq_type, difficulty_level, points, display_order')
+        .in('id', allCreatedIds)
+        .order('display_order');
+
+      for (const qr of (qRows || [])) {
+        // Get English translation
+        const { data: engTrans } = await supabase
+          .from('mcq_question_translations')
+          .select('question_text, hint_text, explanation_text')
+          .eq('mcq_question_id', qr.id)
+          .eq('language_id', 7)
+          .single();
+
+        // Get options with English text
+        const { data: opts } = await supabase
+          .from('mcq_options')
+          .select('id, is_correct, display_order')
+          .eq('mcq_question_id', qr.id)
+          .is('deleted_at', null)
+          .order('display_order');
+
+        const optionDetails: any[] = [];
+        for (const opt of (opts || [])) {
+          const { data: optTrans } = await supabase
+            .from('mcq_option_translations')
+            .select('option_text')
+            .eq('mcq_option_id', opt.id)
+            .eq('language_id', 7)
+            .single();
+          optionDetails.push({
+            id: opt.id,
+            option_text: optTrans?.option_text || '',
+            is_correct: opt.is_correct,
+          });
+        }
+
+        // Get which languages have translations
+        const { data: langTrans } = await supabase
+          .from('mcq_question_translations')
+          .select('language_id, languages(name)')
+          .eq('mcq_question_id', qr.id)
+          .neq('language_id', 7)
+          .is('deleted_at', null);
+        const translatedLangs = (langTrans || []).map((lt: any) => lt.languages?.name || '').filter(Boolean);
+
+        questions.push({
+          mcq_question_id: qr.id,
+          code: qr.code,
+          slug: qr.slug,
+          question_type: qr.mcq_type,
+          difficulty_level: qr.difficulty_level,
+          points: qr.points,
+          question_text: engTrans?.question_text || '',
+          hint_text: engTrans?.hint_text || null,
+          explanation_text: engTrans?.explanation_text || null,
+          options: optionDetails,
+          translations_created: translatedLangs,
+        });
+      }
+    }
+
+    // Log admin activity (non-blocking — never let this kill the response)
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'mcq_auto_generated',
+        targetType: 'mcq_question',
+        targetId: topic_id,
+        targetName: topic.name || topic.slug,
+        changes: { questions_created: totalQuestionsCreated, options_created: totalOptionsCreated, translations_created: totalTranslationsCreated },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('MCQ logAdmin error (non-fatal):', logErr.message);
+    }
+
+    console.log(`MCQ generation complete: ${totalQuestionsCreated} questions, ${totalOptionsCreated} options, ${totalTranslationsCreated} translations`);
+
+    return ok(res, {
+      questions,
+      results,
+      summary: {
+        sub_topics_processed: results.length,
+        sub_topics_success: results.filter((r: any) => r.status === 'success').length,
+        sub_topics_error: results.filter((r: any) => r.status === 'error').length,
+        total_questions_created: totalQuestionsCreated,
+        total_options_created: totalOptionsCreated,
+        total_translations_created: totalTranslationsCreated,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Generated ${totalQuestionsCreated} MCQ questions with ${totalOptionsCreated} options`);
+  } catch (error: any) {
+    console.error('autoGenerateMcq error:', error);
+    return err(res, error.message || 'Failed to auto-generate MCQ questions', 500);
+  }
+}
+
+// ─── Auto-Translate Existing MCQ Questions ───────────────────────────────────
+/**
+ * POST /ai/auto-translate-mcq
+ * Translates existing English MCQ questions + options to all material languages.
+ *
+ * Body: {
+ *   topic_id?: number (translate all questions under topic),
+ *   question_ids?: number[] (translate specific questions),
+ *   provider?: 'anthropic' | 'openai' | 'gemini'
+ * }
+ */
+export async function autoTranslateMcq(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, question_ids, provider: reqProvider } = req.body;
+    if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
+      return err(res, 'topic_id or question_ids[] is required', 400);
+    }
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Get target languages (non-English material languages)
+    const { data: materialLangs } = await supabase
+      .from('languages')
+      .select('id, iso_code, name')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .neq('id', 7)
+      .order('id');
+    if (!materialLangs || materialLangs.length === 0) return err(res, 'No target languages found', 404);
+
+    // Find questions to translate
+    let questionsQuery = supabase
+      .from('mcq_questions')
+      .select('id, code, slug, topic_id')
+      .is('deleted_at', null)
+      .eq('is_active', true);
+
+    if (question_ids && question_ids.length > 0) {
+      questionsQuery = questionsQuery.in('id', question_ids);
+    } else {
+      questionsQuery = questionsQuery.eq('topic_id', topic_id);
+    }
+
+    const { data: questions, error: qErr } = await questionsQuery;
+    if (qErr) return err(res, qErr.message, 500);
+    if (!questions || questions.length === 0) return err(res, 'No questions found to translate', 404);
+
+    let totalTranslated = 0;
+    let totalErrors = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const results: any[] = [];
+
+    // ─── PHASE 1: Gather all question data and find missing languages ───
+    type QueuedQuestion = {
+      question_id: number;
+      engText: string;
+      engHint: string;
+      engExplanation: string;
+      engOptions: string[];
+      options: { id: number; display_order: number }[];
+      missingLangs: typeof materialLangs;
+    };
+    const translationQueue: QueuedQuestion[] = [];
+
+    for (const question of questions) {
+      // Get English question translation
+      const { data: engQTrans } = await supabase
+        .from('mcq_question_translations')
+        .select('question_text, hint_text, explanation_text')
+        .eq('mcq_question_id', question.id)
+        .eq('language_id', 7)
+        .is('deleted_at', null)
+        .single();
+
+      if (!engQTrans || !engQTrans.question_text) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'No English translation' });
+        continue;
+      }
+
+      // Find which languages are missing
+      const { data: existingTrans } = await supabase
+        .from('mcq_question_translations')
+        .select('language_id')
+        .eq('mcq_question_id', question.id)
+        .is('deleted_at', null);
+      const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
+      const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
+      if (missingLangs.length === 0) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'All languages exist' });
+        continue;
+      }
+
+      // Get English option texts
+      const { data: options } = await supabase
+        .from('mcq_options')
+        .select('id, display_order')
+        .eq('mcq_question_id', question.id)
+        .is('deleted_at', null)
+        .order('display_order');
+
+      const optionIds = (options || []).map(o => o.id);
+      let engOptionTexts: string[] = [];
+      if (optionIds.length > 0) {
+        const { data: engOTrans } = await supabase
+          .from('mcq_option_translations')
+          .select('mcq_option_id, option_text')
+          .in('mcq_option_id', optionIds)
+          .eq('language_id', 7)
+          .is('deleted_at', null);
+        engOptionTexts = (options || []).map(o => {
+          const t = (engOTrans || []).find(t => t.mcq_option_id === o.id);
+          return t?.option_text || '';
+        });
+      }
+
+      translationQueue.push({
+        question_id: question.id,
+        engText: engQTrans.question_text,
+        engHint: engQTrans.hint_text || '',
+        engExplanation: engQTrans.explanation_text || '',
+        engOptions: engOptionTexts,
+        options: options || [],
+        missingLangs,
+      });
+    }
+
+    // ─── PHASE 2: Batch translate in chunks (max 10 questions per AI call) ───
+    const BATCH_SIZE = 10;
+    for (let bi = 0; bi < translationQueue.length; bi += BATCH_SIZE) {
+      const batch = translationQueue.slice(bi, bi + BATCH_SIZE);
+      // All questions need the same set of languages (use union)
+      const allMissingLangs = materialLangs; // translate to all, we'll skip inserts for existing
+
+      try {
+        const batchItems = batch.map((item, idx) => ({
+          index: idx + 1,
+          question_text: item.engText,
+          hint_text: item.engHint,
+          explanation_text: item.engExplanation,
+          options: item.engOptions,
+        }));
+
+        const batchTranslatePrompt = `Translate ALL ${batchItems.length} MCQ questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${allMissingLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+hint_text: "${item.hint_text}"
+explanation_text: "${item.explanation_text}"
+options: ${JSON.stringify(item.options)}`).join('\n')}
+
+MOST IMPORTANT RULE:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
+
+Return ONLY valid JSON:
+{
+  "translations": [
+    {
+      "index": 1,
+      "${allMissingLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "options": ["opt1", "opt2", ...]
+      }
+    }
+  ]
+}`;
+
+        const transMaxTokens = Math.max(8192, batch.length * allMissingLangs.length * 1024);
+        const aiResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+
+        const transData = parseJSON(aiResult.text);
+        const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+        // Process each question's translations and batch DB inserts
+        const allQTransInserts: any[] = [];
+        const allOptTransInserts: any[] = [];
+
+        for (let qi = 0; qi < batch.length; qi++) {
+          const item = batch[qi];
+          const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+          if (!transEntry) {
+            results.push({ question_id: item.question_id, status: 'error', error: 'No translation returned' });
+            totalErrors++;
+            continue;
+          }
+
+          let langsDone = 0;
+
+          for (const lang of item.missingLangs) {
+            const langData = transEntry[lang.iso_code];
+            if (!langData) continue;
+
+            allQTransInserts.push({
+              mcq_question_id: item.question_id,
+              language_id: lang.id,
+              question_text: langData.question_text || item.engText,
+              hint_text: langData.hint_text || null,
+              explanation_text: langData.explanation_text || null,
+              is_active: true,
+              created_by: userId,
+            });
+            langsDone++;
+
+            if (langData.options && Array.isArray(langData.options)) {
+              for (let oi = 0; oi < Math.min(langData.options.length, item.options.length); oi++) {
+                allOptTransInserts.push({
+                  mcq_option_id: item.options[oi].id,
+                  language_id: lang.id,
+                  option_text: langData.options[oi],
+                  is_active: true,
+                  created_by: userId,
+                });
+              }
+            }
+          }
+
+          totalTranslated += langsDone;
+          results.push({ question_id: item.question_id, status: 'success', languages_added: langsDone });
+        }
+
+        // Bulk insert all translations
+        if (allQTransInserts.length > 0) {
+          for (let ci = 0; ci < allQTransInserts.length; ci += 100) {
+            await supabase.from('mcq_question_translations').insert(allQTransInserts.slice(ci, ci + 100));
+          }
+        }
+        if (allOptTransInserts.length > 0) {
+          for (let ci = 0; ci < allOptTransInserts.length; ci += 100) {
+            await supabase.from('mcq_option_translations').insert(allOptTransInserts.slice(ci, ci + 100));
+          }
+        }
+      } catch (batchErr: any) {
+        console.error('Batch translation error:', batchErr.message);
+        for (const item of batch) {
+          totalErrors++;
+          results.push({ question_id: item.question_id, status: 'error', error: batchErr.message });
+        }
+      }
+    }
+
+    // Clear caches
+    await redis.del('mcq_question_translations:all');
+    await redis.del('mcq_questions:all');
+
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'mcq_auto_translated',
+        targetType: 'mcq_question',
+        targetId: topic_id || 0,
+        targetName: `${questions.length} questions`,
+        changes: { total_translated: totalTranslated, errors: totalErrors },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('MCQ translate logAdmin error (non-fatal):', logErr.message);
+    }
+
+    return ok(res, {
+      results,
+      summary: {
+        questions_processed: questions.length,
+        translations_created: totalTranslated,
+        errors: totalErrors,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Translated ${totalTranslated} question translations across ${questions.length} questions`);
+  } catch (error: any) {
+    console.error('autoTranslateMcq error:', error);
+    return err(res, error.message || 'Failed to auto-translate MCQ questions', 500);
+  }
+}
+
+// ─── Auto-Generate One Word Questions ───────────────────────────────────────
+/**
+ * POST /ai/auto-generate-ow
+ * Reads sub-topic tutorial HTML from Bunny CDN, sends to AI, and bulk-creates
+ * one_word_questions + translations + synonyms.
+ *
+ * Body: {
+ *   topic_id: number,
+ *   sub_topic_id?: number,
+ *   num_questions?: number (0 = AI decides),
+ *   difficulty_mix?: 'auto' | 'easy' | 'medium' | 'hard' | 'mixed',
+ *   question_types?: ('one_word' | 'fill_in_the_blank' | 'code_output')[],
+ *   provider?: 'anthropic' | 'openai' | 'gemini',
+ *   auto_translate?: boolean
+ * }
+ */
+export async function autoGenerateOw(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const {
+      topic_id,
+      sub_topic_id,
+      num_questions = 0,
+      difficulty_mix,
+      question_types = ['one_word', 'fill_in_the_blank', 'code_output'],
+      provider: reqProvider,
+      auto_translate = false,
+    } = req.body;
+
+    if (!topic_id) return err(res, 'topic_id is required', 400);
+    const rawNumQ = parseInt(num_questions) || 0;
+    const isAutoCount = rawNumQ <= 0;
+    const numQ = isAutoCount ? 0 : Math.max(1, rawNumQ);
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Validate topic exists
+    const { data: topic } = await supabase.from('topics').select('id, slug, name').eq('id', topic_id).single();
+    if (!topic) return err(res, 'Topic not found', 404);
+
+    // Find sub-topics with English tutorial pages
+    let subTopicQuery = supabase
+      .from('sub_topic_translations')
+      .select('sub_topic_id, page, sub_topics!inner(id, slug, name, topic_id)')
+      .eq('language_id', 7)
+      .eq('sub_topics.topic_id', topic_id)
+      .not('page', 'is', null)
+      .is('deleted_at', null);
+
+    if (sub_topic_id) {
+      subTopicQuery = subTopicQuery.eq('sub_topic_id', sub_topic_id);
+    }
+
+    const { data: subTopicTranslations, error: stErr } = await subTopicQuery;
+    if (stErr) return err(res, stErr.message, 500);
+    if (!subTopicTranslations || subTopicTranslations.length === 0) {
+      return err(res, 'No sub-topics with English tutorial pages found for this topic', 404);
+    }
+
+    // Helper to strip HTML
+    function stripHtml(html: string): string {
+      return html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    // Get max display_order for existing questions in this topic
+    const { data: existingQs } = await supabase
+      .from('one_word_questions')
+      .select('display_order')
+      .eq('topic_id', topic_id)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: false })
+      .limit(1);
+    let nextDisplayOrder = ((existingQs?.[0]?.display_order) || 0) + 1;
+
+    // Get material languages for translation
+    let materialLangs: any[] = [];
+    if (auto_translate) {
+      const { data: langs } = await supabase
+        .from('languages')
+        .select('id, iso_code, name')
+        .eq('is_active', true)
+        .eq('for_material', true)
+        .neq('id', 7)
+        .order('id');
+      materialLangs = langs || [];
+    }
+
+    const results: any[] = [];
+    let totalQuestionsCreated = 0;
+    let totalSynonymsCreated = 0;
+    let totalTranslationsCreated = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    // Process each sub-topic
+    for (const st of subTopicTranslations) {
+      const subTopic = (st as any).sub_topics;
+      const pageUrl = st.page;
+      if (!pageUrl) continue;
+
+      // Download HTML from Bunny CDN
+      const cdnPath = pageUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+      let htmlContent: string;
+      try {
+        htmlContent = await downloadBunnyFile(cdnPath);
+      } catch (downloadErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `Failed to download HTML: ${downloadErr.message}` });
+        continue;
+      }
+
+      const plainText = stripHtml(htmlContent);
+      if (!plainText || plainText.length < 50) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'skipped', error: 'Tutorial content too short' });
+        continue;
+      }
+      const contentForAI = plainText.length > 30000 ? plainText.slice(0, 30000) : plainText;
+
+      // Build difficulty instruction
+      const diffMode = typeof difficulty_mix === 'string' ? difficulty_mix : 'auto';
+      let difficultyInstruction = '';
+      if (diffMode === 'easy') difficultyInstruction = 'ALL questions should be EASY difficulty (factual recall, basic definitions).';
+      else if (diffMode === 'medium') difficultyInstruction = 'ALL questions should be MEDIUM difficulty (understanding concepts, applying knowledge).';
+      else if (diffMode === 'hard') difficultyInstruction = 'ALL questions should be HARD difficulty (analysis, comparison, deeper reasoning).';
+      else if (diffMode === 'mixed' && !isAutoCount) {
+        const easyCount = Math.round(numQ * 0.3);
+        const hardCount = Math.round(numQ * 0.2);
+        const mediumCount = numQ - easyCount - hardCount;
+        difficultyInstruction = `Distribute difficulty: ${easyCount} easy, ${mediumCount} medium, ${hardCount} hard.`;
+      } else {
+        difficultyInstruction = 'Automatically distribute difficulty (easy/medium/hard) based on content complexity — more easy questions for introductory content, more hard for advanced/complex content. Use your best judgment.';
+      }
+
+      const typesList = Array.isArray(question_types) && question_types.length > 0 ? question_types : ['one_word', 'fill_in_the_blank', 'code_output'];
+
+      // Build type distribution instruction
+      const hasOneWord = typesList.includes('one_word');
+      const hasFillBlank = typesList.includes('fill_in_the_blank');
+      const hasCodeOutput = typesList.includes('code_output');
+      let typeDistribution = '';
+      if (hasOneWord && hasFillBlank && hasCodeOutput) {
+        typeDistribution = `You MUST use ALL THREE question types with this approximate distribution:
+- one_word: ~60% of questions (simple factual answers — keywords, names, values, single-word or short answers)
+- fill_in_the_blank: ~25% of questions (sentence with ___ blank, answer fills the gap)
+- code_output: ~15% of questions (what is the output of this code snippet — answer is the exact output)
+DO NOT generate only one type. You MUST mix all three types.`;
+      } else if (hasOneWord && hasFillBlank) {
+        typeDistribution = `Use BOTH question types: ~70% one_word, ~30% fill_in_the_blank. DO NOT use only one type.`;
+      } else if (hasOneWord && hasCodeOutput) {
+        typeDistribution = `Use BOTH question types: ~80% one_word, ~20% code_output. DO NOT use only one type.`;
+      } else if (hasFillBlank && hasCodeOutput) {
+        typeDistribution = `Use BOTH question types: ~60% fill_in_the_blank, ~40% code_output. DO NOT use only one type.`;
+      } else if (hasOneWord) {
+        typeDistribution = `Generate ONLY one_word questions.`;
+      } else if (hasFillBlank) {
+        typeDistribution = `Generate ONLY fill_in_the_blank questions.`;
+      } else {
+        typeDistribution = `Generate ONLY code_output questions.`;
+      }
+
+      const quantityInstruction = isAutoCount
+        ? `Generate ALL possible meaningful one-word/short-answer questions from the content. There is NO LIMIT — generate as many as the content supports.
+
+YOUR GOAL IS EXHAUSTIVE, COMPREHENSIVE COVERAGE:
+- Create questions for EVERY concept, definition, rule, syntax element, example, and important detail
+- Include INTERVIEW-LEVEL questions that test deep understanding, not just surface recall
+- Cover ALL cognitive levels: recall, understanding, application, analysis
+- For code/programming content: test syntax, output prediction, keyword knowledge, function names, return values
+- For theoretical content: test definitions, key terms, important values, acronyms
+- Do NOT skip ANY teachable point — if it's mentioned in the tutorial, create questions about it
+- Create multiple questions from different angles for important concepts
+- Each question must be UNIQUE — different angle, different depth, or different aspect
+- Generate 20-50+ questions for rich content — DO NOT artificially limit yourself
+- More content = more questions. Short tutorials = 15-20, medium = 25-40, long/detailed = 40-60+`
+        : `Generate EXACTLY ${numQ} one-word/short-answer questions based on the content.`;
+
+      const systemPrompt = `You are an expert educational content analyst for GrowUpMore — an online learning platform.
+Read the provided tutorial content and generate one-word/short-answer questions based on it.
+
+Sub-topic: "${subTopic?.name || subTopic?.slug}"
+Topic: "${topic.name || topic.slug}"
+
+QUANTITY: ${quantityInstruction}
+
+DIFFICULTY: ${difficultyInstruction}
+
+QUESTION TYPE DISTRIBUTION (STRICTLY FOLLOW):
+${typeDistribution}
+
+RULES FOR EACH QUESTION TYPE:
+- "one_word": Simple factual answers — keywords, names, values. The answer should be a single word or very short phrase.
+- "fill_in_the_blank": The question_text MUST contain "___" (three underscores) as a blank placeholder. The correct_answer fills that blank.
+- "code_output": Ask "What is the output of the following code?" with a code snippet in the question. The correct_answer is the exact output.
+
+IMPORTANT GUIDELINES:
+- Questions must test real understanding, not just trivial facts
+- Include conceptual, practical, and application-based questions
+- Each question must be clearly answerable from the provided content
+- The correct_answer should be SHORT (1-3 words max for one_word, exact output for code_output)
+- Provide synonyms (alternative accepted answers) when applicable — e.g., if answer is "int", synonyms could be ["INT", "Int"]
+- Synonyms are alternative spellings, capitalizations, or equivalent terms that should also be accepted
+- Always generate a helpful hint that nudges toward the answer without revealing it
+- Always generate a detailed explanation of WHY the correct answer is correct
+- Auto-assign points: easy=1, medium=2, hard=3
+- Generate a short unique code for each question (e.g., "ow-c-data-types-01")
+- is_case_sensitive: set to false for most questions (accept any case), true only when exact casing matters (e.g., code output)
+- CRITICAL: Vary question types throughout — do NOT cluster same types together
+
+Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
+{
+  "questions": [
+    {
+      "code": "ow-short-unique-code",
+      "question_text": "The question text in English",
+      "question_type": "one_word",
+      "difficulty_level": "easy",
+      "points": 1,
+      "correct_answer": "int",
+      "synonyms": ["INT", "Int"],
+      "hint": "A helpful hint without giving away the answer",
+      "explanation": "Detailed explanation of the correct answer",
+      "is_case_sensitive": false
+    }
+  ]
+}`;
+
+      let aiResult;
+      try {
+        aiResult = await callAI(provider, systemPrompt, contentForAI, isAutoCount ? 65536 : Math.max(8192, numQ * 2048));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+      } catch (aiErr: any) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `AI call failed: ${aiErr.message}` });
+        continue;
+      }
+
+      let parsed: any;
+      try {
+        parsed = parseJSON(aiResult.text);
+      } catch (parseErr: any) {
+        console.error(`OW JSON parse error for sub-topic ${st.sub_topic_id}:`, parseErr.message, 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned invalid JSON' });
+        continue;
+      }
+
+      const questions = parsed.questions || (Array.isArray(parsed) ? parsed : []);
+      if (!questions.length) {
+        console.error(`OW no questions for sub-topic ${st.sub_topic_id}. Parsed keys:`, Object.keys(parsed || {}), 'AI text (first 500):', aiResult.text?.slice(0, 500));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'AI returned no questions' });
+        continue;
+      }
+
+      console.log(`OW: AI generated ${questions.length} questions for sub-topic ${st.sub_topic_id} (${subTopic?.name}). Types: ${questions.map((q: any) => q.question_type).join(', ')}`);
+
+      let stQuestionsCreated = 0;
+      let stSynonymsCreated = 0;
+      let stTranslationsCreated = 0;
+      const createdQuestionIds: number[] = [];
+      const stTranslationsCreatedLangs: string[] = [];
+
+      // ─── BATCH PHASE 1: Prepare all questions and generate slugs ───
+      const validQuestions: any[] = [];
+      for (const q of questions) {
+        if (!q.question_text || !q.correct_answer) continue;
+        const questionType = ['one_word', 'fill_in_the_blank', 'code_output'].includes(q.question_type) ? q.question_type : 'one_word';
+        const diffLevel = ['easy', 'medium', 'hard'].includes(q.difficulty_level) ? q.difficulty_level : 'medium';
+        const code = (q.code || `ow-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 80);
+        const slug = await generateUniqueSlug(supabase, 'one_word_questions', code, undefined, { column: 'topic_id', value: topic_id });
+        validQuestions.push({ ...q, _questionType: questionType, _diffLevel: diffLevel, _code: code, _slug: slug, _displayOrder: nextDisplayOrder++ });
+      }
+
+      if (validQuestions.length === 0) {
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: 'No valid questions generated' });
+        continue;
+      }
+
+      // ─── BATCH PHASE 2: Bulk insert all one_word_questions at once ───
+      const questionInserts = validQuestions.map(q => ({
+        topic_id,
+        code: q._code,
+        slug: q._slug,
+        question_type: q._questionType,
+        difficulty_level: q._diffLevel,
+        points: q.points || (q._diffLevel === 'easy' ? 1 : q._diffLevel === 'medium' ? 2 : 3),
+        display_order: q._displayOrder,
+        is_mandatory: false,
+        is_active: true,
+        is_case_sensitive: q.is_case_sensitive === true,
+        is_trim_whitespace: true,
+        created_by: userId,
+      }));
+
+      const { data: newQuestions, error: bulkQErr } = await supabase
+        .from('one_word_questions')
+        .insert(questionInserts)
+        .select('id, code, display_order');
+
+      if (bulkQErr || !newQuestions || newQuestions.length === 0) {
+        console.error(`OW bulk insert failed for sub-topic ${st.sub_topic_id}:`, bulkQErr?.message, 'First insert:', JSON.stringify(questionInserts[0]));
+        results.push({ sub_topic_id: st.sub_topic_id, sub_topic_name: subTopic?.name || subTopic?.slug, status: 'error', error: `DB insert failed: ${bulkQErr?.message || 'unknown'}` });
+        continue;
+      }
+
+      // Map new question IDs back to validQuestions by display_order
+      const questionIdMap = new Map<number, number>();
+      for (const nq of newQuestions) {
+        questionIdMap.set(nq.display_order, nq.id);
+        createdQuestionIds.push(nq.id);
+      }
+      stQuestionsCreated = newQuestions.length;
+
+      // ─── BATCH PHASE 3: Bulk insert English one_word_question_translations (with correct_answer) ───
+      const qTransInserts: any[] = [];
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+        qTransInserts.push({
+          one_word_question_id: qId,
+          language_id: 7,
+          question_text: q.question_text,
+          correct_answer: q.correct_answer,
+          hint_text: q.hint || null,
+          explanation_text: q.explanation || null,
+          is_active: true,
+          created_by: userId,
+        });
+      }
+      if (qTransInserts.length > 0) {
+        await supabase.from('one_word_question_translations').insert(qTransInserts);
+      }
+
+      // ─── BATCH PHASE 4: Bulk insert synonyms + English synonym translations ───
+      const questionSynonymIds: Map<number, { id: number; synonymText: string; displayOrder: number }[]> = new Map();
+
+      for (const q of validQuestions) {
+        const qId = questionIdMap.get(q._displayOrder);
+        if (!qId) continue;
+        if (!q.synonyms || !Array.isArray(q.synonyms) || q.synonyms.length === 0) continue;
+
+        // Batch insert all synonyms for this question
+        const synInserts = q.synonyms
+          .filter((s: any) => typeof s === 'string' && s.trim())
+          .map((s: any, si: number) => ({
+            one_word_question_id: qId,
+            display_order: si + 1,
+            is_active: true,
+            created_by: userId,
+          }));
+
+        if (synInserts.length === 0) continue;
+
+        const { data: newSyns, error: synErr } = await supabase
+          .from('one_word_synonyms')
+          .insert(synInserts)
+          .select('id, display_order');
+
+        if (synErr || !newSyns) continue;
+        stSynonymsCreated += newSyns.length;
+
+        // Build English synonym translations for batch insert
+        const synIdList: { id: number; synonymText: string; displayOrder: number }[] = [];
+        const validSyns = q.synonyms.filter((s: any) => typeof s === 'string' && s.trim());
+        const allSynTransInserts: any[] = [];
+        for (const ns of newSyns) {
+          const matchingSyn = validSyns[ns.display_order - 1];
+          if (matchingSyn) {
+            allSynTransInserts.push({
+              one_word_synonym_id: ns.id,
+              language_id: 7,
+              synonym_text: matchingSyn,
+              is_active: true,
+              created_by: userId,
+            });
+            synIdList.push({ id: ns.id, synonymText: matchingSyn, displayOrder: ns.display_order });
+          }
+        }
+        if (allSynTransInserts.length > 0) {
+          await supabase.from('one_word_synonym_translations').insert(allSynTransInserts);
+        }
+        questionSynonymIds.set(qId, synIdList);
+      }
+
+      // ─── BATCH PHASE 5: BATCH translate ALL questions in ONE AI call ───
+      if (auto_translate && materialLangs.length > 0 && validQuestions.length > 0) {
+        try {
+          const batchItems = validQuestions.map((q, idx) => {
+            const validSyns = (q.synonyms || []).filter((s: any) => typeof s === 'string' && s.trim());
+            return {
+              index: idx + 1,
+              question_text: q.question_text,
+              correct_answer: q.correct_answer,
+              hint_text: q.hint || '',
+              explanation_text: q.explanation || '',
+              synonyms: validSyns,
+            };
+          });
+
+          const batchTranslatePrompt = `Translate ALL ${batchItems.length} one-word/short-answer questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${materialLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+correct_answer: "${item.correct_answer}"
+hint_text: "${item.hint_text}"
+explanation_text: "${item.explanation_text}"
+synonyms: ${JSON.stringify(item.synonyms)}`).join('\n')}
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names.
+GOOD example (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD example (Hindi): "एचटीएमएल5 की मूल बातें।" — WRONG
+
+IMPORTANT: For correct_answer and synonyms — if the answer is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if the answer is a natural language word.
+
+Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
+{
+  "translations": [
+    {
+      "index": 1,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "correct_answer": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "synonyms": ["syn1", "syn2"]
+      }
+    },
+    {
+      "index": 2,
+      "${materialLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "correct_answer": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "synonyms": ["syn1"]
+      }
+    }
+  ]
+}`;
+
+          const transMaxTokens = Math.max(8192, validQuestions.length * materialLangs.length * 1024);
+          const transResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+          totalInputTokens += transResult.inputTokens;
+          totalOutputTokens += transResult.outputTokens;
+
+          const transData = parseJSON(transResult.text);
+          const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+          // Process each translated question
+          const allQTransInserts: any[] = [];
+          const allSynTransInserts: any[] = [];
+
+          for (let qi = 0; qi < validQuestions.length; qi++) {
+            const q = validQuestions[qi];
+            const qId = questionIdMap.get(q._displayOrder);
+            if (!qId) continue;
+
+            const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+            if (!transEntry) continue;
+
+            const synIds = questionSynonymIds.get(qId) || [];
+
+            for (const lang of materialLangs) {
+              const langData = transEntry[lang.iso_code];
+              if (!langData) continue;
+
+              // Queue question translation
+              allQTransInserts.push({
+                one_word_question_id: qId,
+                language_id: lang.id,
+                question_text: langData.question_text || q.question_text,
+                correct_answer: langData.correct_answer || q.correct_answer,
+                hint_text: langData.hint_text || null,
+                explanation_text: langData.explanation_text || null,
+                is_active: true,
+                created_by: userId,
+              });
+              stTranslationsCreated++;
+              if (!stTranslationsCreatedLangs.includes(lang.name)) stTranslationsCreatedLangs.push(lang.name);
+
+              // Queue synonym translations
+              if (langData.synonyms && Array.isArray(langData.synonyms)) {
+                for (let si = 0; si < Math.min(langData.synonyms.length, synIds.length); si++) {
+                  allSynTransInserts.push({
+                    one_word_synonym_id: synIds[si].id,
+                    language_id: lang.id,
+                    synonym_text: langData.synonyms[si],
+                    is_active: true,
+                    created_by: userId,
+                  });
+                }
+              }
+            }
+          }
+
+          // Bulk insert all translated question translations
+          if (allQTransInserts.length > 0) {
+            for (let bi = 0; bi < allQTransInserts.length; bi += 100) {
+              await supabase.from('one_word_question_translations').insert(allQTransInserts.slice(bi, bi + 100));
+            }
+          }
+
+          // Bulk insert all translated synonym translations
+          if (allSynTransInserts.length > 0) {
+            for (let bi = 0; bi < allSynTransInserts.length; bi += 100) {
+              await supabase.from('one_word_synonym_translations').insert(allSynTransInserts.slice(bi, bi + 100));
+            }
+          }
+        } catch (transErr: any) {
+          console.error('OW batch translation error:', transErr.message);
+        }
+      }
+
+      totalQuestionsCreated += stQuestionsCreated;
+      totalSynonymsCreated += stSynonymsCreated;
+      totalTranslationsCreated += stTranslationsCreated;
+
+      results.push({
+        sub_topic_id: st.sub_topic_id,
+        sub_topic_name: subTopic?.name || subTopic?.slug,
+        status: 'success',
+        questions_created: stQuestionsCreated,
+        synonyms_created: stSynonymsCreated,
+        translations_created: stTranslationsCreated,
+        translations_languages: stTranslationsCreatedLangs,
+        question_ids: createdQuestionIds,
+      });
+    }
+
+    // Clear OW caches
+    await redis.del('one_word_questions:all');
+    await redis.del('one_word_question_translations:all');
+
+    // Collect all created question IDs across sub-topics
+    const allCreatedIds = results.flatMap((r: any) => r.question_ids || []);
+
+    // Fetch full question details for the response
+    let questions: any[] = [];
+    if (allCreatedIds.length > 0) {
+      const { data: qRows } = await supabase
+        .from('one_word_questions')
+        .select('id, code, slug, question_type, difficulty_level, points, display_order, is_case_sensitive, is_trim_whitespace')
+        .in('id', allCreatedIds)
+        .order('display_order');
+
+      for (const qr of (qRows || [])) {
+        // Get English translation
+        const { data: engTrans } = await supabase
+          .from('one_word_question_translations')
+          .select('question_text, correct_answer, hint_text, explanation_text')
+          .eq('one_word_question_id', qr.id)
+          .eq('language_id', 7)
+          .single();
+
+        // Get synonyms with English text
+        const { data: syns } = await supabase
+          .from('one_word_synonyms')
+          .select('id, display_order')
+          .eq('one_word_question_id', qr.id)
+          .is('deleted_at', null)
+          .order('display_order');
+
+        const synonymDetails: any[] = [];
+        for (const syn of (syns || [])) {
+          const { data: synTrans } = await supabase
+            .from('one_word_synonym_translations')
+            .select('synonym_text')
+            .eq('one_word_synonym_id', syn.id)
+            .eq('language_id', 7)
+            .single();
+          synonymDetails.push({
+            id: syn.id,
+            synonym_text: synTrans?.synonym_text || '',
+          });
+        }
+
+        // Get which languages have translations
+        const { data: langTrans } = await supabase
+          .from('one_word_question_translations')
+          .select('language_id, languages(name)')
+          .eq('one_word_question_id', qr.id)
+          .neq('language_id', 7)
+          .is('deleted_at', null);
+        const translatedLangs = (langTrans || []).map((lt: any) => lt.languages?.name || '').filter(Boolean);
+
+        questions.push({
+          one_word_question_id: qr.id,
+          code: qr.code,
+          slug: qr.slug,
+          question_type: qr.question_type,
+          difficulty_level: qr.difficulty_level,
+          points: qr.points,
+          is_case_sensitive: qr.is_case_sensitive,
+          is_trim_whitespace: qr.is_trim_whitespace,
+          question_text: engTrans?.question_text || '',
+          correct_answer: engTrans?.correct_answer || '',
+          hint_text: engTrans?.hint_text || null,
+          explanation_text: engTrans?.explanation_text || null,
+          synonyms: synonymDetails,
+          translations_created: translatedLangs,
+        });
+      }
+    }
+
+    // Log admin activity (non-blocking — never let this kill the response)
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'ow_auto_generated',
+        targetType: 'one_word_question',
+        targetId: topic_id,
+        targetName: topic.name || topic.slug,
+        changes: { questions_created: totalQuestionsCreated, synonyms_created: totalSynonymsCreated, translations_created: totalTranslationsCreated },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('OW logAdmin error (non-fatal):', logErr.message);
+    }
+
+    console.log(`OW generation complete: ${totalQuestionsCreated} questions, ${totalSynonymsCreated} synonyms, ${totalTranslationsCreated} translations`);
+
+    return ok(res, {
+      questions,
+      results,
+      summary: {
+        sub_topics_processed: results.length,
+        sub_topics_success: results.filter((r: any) => r.status === 'success').length,
+        sub_topics_error: results.filter((r: any) => r.status === 'error').length,
+        total_questions_created: totalQuestionsCreated,
+        total_synonyms_created: totalSynonymsCreated,
+        total_translations_created: totalTranslationsCreated,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Generated ${totalQuestionsCreated} one-word questions with ${totalSynonymsCreated} synonyms`);
+  } catch (error: any) {
+    console.error('autoGenerateOw error:', error);
+    return err(res, error.message || 'Failed to auto-generate one-word questions', 500);
+  }
+}
+
+// ─── Auto-Translate Existing One Word Questions ─────────────────────────────
+/**
+ * POST /ai/auto-translate-ow
+ * Translates existing English one-word questions + synonyms to all material languages.
+ *
+ * Body: {
+ *   topic_id?: number (translate all questions under topic),
+ *   question_ids?: number[] (translate specific questions),
+ *   provider?: 'anthropic' | 'openai' | 'gemini'
+ * }
+ */
+export async function autoTranslateOw(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { topic_id, question_ids, provider: reqProvider } = req.body;
+    if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
+      return err(res, 'topic_id or question_ids[] is required', 400);
+    }
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Get target languages (non-English material languages)
+    const { data: materialLangs } = await supabase
+      .from('languages')
+      .select('id, iso_code, name')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .neq('id', 7)
+      .order('id');
+    if (!materialLangs || materialLangs.length === 0) return err(res, 'No target languages found', 404);
+
+    // Find questions to translate
+    let questionsQuery = supabase
+      .from('one_word_questions')
+      .select('id, code, slug, topic_id')
+      .is('deleted_at', null)
+      .eq('is_active', true);
+
+    if (question_ids && question_ids.length > 0) {
+      questionsQuery = questionsQuery.in('id', question_ids);
+    } else {
+      questionsQuery = questionsQuery.eq('topic_id', topic_id);
+    }
+
+    const { data: questions, error: qErr } = await questionsQuery;
+    if (qErr) return err(res, qErr.message, 500);
+    if (!questions || questions.length === 0) return err(res, 'No questions found to translate', 404);
+
+    let totalTranslated = 0;
+    let totalErrors = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const results: any[] = [];
+
+    // ─── PHASE 1: Gather all question data and find missing languages ───
+    type QueuedOwQuestion = {
+      question_id: number;
+      engText: string;
+      engCorrectAnswer: string;
+      engHint: string;
+      engExplanation: string;
+      engSynonyms: string[];
+      synonyms: { id: number; display_order: number }[];
+      missingLangs: typeof materialLangs;
+    };
+    const translationQueue: QueuedOwQuestion[] = [];
+
+    for (const question of questions) {
+      // Get English question translation
+      const { data: engQTrans } = await supabase
+        .from('one_word_question_translations')
+        .select('question_text, correct_answer, hint_text, explanation_text')
+        .eq('one_word_question_id', question.id)
+        .eq('language_id', 7)
+        .is('deleted_at', null)
+        .single();
+
+      if (!engQTrans || !engQTrans.question_text) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'No English translation' });
+        continue;
+      }
+
+      // Find which languages are missing
+      const { data: existingTrans } = await supabase
+        .from('one_word_question_translations')
+        .select('language_id')
+        .eq('one_word_question_id', question.id)
+        .is('deleted_at', null);
+      const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
+      const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
+      if (missingLangs.length === 0) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'All languages exist' });
+        continue;
+      }
+
+      // Get English synonym texts
+      const { data: synonyms } = await supabase
+        .from('one_word_synonyms')
+        .select('id, display_order')
+        .eq('one_word_question_id', question.id)
+        .is('deleted_at', null)
+        .order('display_order');
+
+      const synonymIds = (synonyms || []).map(s => s.id);
+      let engSynonymTexts: string[] = [];
+      if (synonymIds.length > 0) {
+        const { data: engSTrans } = await supabase
+          .from('one_word_synonym_translations')
+          .select('one_word_synonym_id, synonym_text')
+          .in('one_word_synonym_id', synonymIds)
+          .eq('language_id', 7)
+          .is('deleted_at', null);
+        engSynonymTexts = (synonyms || []).map(s => {
+          const t = (engSTrans || []).find(t => t.one_word_synonym_id === s.id);
+          return t?.synonym_text || '';
+        });
+      }
+
+      translationQueue.push({
+        question_id: question.id,
+        engText: engQTrans.question_text,
+        engCorrectAnswer: engQTrans.correct_answer || '',
+        engHint: engQTrans.hint_text || '',
+        engExplanation: engQTrans.explanation_text || '',
+        engSynonyms: engSynonymTexts,
+        synonyms: synonyms || [],
+        missingLangs,
+      });
+    }
+
+    // ─── PHASE 2: Batch translate in chunks (max 10 questions per AI call) ───
+    const BATCH_SIZE = 10;
+    for (let bi = 0; bi < translationQueue.length; bi += BATCH_SIZE) {
+      const batch = translationQueue.slice(bi, bi + BATCH_SIZE);
+      const allMissingLangs = materialLangs;
+
+      try {
+        const batchItems = batch.map((item, idx) => ({
+          index: idx + 1,
+          question_text: item.engText,
+          correct_answer: item.engCorrectAnswer,
+          hint_text: item.engHint,
+          explanation_text: item.engExplanation,
+          synonyms: item.engSynonyms,
+        }));
+
+        const batchTranslatePrompt = `Translate ALL ${batchItems.length} one-word/short-answer questions below to ALL of these languages in a single response.
+
+TARGET LANGUAGES: ${allMissingLangs.map(l => `${l.name} (${l.iso_code})`).join(', ')}
+
+QUESTIONS TO TRANSLATE:
+${batchItems.map(item => `
+--- Question ${item.index} ---
+question_text: "${item.question_text}"
+correct_answer: "${item.correct_answer}"
+hint_text: "${item.hint_text}"
+explanation_text: "${item.explanation_text}"
+synonyms: ${JSON.stringify(item.synonyms)}`).join('\n')}
+
+MOST IMPORTANT RULE:
+Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
+BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
+
+IMPORTANT: For correct_answer and synonyms — if the answer is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if the answer is a natural language word.
+
+Return ONLY valid JSON:
+{
+  "translations": [
+    {
+      "index": 1,
+      "${allMissingLangs[0]?.iso_code || 'hi'}": {
+        "question_text": "...",
+        "correct_answer": "...",
+        "hint_text": "...",
+        "explanation_text": "...",
+        "synonyms": ["syn1", "syn2"]
+      }
+    }
+  ]
+}`;
+
+        const transMaxTokens = Math.max(8192, batch.length * allMissingLangs.length * 1024);
+        const aiResult = await callAI(provider, batchTranslatePrompt, '', Math.min(transMaxTokens, 65536));
+        totalInputTokens += aiResult.inputTokens;
+        totalOutputTokens += aiResult.outputTokens;
+
+        const transData = parseJSON(aiResult.text);
+        const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
+
+        // Process each question's translations and batch DB inserts
+        const allQTransInserts: any[] = [];
+        const allSynTransInserts: any[] = [];
+
+        for (let qi = 0; qi < batch.length; qi++) {
+          const item = batch[qi];
+          const transEntry = translationsArray.find((t: any) => t.index === qi + 1) || translationsArray[qi];
+          if (!transEntry) {
+            results.push({ question_id: item.question_id, status: 'error', error: 'No translation returned' });
+            totalErrors++;
+            continue;
+          }
+
+          let langsDone = 0;
+
+          for (const lang of item.missingLangs) {
+            const langData = transEntry[lang.iso_code];
+            if (!langData) continue;
+
+            allQTransInserts.push({
+              one_word_question_id: item.question_id,
+              language_id: lang.id,
+              question_text: langData.question_text || item.engText,
+              correct_answer: langData.correct_answer || item.engCorrectAnswer,
+              hint_text: langData.hint_text || null,
+              explanation_text: langData.explanation_text || null,
+              is_active: true,
+              created_by: userId,
+            });
+            langsDone++;
+
+            if (langData.synonyms && Array.isArray(langData.synonyms)) {
+              for (let si = 0; si < Math.min(langData.synonyms.length, item.synonyms.length); si++) {
+                allSynTransInserts.push({
+                  one_word_synonym_id: item.synonyms[si].id,
+                  language_id: lang.id,
+                  synonym_text: langData.synonyms[si],
+                  is_active: true,
+                  created_by: userId,
+                });
+              }
+            }
+          }
+
+          totalTranslated += langsDone;
+          results.push({ question_id: item.question_id, status: 'success', languages_added: langsDone });
+        }
+
+        // Bulk insert all translations
+        if (allQTransInserts.length > 0) {
+          for (let ci = 0; ci < allQTransInserts.length; ci += 100) {
+            await supabase.from('one_word_question_translations').insert(allQTransInserts.slice(ci, ci + 100));
+          }
+        }
+        if (allSynTransInserts.length > 0) {
+          for (let ci = 0; ci < allSynTransInserts.length; ci += 100) {
+            await supabase.from('one_word_synonym_translations').insert(allSynTransInserts.slice(ci, ci + 100));
+          }
+        }
+      } catch (batchErr: any) {
+        console.error('OW batch translation error:', batchErr.message);
+        for (const item of batch) {
+          totalErrors++;
+          results.push({ question_id: item.question_id, status: 'error', error: batchErr.message });
+        }
+      }
+    }
+
+    // Clear caches
+    await redis.del('one_word_question_translations:all');
+    await redis.del('one_word_questions:all');
+
+    try {
+      logAdmin({
+        actorId: userId,
+        action: 'ow_auto_translated',
+        targetType: 'one_word_question',
+        targetId: topic_id || 0,
+        targetName: `${questions.length} questions`,
+        changes: { total_translated: totalTranslated, errors: totalErrors },
+        ip: getClientIp(req),
+      });
+    } catch (logErr: any) {
+      console.error('OW translate logAdmin error (non-fatal):', logErr.message);
+    }
+
+    return ok(res, {
+      results,
+      summary: {
+        questions_processed: questions.length,
+        translations_created: totalTranslated,
+        errors: totalErrors,
+      },
+      usage: { prompt_tokens: totalInputTokens, completion_tokens: totalOutputTokens, total_tokens: totalInputTokens + totalOutputTokens },
+    }, `Translated ${totalTranslated} question translations across ${questions.length} questions`);
+  } catch (error: any) {
+    console.error('autoTranslateOw error:', error);
+    return err(res, error.message || 'Failed to auto-translate one-word questions', 500);
   }
 }
