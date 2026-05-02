@@ -66,6 +66,9 @@ import courseModuleTranslationRoutes from './modules/course-module-translations/
 import courseModuleSubjectRoutes from './modules/course-module-subjects/courseModuleSubject.routes';
 import courseChapterRoutes from './modules/course-chapters/courseChapter.routes';
 import courseChapterTopicRoutes from './modules/course-chapter-topics/courseChapterTopic.routes';
+import bundleRoutes from './modules/bundles/bundle.routes';
+import bundleTranslationRoutes from './modules/bundle-translations/bundleTranslation.routes';
+import bundleCourseRoutes from './modules/bundle-courses/bundleCourse.routes';
 
 const app = express();
 
@@ -153,6 +156,9 @@ app.use(`${api}/course-module-translations`, courseModuleTranslationRoutes);
 app.use(`${api}/course-module-subjects`,     courseModuleSubjectRoutes);
 app.use(`${api}/course-chapters`,            courseChapterRoutes);
 app.use(`${api}/course-chapter-topics`,      courseChapterTopicRoutes);
+app.use(`${api}/bundles`,                    bundleRoutes);
+app.use(`${api}/bundle-translations`,        bundleTranslationRoutes);
+app.use(`${api}/bundle-courses`,             bundleCourseRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
