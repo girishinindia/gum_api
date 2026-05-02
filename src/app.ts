@@ -83,6 +83,10 @@ import matchingQuestionRoutes from './modules/matching-questions/matchingQuestio
 import matchingQuestionTranslationRoutes from './modules/matching-question-translations/matchingQuestionTranslation.routes';
 import matchingPairRoutes from './modules/matching-pairs/matchingPair.routes';
 import matchingPairTranslationRoutes from './modules/matching-pair-translations/matchingPairTranslation.routes';
+import orderingQuestionRoutes from './modules/ordering-questions/orderingQuestion.routes';
+import orderingQuestionTranslationRoutes from './modules/ordering-question-translations/orderingQuestionTranslation.routes';
+import orderingItemRoutes from './modules/ordering-items/orderingItem.routes';
+import orderingItemTranslationRoutes from './modules/ordering-item-translations/orderingItemTranslation.routes';
 
 const app = express();
 
@@ -187,6 +191,10 @@ app.use(`${api}/matching-questions`,              matchingQuestionRoutes);
 app.use(`${api}/matching-question-translations`,  matchingQuestionTranslationRoutes);
 app.use(`${api}/matching-pairs`,                  matchingPairRoutes);
 app.use(`${api}/matching-pair-translations`,      matchingPairTranslationRoutes);
+app.use(`${api}/ordering-questions`,              orderingQuestionRoutes);
+app.use(`${api}/ordering-question-translations`,  orderingQuestionTranslationRoutes);
+app.use(`${api}/ordering-items`,                  orderingItemRoutes);
+app.use(`${api}/ordering-item-translations`,      orderingItemTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

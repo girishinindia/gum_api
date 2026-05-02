@@ -101,4 +101,10 @@ r.post('/auto-generate-matching', requirePermission('matching_question', 'create
 // Auto translate existing Matching questions to missing languages
 r.post('/auto-translate-matching', requirePermission('matching_question_translation', 'create'), ctrl.autoTranslateMatching);
 
+// Auto Ordering generation from topic tutorials
+r.post('/auto-generate-ordering', requirePermission('ordering_question', 'create'), ctrl.autoGenerateOrdering);
+
+// Auto translate existing Ordering questions to missing languages
+r.post('/auto-translate-ordering', requirePermission('ordering_question_translation', 'create'), ctrl.autoTranslateOrdering);
+
 export default r;
