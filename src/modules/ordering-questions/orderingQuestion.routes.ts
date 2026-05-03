@@ -6,10 +6,13 @@ import * as ctrl from './orderingQuestion.controller';
 const r = Router();
 
 r.get('/',     ctrl.list);
+r.get('/:id/full', ctrl.getFullById);
 r.get('/:id',  ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());
 r.post('/',                requirePermission('ordering_question', 'create'),      ctrl.create);
+r.post('/create-full',     requirePermission('ordering_question', 'create'),      ctrl.createFull);
+r.put('/:id/update-full',  requirePermission('ordering_question', 'update'),      ctrl.updateFull);
 r.patch('/:id/restore',   requirePermission('ordering_question', 'delete'),      ctrl.restore);
 r.patch('/:id',           requirePermission('ordering_question', 'update'),      ctrl.update);
 r.delete('/:id/permanent', requirePermission('ordering_question', 'delete'),     ctrl.remove);

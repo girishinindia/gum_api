@@ -6733,6 +6733,7 @@ RULES FOR EACH QUESTION TYPE:
 - "true_false": Generate exactly 2 options: "True" and "False". One is correct. Use ONLY for clear-cut factual statements. NEVER prefix the question_text with "True or False:" or any similar prefix — the type field already indicates it.
 
 IMPORTANT GUIDELINES:
+- STRICTLY CONTENT-BOUND: Every question MUST come directly from the provided tutorial content. Do NOT introduce any theory, concept, term, syntax, function, example, or fact that is NOT explicitly mentioned or demonstrated in the provided content. If something is not in the tutorial text, do NOT ask about it — even if it is related to the topic. The tutorial content is the ONLY source of truth.
 - Questions must test real understanding, not just trivial facts — think like a teacher preparing an exam AND an interviewer testing candidates
 - Include conceptual, practical, tricky, and application-based questions
 - Each question must be clearly answerable from the provided content
@@ -6745,6 +6746,12 @@ IMPORTANT GUIDELINES:
 - Generate a short unique code for each question (e.g., "q-html-basics-01")
 - CRITICAL: Vary question types throughout — do NOT cluster same types together
 - DO NOT hold back — generate every meaningful question the content supports
+
+CODE FORMATTING RULE:
+- When including code snippets in question_text or option_text, ALWAYS wrap them in markdown triple backtick fences with the language tag (e.g. \`\`\`c, \`\`\`python, \`\`\`java, \`\`\`html, \`\`\`javascript, etc.).
+- For inline code references (variable names, function names, keywords), wrap them in single backticks (e.g. \`printf\`, \`int\`, \`main()\`).
+- Example GOOD: "What is the output of the following code?\n\n\`\`\`c\n#include <stdio.h>\nint main() {\n  printf(\\"Hello\\");\n  return 0;\n}\n\`\`\`"
+- Example BAD: "What is the output of the following code?\n\n#include <stdio.h>\nint main() {\n  printf(\\"Hello\\");\n  return 0;\n}"
 
 Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
 {
@@ -6960,6 +6967,10 @@ Keep common and technical English words in English script (Latin letters) — do
 Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names.
 GOOD example (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD example (Hindi): "एचटीएमएल5 की मूल बातें।" — WRONG
+
+ADDITIONAL RULE: NEVER translate the option text "True" or "False". These MUST remain exactly as "True" and "False" in ALL languages.
+
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
 
 Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
 {
@@ -7250,6 +7261,7 @@ export async function autoTranslateMcq(req: Request, res: Response) {
       engOptions: string[];
       options: { id: number; display_order: number }[];
       missingLangs: typeof materialLangs;
+      incompleteLangIds: Set<number>;
     };
     const translationQueue: QueuedQuestion[] = [];
 
@@ -7268,16 +7280,26 @@ export async function autoTranslateMcq(req: Request, res: Response) {
         continue;
       }
 
-      // Find which languages are missing
+      // Find which languages are missing OR incomplete (hint/explanation null when English has them)
       const { data: existingTrans } = await supabase
         .from('mcq_question_translations')
-        .select('language_id')
+        .select('language_id, hint_text, explanation_text')
         .eq('mcq_question_id', question.id)
         .is('deleted_at', null);
-      const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
-      const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
-      if (missingLangs.length === 0) {
-        results.push({ question_id: question.id, status: 'skipped', reason: 'All languages exist' });
+      const existingLangMap = new Map((existingTrans || []).map(t => [t.language_id, t]));
+      const missingLangs = materialLangs.filter(l => !existingLangMap.has(l.id));
+      // Also find languages that exist but are missing hint/explanation when English has them
+      const hasEngHint = !!(engQTrans.hint_text);
+      const hasEngExplanation = !!(engQTrans.explanation_text);
+      const incompleteLangs = materialLangs.filter(l => {
+        if (l.id === 7) return false; // skip English
+        const existing = existingLangMap.get(l.id);
+        if (!existing) return false; // already in missingLangs
+        return (hasEngHint && !existing.hint_text) || (hasEngExplanation && !existing.explanation_text);
+      });
+      const langsToTranslate = [...missingLangs, ...incompleteLangs];
+      if (langsToTranslate.length === 0) {
+        results.push({ question_id: question.id, status: 'skipped', reason: 'All languages complete' });
         continue;
       }
 
@@ -7304,6 +7326,7 @@ export async function autoTranslateMcq(req: Request, res: Response) {
         });
       }
 
+      const incompleteLangIds = new Set(incompleteLangs.map(l => l.id));
       translationQueue.push({
         question_id: question.id,
         engText: engQTrans.question_text,
@@ -7311,7 +7334,8 @@ export async function autoTranslateMcq(req: Request, res: Response) {
         engExplanation: engQTrans.explanation_text || '',
         engOptions: engOptionTexts,
         options: options || [],
-        missingLangs,
+        missingLangs: langsToTranslate,
+        incompleteLangIds,
       });
     }
 
@@ -7343,11 +7367,15 @@ hint_text: "${item.hint_text}"
 explanation_text: "${item.explanation_text}"
 options: ${JSON.stringify(item.options)}`).join('\n')}
 
-MOST IMPORTANT RULE:
-Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
+MOST IMPORTANT RULES:
+1. Keep common and technical English words in English script (Latin letters) — do NOT transliterate them.
 GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
 
+
+2. NEVER translate the option text "True" or "False". These MUST remain exactly as "True" and "False" in ALL languages. Do NOT convert them to local language equivalents.
+
+3. CODE FORMATTING: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks.
 Return ONLY valid JSON:
 {
   "translations": [
@@ -7371,9 +7399,10 @@ Return ONLY valid JSON:
         const transData = parseJSON(aiResult.text);
         const translationsArray: any[] = transData.translations || (Array.isArray(transData) ? transData : []);
 
-        // Process each question's translations and batch DB inserts
+        // Process each question's translations — INSERT for missing, UPDATE for incomplete
         const allQTransInserts: any[] = [];
         const allOptTransInserts: any[] = [];
+        const allQTransUpdates: { question_id: number; language_id: number; hint_text: string | null; explanation_text: string | null }[] = [];
 
         for (let qi = 0; qi < batch.length; qi++) {
           const item = batch[qi];
@@ -7390,35 +7419,48 @@ Return ONLY valid JSON:
             const langData = transEntry[lang.iso_code];
             if (!langData) continue;
 
-            allQTransInserts.push({
-              mcq_question_id: item.question_id,
-              language_id: lang.id,
-              question_text: langData.question_text || item.engText,
-              hint_text: langData.hint_text || null,
-              explanation_text: langData.explanation_text || null,
-              is_active: true,
-              created_by: userId,
-            });
-            langsDone++;
+            const isIncomplete = item.incompleteLangIds.has(lang.id);
 
-            if (langData.options && Array.isArray(langData.options)) {
-              for (let oi = 0; oi < Math.min(langData.options.length, item.options.length); oi++) {
-                allOptTransInserts.push({
-                  mcq_option_id: item.options[oi].id,
-                  language_id: lang.id,
-                  option_text: langData.options[oi],
-                  is_active: true,
-                  created_by: userId,
-                });
+            if (isIncomplete) {
+              // UPDATE existing record — only fill in missing hint/explanation
+              allQTransUpdates.push({
+                question_id: item.question_id,
+                language_id: lang.id,
+                hint_text: langData.hint_text || null,
+                explanation_text: langData.explanation_text || null,
+              });
+            } else {
+              // INSERT new record
+              allQTransInserts.push({
+                mcq_question_id: item.question_id,
+                language_id: lang.id,
+                question_text: langData.question_text || item.engText,
+                hint_text: langData.hint_text || null,
+                explanation_text: langData.explanation_text || null,
+                is_active: true,
+                created_by: userId,
+              });
+
+              if (langData.options && Array.isArray(langData.options)) {
+                for (let oi = 0; oi < Math.min(langData.options.length, item.options.length); oi++) {
+                  allOptTransInserts.push({
+                    mcq_option_id: item.options[oi].id,
+                    language_id: lang.id,
+                    option_text: langData.options[oi],
+                    is_active: true,
+                    created_by: userId,
+                  });
+                }
               }
             }
+            langsDone++;
           }
 
           totalTranslated += langsDone;
           results.push({ question_id: item.question_id, status: 'success', languages_added: langsDone });
         }
 
-        // Bulk insert all translations
+        // Bulk insert new translations
         if (allQTransInserts.length > 0) {
           for (let ci = 0; ci < allQTransInserts.length; ci += 100) {
             await supabase.from('mcq_question_translations').insert(allQTransInserts.slice(ci, ci + 100));
@@ -7427,6 +7469,19 @@ Return ONLY valid JSON:
         if (allOptTransInserts.length > 0) {
           for (let ci = 0; ci < allOptTransInserts.length; ci += 100) {
             await supabase.from('mcq_option_translations').insert(allOptTransInserts.slice(ci, ci + 100));
+          }
+        }
+        // Update incomplete translations with missing hint/explanation
+        for (const upd of allQTransUpdates) {
+          const updateData: any = {};
+          if (upd.hint_text) updateData.hint_text = upd.hint_text;
+          if (upd.explanation_text) updateData.explanation_text = upd.explanation_text;
+          if (Object.keys(updateData).length > 0) {
+            await supabase.from('mcq_question_translations')
+              .update(updateData)
+              .eq('mcq_question_id', upd.question_id)
+              .eq('language_id', upd.language_id)
+              .is('deleted_at', null);
           }
         }
       } catch (batchErr: any) {
@@ -7667,6 +7722,7 @@ RULES FOR EACH QUESTION TYPE:
 - "code_output": Ask "What is the output of the following code?" with a code snippet in the question. The correct_answer is the exact output.
 
 IMPORTANT GUIDELINES:
+- STRICTLY CONTENT-BOUND: Every question MUST come directly from the provided tutorial content. Do NOT introduce any theory, concept, term, syntax, function, example, or fact that is NOT explicitly mentioned or demonstrated in the provided content. If something is not in the tutorial text, do NOT ask about it — even if it is related to the topic. The tutorial content is the ONLY source of truth.
 - Questions must test real understanding, not just trivial facts
 - Include conceptual, practical, and application-based questions
 - Each question must be clearly answerable from the provided content
@@ -7679,6 +7735,11 @@ IMPORTANT GUIDELINES:
 - Generate a short unique code for each question (e.g., "ow-c-data-types-01")
 - is_case_sensitive: set to false for most questions (accept any case), true only when exact casing matters (e.g., code output)
 - CRITICAL: Vary question types throughout — do NOT cluster same types together
+
+CODE FORMATTING RULE:
+- When including code snippets in question_text, hint, or explanation, ALWAYS wrap them in markdown triple backtick fences with the language tag (e.g. \`\`\`c, \`\`\`python, \`\`\`java).
+- For inline code references (variable names, function names, keywords), wrap them in single backticks (e.g. \`printf\`, \`int\`).
+- For correct_answer field, do NOT use backticks — keep it as plain text since it must be matched exactly.
 
 Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
 {
@@ -7793,14 +7854,15 @@ Return ONLY a valid JSON object (no markdown, no code blocks) with this exact st
           language_id: 7,
           question_text: q.question_text,
           correct_answer: q.correct_answer,
-          hint_text: q.hint || null,
-          explanation_text: q.explanation || null,
+          hint: q.hint || null,
+          explanation: q.explanation || null,
           is_active: true,
           created_by: userId,
         });
       }
       if (qTransInserts.length > 0) {
-        await supabase.from('one_word_question_translations').insert(qTransInserts);
+        const { error: qTransErr } = await supabase.from('one_word_question_translations').insert(qTransInserts);
+        if (qTransErr) console.error('OW question translation insert error:', qTransErr.message);
       }
 
       // ─── BATCH PHASE 4: Bulk insert synonyms + English synonym translations ───
@@ -7890,6 +7952,8 @@ BAD example (Hindi): "एचटीएमएल5 की मूल बातें
 
 IMPORTANT: For correct_answer and synonyms — if the answer is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if the answer is a natural language word.
 
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
+
 Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
 {
   "translations": [
@@ -7948,8 +8012,8 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
                 language_id: lang.id,
                 question_text: langData.question_text || q.question_text,
                 correct_answer: langData.correct_answer || q.correct_answer,
-                hint_text: langData.hint_text || null,
-                explanation_text: langData.explanation_text || null,
+                hint: langData.hint_text || langData.hint || null,
+                explanation: langData.explanation_text || langData.explanation || null,
                 is_active: true,
                 created_by: userId,
               });
@@ -8025,7 +8089,7 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
         // Get English translation
         const { data: engTrans } = await supabase
           .from('one_word_question_translations')
-          .select('question_text, correct_answer, hint_text, explanation_text')
+          .select('question_text, correct_answer, hint, explanation')
           .eq('one_word_question_id', qr.id)
           .eq('language_id', 7)
           .single();
@@ -8072,8 +8136,8 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
           is_trim_whitespace: qr.is_trim_whitespace,
           question_text: engTrans?.question_text || '',
           correct_answer: engTrans?.correct_answer || '',
-          hint_text: engTrans?.hint_text || null,
-          explanation_text: engTrans?.explanation_text || null,
+          hint_text: engTrans?.hint || null,
+          explanation_text: engTrans?.explanation || null,
           synonyms: synonymDetails,
           translations_created: translatedLangs,
         });
@@ -8189,7 +8253,7 @@ export async function autoTranslateOw(req: Request, res: Response) {
       // Get English question translation
       const { data: engQTrans } = await supabase
         .from('one_word_question_translations')
-        .select('question_text, correct_answer, hint_text, explanation_text')
+        .select('question_text, correct_answer, hint, explanation')
         .eq('one_word_question_id', question.id)
         .eq('language_id', 7)
         .is('deleted_at', null)
@@ -8240,8 +8304,8 @@ export async function autoTranslateOw(req: Request, res: Response) {
         question_id: question.id,
         engText: engQTrans.question_text,
         engCorrectAnswer: engQTrans.correct_answer || '',
-        engHint: engQTrans.hint_text || '',
-        engExplanation: engQTrans.explanation_text || '',
+        engHint: engQTrans.hint || '',
+        engExplanation: engQTrans.explanation || '',
         engSynonyms: engSynonymTexts,
         synonyms: synonyms || [],
         missingLangs,
@@ -8283,6 +8347,8 @@ GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
 
 IMPORTANT: For correct_answer and synonyms — if the answer is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if the answer is a natural language word.
+
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
 
 Return ONLY valid JSON:
 {
@@ -8332,8 +8398,8 @@ Return ONLY valid JSON:
               language_id: lang.id,
               question_text: langData.question_text || item.engText,
               correct_answer: langData.correct_answer || item.engCorrectAnswer,
-              hint_text: langData.hint_text || null,
-              explanation_text: langData.explanation_text || null,
+              hint: langData.hint_text || langData.hint || null,
+              explanation: langData.explanation_text || langData.explanation || null,
               is_active: true,
               created_by: userId,
             });
@@ -8593,6 +8659,7 @@ RULES FOR EACH ANSWER TYPE:
 - "long_answer": Detailed explanations, code walkthroughs, multi-step reasoning. min_words=100, max_words=500. Questions like "Explain in detail...", "Compare and contrast...", "What would happen if... and why?"
 
 IMPORTANT GUIDELINES:
+- STRICTLY CONTENT-BOUND: Every question MUST come directly from the provided tutorial content. Do NOT introduce any theory, concept, term, syntax, function, example, or fact that is NOT explicitly mentioned or demonstrated in the provided content. If something is not in the tutorial text, do NOT ask about it — even if it is related to the topic. The tutorial content is the ONLY source of truth.
 - Questions should test UNDERSTANDING, not just recall — use "Explain why...", "Compare and contrast...", "What would happen if...", "Describe how..."
 - The explanation field should contain a comprehensive MODEL ANSWER that covers all key points a student should mention
 - For short_answer: model answer should be 1-3 concise sentences covering the essential points
@@ -8601,6 +8668,10 @@ IMPORTANT GUIDELINES:
 - Auto-assign points: easy=1, medium=2, hard=3
 - Generate a short unique code for each question (e.g., "desc-c-pointers-01")
 - CRITICAL: Vary answer types throughout — do NOT cluster same types together
+
+CODE FORMATTING RULE:
+- When including code snippets in question_text, hint, or explanation, ALWAYS wrap them in markdown triple backtick fences with the language tag (e.g. \`\`\`c, \`\`\`python, \`\`\`java).
+- For inline code references (variable names, function names, keywords), wrap them in single backticks (e.g. \`printf\`, \`int\`).
 
 Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
 {
@@ -8762,6 +8833,8 @@ Keep common and technical English words in English script (Latin letters) — do
 Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names.
 GOOD example (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD example (Hindi): "एचटीएमएल5 की मूल बातें।" — WRONG
+
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
 
 Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
 {
@@ -9066,6 +9139,8 @@ Keep common and technical English words in English script (Latin letters) — do
 GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
 
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
+
 Return ONLY valid JSON:
 {
   "translations": [
@@ -9239,7 +9314,7 @@ export async function autoGenerateMatching(req: Request, res: Response) {
       .from('matching_questions')
       .select('display_order')
       .eq('topic_id', topic_id)
-      .eq('is_deleted', false)
+      .is('deleted_at', null)
       .order('display_order', { ascending: false })
       .limit(1);
     let nextDisplayOrder = ((existingQs?.[0]?.display_order) || 0) + 1;
@@ -9330,6 +9405,7 @@ QUANTITY: ${quantityInstruction}
 DIFFICULTY: ${difficultyInstruction}
 
 IMPORTANT GUIDELINES:
+- STRICTLY CONTENT-BOUND: Every question MUST come directly from the provided tutorial content. Do NOT introduce any theory, concept, term, syntax, function, example, or fact that is NOT explicitly mentioned or demonstrated in the provided content. If something is not in the tutorial text, do NOT ask about it — even if it is related to the topic. The tutorial content is the ONLY source of truth.
 - Each matching question should have 3-6 pairs of items to match
 - Left items are terms/concepts/code, right items are their definitions/descriptions/outputs
 - Questions should test real understanding of relationships between concepts
@@ -9339,6 +9415,10 @@ IMPORTANT GUIDELINES:
 - Generate a short unique code for each question (e.g., "match-c-data-types-01")
 - partial_scoring: set to true for questions with 4 or more pairs (allow partial credit), false for 3 or fewer pairs
 - CRITICAL: Vary difficulty throughout — do NOT cluster same difficulties together
+
+CODE FORMATTING RULE:
+- When including code snippets in question_text, left_text, right_text, hint, or explanation, ALWAYS wrap them in markdown triple backtick fences with the language tag (e.g. \`\`\`c, \`\`\`python, \`\`\`java).
+- For inline code references (variable names, function names, keywords), wrap them in single backticks (e.g. \`printf\`, \`int\`).
 
 Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
 {
@@ -9548,6 +9628,8 @@ BAD example (Hindi): "एचटीएमएल5 की मूल बातें
 
 IMPORTANT: For pair left_text and right_text — if they are technical keywords, code terms, or programming constructs, keep them EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if they are natural language words.
 
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
+
 Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
 {
   "translations": [
@@ -9695,7 +9777,7 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
           .from('matching_pairs')
           .select('id, display_order')
           .eq('matching_question_id', qr.id)
-          .eq('is_deleted', false)
+          .is('deleted_at', null)
           .order('display_order');
 
         const pairDetails: any[] = [];
@@ -9719,7 +9801,7 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
           .select('language_id, languages(name)')
           .eq('matching_question_id', qr.id)
           .neq('language_id', 7)
-          .eq('is_deleted', false);
+          .is('deleted_at', null);
         const translatedLangs = (langTrans || []).map((lt: any) => lt.languages?.name || '').filter(Boolean);
 
         questions.push({
@@ -9811,7 +9893,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
     let questionsQuery = supabase
       .from('matching_questions')
       .select('id, code, slug, topic_id')
-      .eq('is_deleted', false)
+      .is('deleted_at', null)
       .eq('is_active', true);
 
     if (question_ids && question_ids.length > 0) {
@@ -9849,7 +9931,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
         .select('question_text, hint, explanation')
         .eq('matching_question_id', question.id)
         .eq('language_id', 7)
-        .eq('is_deleted', false)
+        .is('deleted_at', null)
         .single();
 
       if (!engQTrans || !engQTrans.question_text) {
@@ -9862,7 +9944,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
         .from('matching_question_translations')
         .select('language_id')
         .eq('matching_question_id', question.id)
-        .eq('is_deleted', false);
+        .is('deleted_at', null);
       const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
       const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
       if (missingLangs.length === 0) {
@@ -9875,7 +9957,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
         .from('matching_pairs')
         .select('id, display_order')
         .eq('matching_question_id', question.id)
-        .eq('is_deleted', false)
+        .is('deleted_at', null)
         .order('display_order');
 
       const pairIds = (pairs || []).map(p => p.id);
@@ -9886,7 +9968,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
           .select('matching_pair_id, left_text, right_text')
           .in('matching_pair_id', pairIds)
           .eq('language_id', 7)
-          .eq('is_deleted', false);
+          .is('deleted_at', null);
         engPairTexts = (pairs || []).map(p => {
           const t = (engPTrans || []).find(t => t.matching_pair_id === p.id);
           return { left_text: t?.left_text || '', right_text: t?.right_text || '' };
@@ -9937,6 +10019,8 @@ GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
 
 IMPORTANT: For pair left_text and right_text — if they are technical keywords, code terms, or programming constructs, keep them EXACTLY as-is in ALL languages (do NOT translate "int", "printf", "void", etc.). Only translate if they are natural language words.
+
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
 
 Return ONLY valid JSON:
 {
@@ -10132,7 +10216,7 @@ export async function autoGenerateOrdering(req: Request, res: Response) {
       .from('ordering_questions')
       .select('display_order')
       .eq('topic_id', topic_id)
-      .eq('is_deleted', false)
+      .is('deleted_at', null)
       .order('display_order', { ascending: false })
       .limit(1);
     let nextDisplayOrder = ((existingQs?.[0]?.display_order) || 0) + 1;
@@ -10223,6 +10307,7 @@ QUANTITY: ${quantityInstruction}
 DIFFICULTY: ${difficultyInstruction}
 
 IMPORTANT GUIDELINES:
+- STRICTLY CONTENT-BOUND: Every question MUST come directly from the provided tutorial content. Do NOT introduce any theory, concept, term, syntax, function, example, or fact that is NOT explicitly mentioned or demonstrated in the provided content. If something is not in the tutorial text, do NOT ask about it — even if it is related to the topic. The tutorial content is the ONLY source of truth.
 - Each ordering question should have 3-8 items that must be arranged in the correct order/sequence
 - Items represent steps, stages, phases, events, priorities, or any sequential concept
 - The correct_position field (1-based) indicates the correct order
@@ -10233,6 +10318,10 @@ IMPORTANT GUIDELINES:
 - Generate a short unique code for each question (e.g., "ord-c-compilation-steps-01")
 - partial_scoring: set to true for questions with 5 or more items (allow partial credit), false for fewer
 - CRITICAL: Vary difficulty throughout — do NOT cluster same difficulties together
+
+CODE FORMATTING RULE:
+- When including code snippets in question_text, item_text, hint, or explanation, ALWAYS wrap them in markdown triple backtick fences with the language tag (e.g. \`\`\`c, \`\`\`python, \`\`\`java).
+- For inline code references (variable names, function names, keywords), wrap them in single backticks (e.g. \`printf\`, \`int\`).
 
 Return ONLY a valid JSON object (no markdown, no code blocks) with this exact structure:
 {
@@ -10443,6 +10532,8 @@ BAD example (Hindi): "एचटीएमएल5 की मूल बातें
 
 IMPORTANT: For item_text — if it is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages (do NOT translate "Preprocessing", "Linking", "int", "printf", etc.). Only translate if it is a natural language phrase.
 
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
+
 Return ONLY valid JSON with this EXACT structure (array of translations, one per question, in the SAME ORDER):
 {
   "translations": [
@@ -10578,7 +10669,7 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
           .from('ordering_items')
           .select('id, correct_position, display_order')
           .eq('ordering_question_id', qr.id)
-          .eq('is_deleted', false)
+          .is('deleted_at', null)
           .order('correct_position');
 
         const itemDetails: any[] = [];
@@ -10602,7 +10693,7 @@ Return ONLY valid JSON with this EXACT structure (array of translations, one per
           .select('language_id, languages(name)')
           .eq('ordering_question_id', qr.id)
           .neq('language_id', 7)
-          .eq('is_deleted', false);
+          .is('deleted_at', null);
         const translatedLangs = (langTrans || []).map((lt: any) => lt.languages?.name || '').filter(Boolean);
 
         questions.push({
@@ -10694,7 +10785,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
     let questionsQuery = supabase
       .from('ordering_questions')
       .select('id, code, slug, topic_id')
-      .eq('is_deleted', false)
+      .is('deleted_at', null)
       .eq('is_active', true);
 
     if (question_ids && question_ids.length > 0) {
@@ -10732,7 +10823,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
         .select('question_text, hint, explanation')
         .eq('ordering_question_id', question.id)
         .eq('language_id', 7)
-        .eq('is_deleted', false)
+        .is('deleted_at', null)
         .single();
 
       if (!engQTrans || !engQTrans.question_text) {
@@ -10745,7 +10836,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
         .from('ordering_question_translations')
         .select('language_id')
         .eq('ordering_question_id', question.id)
-        .eq('is_deleted', false);
+        .is('deleted_at', null);
       const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
       const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
       if (missingLangs.length === 0) {
@@ -10758,7 +10849,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
         .from('ordering_items')
         .select('id, display_order, correct_position')
         .eq('ordering_question_id', question.id)
-        .eq('is_deleted', false)
+        .is('deleted_at', null)
         .order('correct_position');
 
       const itemIds = (items || []).map(i => i.id);
@@ -10769,7 +10860,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
           .select('ordering_item_id, item_text')
           .in('ordering_item_id', itemIds)
           .eq('language_id', 7)
-          .eq('is_deleted', false);
+          .is('deleted_at', null);
         engItemTexts = (items || []).map(i => {
           const t = (engITrans || []).find(t => t.ordering_item_id === i.id);
           return { item_text: t?.item_text || '' };
@@ -10820,6 +10911,8 @@ GOOD (Hindi): "HTML5 की Fundamentals सीखें।"
 BAD (Hindi): "एचटीएमएल5 की मूल बातें।"
 
 IMPORTANT: For item_text — if it is a technical keyword, code term, or programming construct, keep it EXACTLY as-is in ALL languages. Only translate if it is a natural language phrase.
+
+CODE FORMATTING RULE: PRESERVE all markdown code fences (triple backticks with language tags like \`\`\`c, \`\`\`python) exactly as they appear in the source text. Do NOT remove or alter code fences during translation. Also preserve inline backticks (\`code\`).
 
 Return ONLY valid JSON:
 {

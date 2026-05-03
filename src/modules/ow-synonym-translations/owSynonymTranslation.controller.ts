@@ -26,7 +26,7 @@ function parseBody(req: Request): any {
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });
 
-  let q = supabase.from('one_word_synonym_translations').select('*, one_word_synonyms(synonym_text), languages(name, native_name, iso_code)', { count: 'exact' });
+  let q = supabase.from('one_word_synonym_translations').select('*, one_word_synonyms(one_word_question_id, display_order), languages(name, native_name, iso_code)', { count: 'exact' });
 
   if (search) q = q.ilike('synonym_text', `%${search}%`);
   if (req.query.one_word_synonym_id) q = q.eq('one_word_synonym_id', parseInt(req.query.one_word_synonym_id as string));
@@ -48,7 +48,7 @@ export async function list(req: Request, res: Response) {
 }
 
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from('one_word_synonym_translations').select('*, one_word_synonyms(synonym_text), languages(name, native_name, iso_code)').eq('id', req.params.id).single();
+  const { data, error: e } = await supabase.from('one_word_synonym_translations').select('*, one_word_synonyms(one_word_question_id, display_order), languages(name, native_name, iso_code)').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'One word synonym translation not found', 404);
   return ok(res, data);
 }
@@ -70,7 +70,7 @@ export async function create(req: Request, res: Response) {
 
   body.created_by = req.user!.id;
 
-  const { data, error: e } = await supabase.from('one_word_synonym_translations').insert(body).select('*, one_word_synonyms(synonym_text), languages(name, native_name, iso_code)').single();
+  const { data, error: e } = await supabase.from('one_word_synonym_translations').insert(body).select('*, one_word_synonyms(one_word_question_id, display_order), languages(name, native_name, iso_code)').single();
   if (e) {
     if (e.code === '23505') return err(res, 'Translation for this synonym and language already exists', 409);
     return err(res, e.message, 500);
@@ -108,7 +108,7 @@ export async function update(req: Request, res: Response) {
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
 
-  const { data, error: e } = await supabase.from('one_word_synonym_translations').update(updates).eq('id', id).select('*, one_word_synonyms(synonym_text), languages(name, native_name, iso_code)').single();
+  const { data, error: e } = await supabase.from('one_word_synonym_translations').update(updates).eq('id', id).select('*, one_word_synonyms(one_word_question_id, display_order), languages(name, native_name, iso_code)').single();
   if (e) {
     if (e.code === '23505') return err(res, 'Translation for this synonym and language already exists', 409);
     return err(res, e.message, 500);

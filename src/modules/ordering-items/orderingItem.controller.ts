@@ -32,9 +32,9 @@ export async function list(req: Request, res: Response) {
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
-    q = q.eq('is_deleted', true);
+    q = q.not('deleted_at', 'is', null);
   } else {
-    q = q.eq('is_deleted', false);
+    q = q.is('deleted_at', null);
   }
 
   // Filters
@@ -53,7 +53,7 @@ export async function list(req: Request, res: Response) {
   let englishMap: Record<number, { item_text: string | null }> = {};
   if (itemIds.length > 0) {
     let tQ = supabase.from('ordering_item_translations').select('ordering_item_id, item_text').eq('language_id', 7).in('ordering_item_id', itemIds);
-    if (!isTrash) tQ = tQ.eq('is_deleted', false);
+    if (!isTrash) tQ = tQ.is('deleted_at', null);
     const { data: translations } = await tQ;
     if (translations) {
       for (const t of translations) englishMap[t.ordering_item_id] = { item_text: t.item_text };
@@ -64,7 +64,7 @@ export async function list(req: Request, res: Response) {
   let translationCountMap: Record<number, number> = {};
   if (itemIds.length > 0) {
     let tQ = supabase.from('ordering_item_translations').select('ordering_item_id').in('ordering_item_id', itemIds);
-    if (!isTrash) tQ = tQ.eq('is_deleted', false);
+    if (!isTrash) tQ = tQ.is('deleted_at', null);
     const { data: translations } = await tQ;
     if (translations) {
       for (const t of translations) {
@@ -149,18 +149,19 @@ export async function update(req: Request, res: Response) {
 
 export async function softDelete(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('ordering_items').select('ordering_question_id, is_deleted').eq('id', id).single();
+  const { data: old } = await supabase.from('ordering_items').select('ordering_question_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Ordering item not found', 404);
-  if (old.is_deleted) return err(res, 'Ordering item is already in trash', 400);
+  if (old.deleted_at) return err(res, 'Ordering item is already in trash', 400);
 
+  const now = new Date().toISOString();
   const { data, error: e } = await supabase
     .from('ordering_items')
-    .update({ is_deleted: true, is_active: false })
+    .update({ deleted_at: now, is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   // Cascade soft-delete to ordering item translations
-  await supabase.from('ordering_item_translations').update({ is_deleted: true, is_active: false }).eq('ordering_item_id', id).eq('is_deleted', false);
+  await supabase.from('ordering_item_translations').update({ deleted_at: now, is_active: false }).eq('ordering_item_id', id).is('deleted_at', null);
 
   await clearCache(old.ordering_question_id);
   logAdmin({ actorId: req.user!.id, action: 'ordering_item_soft_deleted', targetType: 'ordering_item', targetId: id, targetName: `OrderingItem-${id}`, ip: getClientIp(req) });
@@ -169,18 +170,18 @@ export async function softDelete(req: Request, res: Response) {
 
 export async function restore(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('ordering_items').select('ordering_question_id, is_deleted').eq('id', id).single();
+  const { data: old } = await supabase.from('ordering_items').select('ordering_question_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Ordering item not found', 404);
-  if (!old.is_deleted) return err(res, 'Ordering item is not in trash', 400);
+  if (!old.deleted_at) return err(res, 'Ordering item is not in trash', 400);
 
   const { data, error: e } = await supabase
     .from('ordering_items')
-    .update({ is_deleted: false, is_active: true })
+    .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
   // Cascade restore ordering item translations
-  await supabase.from('ordering_item_translations').update({ is_deleted: false, is_active: true }).eq('ordering_item_id', id).eq('is_deleted', true);
+  await supabase.from('ordering_item_translations').update({ deleted_at: null, is_active: true }).eq('ordering_item_id', id).not('deleted_at', 'is', null);
 
   await clearCache(old.ordering_question_id);
   logAdmin({ actorId: req.user!.id, action: 'ordering_item_restored', targetType: 'ordering_item', targetId: id, targetName: `OrderingItem-${id}`, ip: getClientIp(req) });

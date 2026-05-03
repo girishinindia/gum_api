@@ -99,11 +99,17 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Get total material languages count
+  const { count: totalLanguages } = await supabase.from('languages')
+    .select('id', { count: 'exact', head: true })
+    .eq('for_material', true).eq('is_active', true);
+
   const enriched = (data || []).map((q: any) => ({
     ...q,
     question_text: englishMap[q.id]?.question_text || null,
     correct_answer: englishMap[q.id]?.correct_answer || null,
     translation_count: translationCountMap[q.id] || 0,
+    total_languages: totalLanguages || 0,
     synonym_count: synonymCountMap[q.id] || 0,
   }));
 
@@ -277,5 +283,265 @@ export async function remove(req: Request, res: Response) {
     return ok(res, null, 'One-word question permanently deleted');
   } catch (error: any) {
     return err(res, error.message || 'Failed to permanently delete one-word question', 500);
+  }
+}
+
+// ── Create Full OW (Question + Synonyms + English Translations) ──
+export async function createFull(req: Request, res: Response) {
+  try {
+    const {
+      topic_id, question_type, difficulty_level, question_text, correct_answer, hint, explanation,
+      synonyms, points, display_order, is_mandatory, is_active, is_case_sensitive, is_trim_whitespace
+    } = req.body;
+
+    if (!topic_id || !question_text || !correct_answer) {
+      return err(res, 'topic_id, question_text, and correct_answer are required', 400);
+    }
+
+    // Auto-generate code from question_text (first 30 chars)
+    const code = question_text.substring(0, 30).trim();
+    const slug = await generateUniqueSlug(supabase, 'one_word_questions', question_text, undefined, { column: 'topic_id', value: topic_id });
+
+    // Auto display_order: get max for this topic
+    let finalDisplayOrder = display_order;
+    if (finalDisplayOrder === undefined || finalDisplayOrder === null) {
+      const { data: maxRow } = await supabase
+        .from('one_word_questions').select('display_order')
+        .eq('topic_id', topic_id).is('deleted_at', null)
+        .order('display_order', { ascending: false }).limit(1);
+      finalDisplayOrder = (maxRow && maxRow.length > 0 && maxRow[0].display_order != null) ? maxRow[0].display_order + 1 : 1;
+    }
+
+    // 1. Create the OW question
+    const { data: question, error: qErr } = await supabase.from('one_word_questions').insert({
+      topic_id, code, slug,
+      question_type: question_type || 'one_word',
+      difficulty_level: difficulty_level || 'medium',
+      points: points || 1,
+      display_order: finalDisplayOrder,
+      is_mandatory: is_mandatory ?? false,
+      is_case_sensitive: is_case_sensitive ?? false,
+      is_trim_whitespace: is_trim_whitespace ?? true,
+      is_active: is_active ?? true,
+      created_by: req.user!.id,
+    }).select().single();
+    if (qErr) {
+      if (qErr.code === '23505') return err(res, 'One-word question already exists for this topic', 409);
+      return err(res, qErr.message, 500);
+    }
+
+    // 2. Create English question translation (language_id = 7)
+    const { data: qTrans, error: qtErr } = await supabase.from('one_word_question_translations').insert({
+      one_word_question_id: question.id,
+      language_id: 7,
+      question_text,
+      correct_answer,
+      hint: hint || null,
+      explanation: explanation || null,
+      is_active: true,
+      created_by: req.user!.id,
+    }).select().single();
+    if (qtErr) return err(res, `Question translation failed: ${qtErr.message}`, 500);
+
+    // 3. Create synonyms + English synonym translations
+    let createdSynonyms: any[] = [];
+    if (synonyms && Array.isArray(synonyms) && synonyms.length > 0) {
+      const synonymInserts = synonyms.map((s: any, idx: number) => ({
+        one_word_question_id: question.id,
+        display_order: s.display_order ?? idx + 1,
+        is_active: true,
+        created_by: req.user!.id,
+      }));
+      const { data: newSynonyms, error: sErr } = await supabase.from('one_word_synonyms').insert(synonymInserts).select();
+      if (sErr) return err(res, `Synonyms insert failed: ${sErr.message}`, 500);
+      createdSynonyms = newSynonyms || [];
+
+      // 4. Create English synonym translations (language_id = 7)
+      const synTransInserts = createdSynonyms.map((syn: any, idx: number) => ({
+        one_word_synonym_id: syn.id,
+        language_id: 7,
+        synonym_text: synonyms[idx].synonym_text || '',
+        is_active: true,
+        created_by: req.user!.id,
+      }));
+      const { error: stErr } = await supabase.from('one_word_synonym_translations').insert(synTransInserts).select();
+      if (stErr) return err(res, `Synonym translations failed: ${stErr.message}`, 500);
+    }
+
+    await clearCache(topic_id);
+    logAdmin({ actorId: req.user!.id, action: 'ow_question_created_full', targetType: 'ow_question', targetId: question.id, targetName: code, ip: getClientIp(req) });
+
+    return ok(res, {
+      ...question,
+      question_text,
+      correct_answer,
+      hint: hint || null,
+      explanation: explanation || null,
+      synonyms: createdSynonyms.map((syn: any, idx: number) => ({
+        ...syn,
+        synonym_text: synonyms[idx].synonym_text || '',
+      })),
+    }, 'One-word question created with synonyms and English translations', 201);
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to create full one-word question', 500);
+  }
+}
+
+// ── Update Full OW (Question + Synonyms + English Translations) ──
+export async function updateFull(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { data: old } = await supabase.from('one_word_questions').select('*').eq('id', id).single();
+    if (!old) return err(res, 'One-word question not found', 404);
+
+    const {
+      topic_id, question_type, difficulty_level, question_text, correct_answer, hint, explanation,
+      synonyms, points, display_order, is_mandatory, is_active, is_case_sensitive, is_trim_whitespace
+    } = req.body;
+
+    // 1. Update the OW question
+    const questionUpdates: any = { updated_by: req.user!.id };
+    if (topic_id !== undefined) questionUpdates.topic_id = topic_id;
+    if (question_type !== undefined) questionUpdates.question_type = question_type;
+    if (difficulty_level !== undefined) questionUpdates.difficulty_level = difficulty_level;
+    if (points !== undefined) questionUpdates.points = points;
+    if (display_order !== undefined) questionUpdates.display_order = display_order;
+    if (is_mandatory !== undefined) questionUpdates.is_mandatory = is_mandatory;
+    if (is_active !== undefined) questionUpdates.is_active = is_active;
+    if (is_case_sensitive !== undefined) questionUpdates.is_case_sensitive = is_case_sensitive;
+    if (is_trim_whitespace !== undefined) questionUpdates.is_trim_whitespace = is_trim_whitespace;
+
+    // Re-generate slug if question_text changed
+    if (question_text) {
+      questionUpdates.code = question_text.substring(0, 30).trim();
+      questionUpdates.slug = await generateUniqueSlug(supabase, 'one_word_questions', question_text, id, { column: 'topic_id', value: topic_id || old.topic_id });
+    }
+
+    const { data: updatedQ, error: qErr } = await supabase.from('one_word_questions').update(questionUpdates).eq('id', id).select().single();
+    if (qErr) return err(res, qErr.message, 500);
+
+    // 2. Upsert English question translation
+    if (question_text !== undefined || correct_answer !== undefined) {
+      const { data: existingQT } = await supabase.from('one_word_question_translations')
+        .select('id').eq('one_word_question_id', id).eq('language_id', 7).single();
+
+      const translationUpdates: any = { updated_by: req.user!.id };
+      if (question_text !== undefined) translationUpdates.question_text = question_text;
+      if (correct_answer !== undefined) translationUpdates.correct_answer = correct_answer;
+      if (hint !== undefined) translationUpdates.hint = hint ?? null;
+      if (explanation !== undefined) translationUpdates.explanation = explanation ?? null;
+
+      if (existingQT) {
+        await supabase.from('one_word_question_translations').update(translationUpdates).eq('id', existingQT.id);
+      } else {
+        await supabase.from('one_word_question_translations').insert({
+          one_word_question_id: id,
+          language_id: 7,
+          question_text: question_text || '',
+          correct_answer: correct_answer || '',
+          hint: hint ?? null,
+          explanation: explanation ?? null,
+          is_active: true,
+          created_by: req.user!.id,
+        });
+      }
+    }
+
+    // 3. Replace synonyms if provided
+    if (synonyms && Array.isArray(synonyms)) {
+      // Delete old synonyms + their translations
+      const { data: oldSyns } = await supabase.from('one_word_synonyms').select('id').eq('one_word_question_id', id);
+      if (oldSyns && oldSyns.length > 0) {
+        const oldSynIds = oldSyns.map((s: any) => s.id);
+        await supabase.from('one_word_synonym_translations').delete().in('one_word_synonym_id', oldSynIds);
+        await supabase.from('one_word_synonyms').delete().eq('one_word_question_id', id);
+      }
+
+      // Insert new synonyms
+      if (synonyms.length > 0) {
+        const synonymInserts = synonyms.map((s: any, idx: number) => ({
+          one_word_question_id: id,
+          display_order: s.display_order ?? idx + 1,
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        const { data: newSyns, error: sErr } = await supabase.from('one_word_synonyms').insert(synonymInserts).select();
+        if (sErr) return err(res, `Synonyms update failed: ${sErr.message}`, 500);
+
+        // Insert English synonym translations
+        const synTransInserts = (newSyns || []).map((syn: any, idx: number) => ({
+          one_word_synonym_id: syn.id,
+          language_id: 7,
+          synonym_text: synonyms[idx].synonym_text || '',
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        await supabase.from('one_word_synonym_translations').insert(synTransInserts);
+      }
+    }
+
+    await clearCache(old.topic_id);
+    if (topic_id && topic_id !== old.topic_id) await clearCache(topic_id);
+    logAdmin({ actorId: req.user!.id, action: 'ow_question_updated_full', targetType: 'ow_question', targetId: id, targetName: updatedQ.code || updatedQ.slug, ip: getClientIp(req) });
+
+    return ok(res, updatedQ, 'One-word question updated with synonyms and translations');
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to update full one-word question', 500);
+  }
+}
+
+// ── Get Full OW (Question + Synonyms + All Translations + Coverage) ──
+export async function getFullById(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { data: question, error: qErr } = await supabase.from('one_word_questions').select('*').eq('id', id).is('deleted_at', null).single();
+    if (qErr || !question) return err(res, 'One-word question not found', 404);
+
+    // Get question translations (all languages)
+    const { data: qTranslations } = await supabase.from('one_word_question_translations')
+      .select('*').eq('one_word_question_id', id).is('deleted_at', null);
+
+    // Get synonyms
+    const { data: synonyms } = await supabase.from('one_word_synonyms')
+      .select('*').eq('one_word_question_id', id).is('deleted_at', null)
+      .order('display_order', { ascending: true });
+
+    // Get synonym translations (all languages)
+    const synonymIds = (synonyms || []).map((s: any) => s.id);
+    let synTranslations: any[] = [];
+    if (synonymIds.length > 0) {
+      const { data } = await supabase.from('one_word_synonym_translations')
+        .select('*').in('one_word_synonym_id', synonymIds).is('deleted_at', null);
+      synTranslations = data || [];
+    }
+
+    // Get all material languages
+    const { data: languages } = await supabase.from('languages')
+      .select('id, name, iso_code, for_material').eq('for_material', true).eq('is_active', true);
+
+    // Build translation coverage
+    const qTransLangIds = new Set((qTranslations || []).map((t: any) => t.language_id));
+    const coverage = (languages || []).map((lang: any) => ({
+      language_id: lang.id,
+      language_name: lang.name,
+      language_code: lang.iso_code,
+      has_question_translation: qTransLangIds.has(lang.id),
+      has_synonym_translations: synTranslations.some((st: any) => st.language_id === lang.id),
+    }));
+
+    // Enrich synonyms with their translations
+    const enrichedSynonyms = (synonyms || []).map((syn: any) => ({
+      ...syn,
+      translations: synTranslations.filter((st: any) => st.one_word_synonym_id === syn.id),
+    }));
+
+    return ok(res, {
+      ...question,
+      question_translations: qTranslations || [],
+      synonyms: enrichedSynonyms,
+      translation_coverage: coverage,
+    });
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to get full one-word question', 500);
   }
 }

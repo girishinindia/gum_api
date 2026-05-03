@@ -97,10 +97,16 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Get total material languages count
+  const { count: totalLanguages } = await supabase.from('languages')
+    .select('id', { count: 'exact', head: true })
+    .eq('for_material', true).eq('is_active', true);
+
   const enriched = (data || []).map((q: any) => ({
     ...q,
     question_text: englishMap[q.id] || null,
     translation_count: translationCountMap[q.id] || 0,
+    total_languages: totalLanguages || 0,
     option_count: optionCountMap[q.id] || 0,
   }));
 
@@ -281,5 +287,255 @@ export async function remove(req: Request, res: Response) {
     return ok(res, null, 'MCQ question permanently deleted');
   } catch (error: any) {
     return err(res, error.message || 'Failed to permanently delete MCQ question', 500);
+  }
+}
+
+// ── Create Full MCQ (Question + Options + English Translations) ──
+export async function createFull(req: Request, res: Response) {
+  try {
+    const {
+      topic_id, mcq_type, difficulty_level, question_text, hint_text, explanation_text,
+      options, points, display_order, is_mandatory, is_active
+    } = req.body;
+
+    if (!topic_id || !mcq_type || !question_text || !options || !Array.isArray(options) || options.length < 2) {
+      return err(res, 'topic_id, mcq_type, question_text, and at least 2 options are required', 400);
+    }
+
+    const hasCorrect = options.some((o: any) => o.is_correct);
+    if (!hasCorrect) return err(res, 'At least one option must be marked as correct', 400);
+
+    // Auto-generate code from question_text (first 30 chars)
+    const code = question_text.substring(0, 30).trim();
+    const slug = await generateUniqueSlug(supabase, 'mcq_questions', question_text, undefined, { column: 'topic_id', value: topic_id });
+
+    // Auto display_order: get max for this topic
+    let finalDisplayOrder = display_order;
+    if (finalDisplayOrder === undefined || finalDisplayOrder === null) {
+      const { data: maxRow } = await supabase
+        .from('mcq_questions').select('display_order')
+        .eq('topic_id', topic_id).is('deleted_at', null)
+        .order('display_order', { ascending: false }).limit(1);
+      finalDisplayOrder = (maxRow && maxRow.length > 0 && maxRow[0].display_order != null) ? maxRow[0].display_order + 1 : 1;
+    }
+
+    // 1. Create the MCQ question
+    const { data: question, error: qErr } = await supabase.from('mcq_questions').insert({
+      topic_id, code, slug, mcq_type,
+      difficulty_level: difficulty_level || 'medium',
+      points: points || 1,
+      display_order: finalDisplayOrder,
+      is_mandatory: is_mandatory ?? false,
+      is_active: is_active ?? true,
+      created_by: req.user!.id,
+    }).select().single();
+    if (qErr) {
+      if (qErr.code === '23505') return err(res, 'MCQ question already exists for this topic', 409);
+      return err(res, qErr.message, 500);
+    }
+
+    // 2. Create MCQ options
+    const optionInserts = options.map((o: any, idx: number) => ({
+      mcq_question_id: question.id,
+      is_correct: o.is_correct || false,
+      display_order: o.display_order ?? idx + 1,
+      is_active: true,
+      created_by: req.user!.id,
+    }));
+    const { data: createdOptions, error: oErr } = await supabase.from('mcq_options').insert(optionInserts).select();
+    if (oErr) return err(res, `Options insert failed: ${oErr.message}`, 500);
+
+    // 3. Create English question translation (language_id = 7)
+    const { data: qTrans, error: qtErr } = await supabase.from('mcq_question_translations').insert({
+      mcq_question_id: question.id,
+      language_id: 7,
+      question_text,
+      hint_text: hint_text || null,
+      explanation_text: explanation_text || null,
+      is_active: true,
+      created_by: req.user!.id,
+    }).select().single();
+    if (qtErr) return err(res, `Question translation failed: ${qtErr.message}`, 500);
+
+    // 4. Create English option translations (language_id = 7)
+    const optTransInserts = (createdOptions || []).map((opt: any, idx: number) => ({
+      mcq_option_id: opt.id,
+      language_id: 7,
+      option_text: options[idx].option_text || '',
+      is_active: true,
+      created_by: req.user!.id,
+    }));
+    const { error: otErr } = await supabase.from('mcq_option_translations').insert(optTransInserts).select();
+    if (otErr) return err(res, `Option translations failed: ${otErr.message}`, 500);
+
+    await clearCache(topic_id);
+    logAdmin({ actorId: req.user!.id, action: 'mcq_question_created_full', targetType: 'mcq_question', targetId: question.id, targetName: code, ip: getClientIp(req) });
+
+    return ok(res, {
+      ...question,
+      question_text,
+      hint_text: hint_text || null,
+      explanation_text: explanation_text || null,
+      options: (createdOptions || []).map((opt: any, idx: number) => ({
+        ...opt,
+        option_text: options[idx].option_text || '',
+      })),
+    }, 'MCQ question created with options and English translations', 201);
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to create full MCQ question', 500);
+  }
+}
+
+// ── Update Full MCQ (Question + Options + English Translations) ──
+export async function updateFull(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { data: old } = await supabase.from('mcq_questions').select('*').eq('id', id).single();
+    if (!old) return err(res, 'MCQ question not found', 404);
+
+    const {
+      topic_id, mcq_type, difficulty_level, question_text, hint_text, explanation_text,
+      options, points, display_order, is_mandatory, is_active
+    } = req.body;
+
+    // 1. Update the MCQ question
+    const questionUpdates: any = { updated_by: req.user!.id };
+    if (topic_id !== undefined) questionUpdates.topic_id = topic_id;
+    if (mcq_type !== undefined) questionUpdates.mcq_type = mcq_type;
+    if (difficulty_level !== undefined) questionUpdates.difficulty_level = difficulty_level;
+    if (points !== undefined) questionUpdates.points = points;
+    if (display_order !== undefined) questionUpdates.display_order = display_order;
+    if (is_mandatory !== undefined) questionUpdates.is_mandatory = is_mandatory;
+    if (is_active !== undefined) questionUpdates.is_active = is_active;
+
+    // Re-generate slug if question_text changed
+    if (question_text) {
+      questionUpdates.code = question_text.substring(0, 30).trim();
+      questionUpdates.slug = await generateUniqueSlug(supabase, 'mcq_questions', question_text, id, { column: 'topic_id', value: topic_id || old.topic_id });
+    }
+
+    const { data: updatedQ, error: qErr } = await supabase.from('mcq_questions').update(questionUpdates).eq('id', id).select().single();
+    if (qErr) return err(res, qErr.message, 500);
+
+    // 2. Update English question translation
+    if (question_text !== undefined) {
+      const { data: existingQT } = await supabase.from('mcq_question_translations')
+        .select('id').eq('mcq_question_id', id).eq('language_id', 7).single();
+
+      if (existingQT) {
+        await supabase.from('mcq_question_translations').update({
+          question_text,
+          hint_text: hint_text ?? null,
+          explanation_text: explanation_text ?? null,
+          updated_by: req.user!.id,
+        }).eq('id', existingQT.id);
+      } else {
+        await supabase.from('mcq_question_translations').insert({
+          mcq_question_id: id,
+          language_id: 7,
+          question_text,
+          hint_text: hint_text ?? null,
+          explanation_text: explanation_text ?? null,
+          is_active: true,
+          created_by: req.user!.id,
+        });
+      }
+    }
+
+    // 3. Replace options if provided
+    if (options && Array.isArray(options)) {
+      // Delete old options + their translations
+      const { data: oldOpts } = await supabase.from('mcq_options').select('id').eq('mcq_question_id', id);
+      if (oldOpts && oldOpts.length > 0) {
+        const oldOptIds = oldOpts.map((o: any) => o.id);
+        await supabase.from('mcq_option_translations').delete().in('mcq_option_id', oldOptIds);
+        await supabase.from('mcq_options').delete().eq('mcq_question_id', id);
+      }
+
+      // Insert new options
+      const optionInserts = options.map((o: any, idx: number) => ({
+        mcq_question_id: id,
+        is_correct: o.is_correct || false,
+        display_order: o.display_order ?? idx + 1,
+        is_active: true,
+        created_by: req.user!.id,
+      }));
+      const { data: newOpts, error: oErr } = await supabase.from('mcq_options').insert(optionInserts).select();
+      if (oErr) return err(res, `Options update failed: ${oErr.message}`, 500);
+
+      // Insert English option translations
+      const optTransInserts = (newOpts || []).map((opt: any, idx: number) => ({
+        mcq_option_id: opt.id,
+        language_id: 7,
+        option_text: options[idx].option_text || '',
+        is_active: true,
+        created_by: req.user!.id,
+      }));
+      await supabase.from('mcq_option_translations').insert(optTransInserts);
+    }
+
+    await clearCache(old.topic_id);
+    if (topic_id && topic_id !== old.topic_id) await clearCache(topic_id);
+    logAdmin({ actorId: req.user!.id, action: 'mcq_question_updated_full', targetType: 'mcq_question', targetId: id, targetName: updatedQ.code || updatedQ.slug, ip: getClientIp(req) });
+
+    return ok(res, updatedQ, 'MCQ question updated with options and translations');
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to update full MCQ question', 500);
+  }
+}
+
+// ── Get Full MCQ (Question + Options + All Translations + Coverage) ──
+export async function getFullById(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { data: question, error: qErr } = await supabase.from('mcq_questions').select('*').eq('id', id).is('deleted_at', null).single();
+    if (qErr || !question) return err(res, 'MCQ question not found', 404);
+
+    // Get question translations (all languages)
+    const { data: qTranslations } = await supabase.from('mcq_question_translations')
+      .select('*').eq('mcq_question_id', id).is('deleted_at', null);
+
+    // Get options
+    const { data: options } = await supabase.from('mcq_options')
+      .select('*').eq('mcq_question_id', id).is('deleted_at', null)
+      .order('display_order', { ascending: true });
+
+    // Get option translations (all languages)
+    const optionIds = (options || []).map((o: any) => o.id);
+    let optTranslations: any[] = [];
+    if (optionIds.length > 0) {
+      const { data } = await supabase.from('mcq_option_translations')
+        .select('*').in('mcq_option_id', optionIds).is('deleted_at', null);
+      optTranslations = data || [];
+    }
+
+    // Get all material languages
+    const { data: languages } = await supabase.from('languages')
+      .select('id, name, iso_code, for_material').eq('for_material', true).eq('is_active', true);
+
+    // Build translation coverage
+    const qTransLangIds = new Set((qTranslations || []).map((t: any) => t.language_id));
+    const coverage = (languages || []).map((lang: any) => ({
+      language_id: lang.id,
+      language_name: lang.name,
+      language_code: lang.iso_code,
+      has_question_translation: qTransLangIds.has(lang.id),
+      has_option_translations: optTranslations.some((ot: any) => ot.language_id === lang.id),
+    }));
+
+    // Enrich options with their translations
+    const enrichedOptions = (options || []).map((opt: any) => ({
+      ...opt,
+      translations: optTranslations.filter((ot: any) => ot.mcq_option_id === opt.id),
+    }));
+
+    return ok(res, {
+      ...question,
+      question_translations: qTranslations || [],
+      options: enrichedOptions,
+      translation_coverage: coverage,
+    });
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to get full MCQ question', 500);
   }
 }

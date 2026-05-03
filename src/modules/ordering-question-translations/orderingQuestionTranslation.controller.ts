@@ -35,9 +35,9 @@ export async function list(req: Request, res: Response) {
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   if (req.query.show_deleted === 'true') {
-    q = q.eq('is_deleted', true);
+    q = q.not('deleted_at', 'is', null);
   } else {
-    q = q.eq('is_deleted', false);
+    q = q.is('deleted_at', null);
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -131,13 +131,13 @@ export async function update(req: Request, res: Response) {
 
 export async function softDelete(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('ordering_question_translations').select('ordering_question_id, is_deleted').eq('id', id).single();
+  const { data: old } = await supabase.from('ordering_question_translations').select('ordering_question_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Ordering question translation not found', 404);
-  if (old.is_deleted) return err(res, 'Translation is already in trash', 400);
+  if (old.deleted_at) return err(res, 'Translation is already in trash', 400);
 
   const { data, error: e } = await supabase
     .from('ordering_question_translations')
-    .update({ is_deleted: true, is_active: false })
+    .update({ deleted_at: new Date().toISOString(), is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
@@ -148,13 +148,13 @@ export async function softDelete(req: Request, res: Response) {
 
 export async function restore(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('ordering_question_translations').select('ordering_question_id, is_deleted').eq('id', id).single();
+  const { data: old } = await supabase.from('ordering_question_translations').select('ordering_question_id, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Ordering question translation not found', 404);
-  if (!old.is_deleted) return err(res, 'Translation is not in trash', 400);
+  if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
   const { data, error: e } = await supabase
     .from('ordering_question_translations')
-    .update({ is_deleted: false, is_active: true })
+    .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
 
@@ -181,7 +181,7 @@ export async function remove(req: Request, res: Response) {
 
 export async function coverage(req: Request, res: Response) {
   const questionId = req.query.ordering_question_id ? parseInt(req.query.ordering_question_id as string) : undefined;
-  let q = supabase.from('ordering_question_translations').select('language_id, languages(name, native_name, iso_code)').eq('is_deleted', false);
+  let q = supabase.from('ordering_question_translations').select('language_id, languages(name, native_name, iso_code)').is('deleted_at', null);
   if (questionId) q = q.eq('ordering_question_id', questionId);
   const { data, error: e } = await q;
   if (e) return err(res, e.message, 500);
