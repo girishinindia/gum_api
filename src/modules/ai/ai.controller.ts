@@ -313,7 +313,7 @@ LANGUAGES TO GENERATE: ${langList}
 RULES:
 - First create high-quality English content with a natural, human writing style.
 - Then translate EXACTLY with the same meaning into each language's native script.
-- Keep technical terms, brand names, and words that sound unnatural when translated in English (e.g., "IT Solutions", "SEO", "API", "Software", "Website").
+- Keep technical terms, brand names, and words that sound unnatural when translated in English.
 - Tags should be comma-separated strings.
 - SEO fields should be optimized for each language.
 - description: 2-3 engaging sentences. meta_title: 50-60 chars. meta_description: 150-160 chars.
@@ -742,18 +742,64 @@ const MATERIAL_FIELDS_CHAPTER = ['name', 'short_intro', 'long_intro', 'prerequis
 const MATERIAL_FIELDS_TOPIC   = ['name', 'short_intro', 'long_intro', 'prerequisites', 'learning_objectives'];
 const MATERIAL_FIELDS_SUB_TOPIC = ['name', 'short_intro', 'long_intro', 'tags', 'video_title', 'video_description', 'meta_title', 'meta_description', 'meta_keywords', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'focus_keyword'];
 
+const MATERIAL_FIELDS_COURSE = [
+  'title', 'short_intro', 'long_intro', 'tagline',
+  'video_title', 'video_description', 'is_new_title',
+  'tags', 'prerequisites', 'skills_gain', 'what_you_will_learn',
+  'course_includes', 'course_is_for', 'apply_for_designations',
+  'demand_in_countries', 'salary_standard', 'future_courses',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'focus_keyword',
+];
+const COURSE_JSONB_FIELDS = ['tags', 'prerequisites', 'skills_gain', 'what_you_will_learn', 'course_includes', 'course_is_for', 'apply_for_designations', 'demand_in_countries', 'salary_standard', 'future_courses'];
+
+const MATERIAL_FIELDS_COURSE_MODULE = [
+  'name', 'short_intro', 'description',
+  'tags',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'focus_keyword',
+];
+const COURSE_MODULE_JSONB_FIELDS = ['tags'];
+
+const MATERIAL_FIELDS_BUNDLE = [
+  'title', 'short_description', 'description',
+  'highlights', 'tags',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'focus_keyword',
+];
+const BUNDLE_JSONB_FIELDS = ['highlights', 'tags'];
+
 function buildMaterialJsonSpec(fields: string[]): string {
   return '{' + fields.map(f => `"${f}":"..."`).join(', ') + '}';
 }
 
-function extractMaterialFields(translated: any, fields: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
+function extractMaterialFields(translated: any, fields: string[]): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const f of fields) result[f] = translated[f] || '';
   return result;
 }
 
+/** Convert comma-separated AI strings to arrays for JSONB columns */
+function applyJsonbConversion(fields: Record<string, any>, jsonbFields?: string[]): void {
+  if (!jsonbFields) return;
+  for (const jf of jsonbFields) {
+    const val = fields[jf];
+    if (val && typeof val === 'string') {
+      fields[jf] = val.split(',').map((s: string) => s.trim()).filter(Boolean);
+    } else if (Array.isArray(val)) {
+      // Already an array — ensure items are trimmed strings
+      fields[jf] = val.map((s: any) => String(s).trim()).filter(Boolean);
+    } else {
+      fields[jf] = [];
+    }
+  }
+}
+
 // ─── Reusable helper: generate AI translations for all for_material languages ───
-type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic';
+type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'course' | 'course_module' | 'bundle';
 
 const ENTITY_CONFIG: Record<MaterialEntityType, {
   table: string;
@@ -761,11 +807,16 @@ const ENTITY_CONFIG: Record<MaterialEntityType, {
   idField: string;
   fields: string[];
   entityLabel: string;
+  jsonbFields?: string[];
+  nameField?: string; // primary name field in translation table (default 'name')
 }> = {
   subject: { table: 'subjects', translationTable: 'subject_translations', idField: 'subject_id', fields: MATERIAL_FIELDS_SUBJECT, entityLabel: 'subject' },
   chapter: { table: 'chapters', translationTable: 'chapter_translations', idField: 'chapter_id', fields: MATERIAL_FIELDS_CHAPTER, entityLabel: 'chapter' },
   topic: { table: 'topics', translationTable: 'topic_translations', idField: 'topic_id', fields: MATERIAL_FIELDS_TOPIC, entityLabel: 'topic' },
   sub_topic: { table: 'sub_topics', translationTable: 'sub_topic_translations', idField: 'sub_topic_id', fields: MATERIAL_FIELDS_SUB_TOPIC, entityLabel: 'sub-topic' },
+  course: { table: 'courses', translationTable: 'course_translations', idField: 'course_id', fields: MATERIAL_FIELDS_COURSE, entityLabel: 'course', jsonbFields: COURSE_JSONB_FIELDS, nameField: 'title' },
+  course_module: { table: 'course_modules', translationTable: 'course_module_translations', idField: 'course_module_id', fields: MATERIAL_FIELDS_COURSE_MODULE, entityLabel: 'course module', jsonbFields: COURSE_MODULE_JSONB_FIELDS },
+  bundle: { table: 'bundles', translationTable: 'bundle_translations', idField: 'bundle_id', fields: MATERIAL_FIELDS_BUNDLE, entityLabel: 'bundle', jsonbFields: BUNDLE_JSONB_FIELDS, nameField: 'title' },
 };
 
 const DEFAULT_TRANSLATION_PROMPT = 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
@@ -781,6 +832,7 @@ async function generateAllTranslationsForEntity(
   userId: string,
   provider: AIProvider = 'gemini',
   prompt?: string,
+  forceRegenerate: boolean = false,
 ): Promise<{ results: any[]; totalInputTokens: number; totalOutputTokens: number }> {
   const cfg = ENTITY_CONFIG[entityType];
   const userPrompt = prompt || DEFAULT_TRANSLATION_PROMPT;
@@ -842,11 +894,13 @@ async function generateAllTranslationsForEntity(
   const softDeletedMap = new Map((existing || []).filter((e: any) => e.deleted_at).map((e: any) => [e.language_id, e.id]));
 
   // Check which active translations have meaningful content vs just name/page
-  const contentFields = cfg.fields.filter(f => f !== 'name');
+  const primaryNameField = cfg.nameField || 'name';
+  const contentFields = cfg.fields.filter(f => f !== primaryNameField);
   const emptyTransMap = new Map<number, number>(); // language_id → translation record id (for update)
   for (const t of activeTranslations) {
     const hasContent = contentFields.some((f: string) => {
       const val = t[f];
+      if (Array.isArray(val)) return val.length > 0;
       return val && typeof val === 'string' && val.trim().length > 0;
     });
     if (!hasContent) {
@@ -855,9 +909,22 @@ async function generateAllTranslationsForEntity(
   }
 
   // Languages that need work: truly missing OR exist but have no content
-  const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
-  const emptyLangs = allLangs.filter(l => emptyTransMap.has(l.id));
-  const langsNeedingContent = [...missingLangs, ...emptyLangs];
+  // When forceRegenerate is true, include ALL languages (they'll be overwritten)
+  let langsNeedingContent: typeof allLangs;
+  if (forceRegenerate) {
+    // Force regenerate: all languages need work (existing ones will be updated)
+    langsNeedingContent = allLangs;
+    // Also add existing translations to emptyTransMap so they get updated instead of inserted
+    for (const t of activeTranslations) {
+      if (!emptyTransMap.has(t.language_id)) {
+        emptyTransMap.set(t.language_id, t.id);
+      }
+    }
+  } else {
+    const missingLangs = allLangs.filter(l => !activeLangIds.has(l.id));
+    const emptyLangs = allLangs.filter(l => emptyTransMap.has(l.id));
+    langsNeedingContent = [...missingLangs, ...emptyLangs];
+  }
 
   if (langsNeedingContent.length === 0) return { results: [], totalInputTokens: 0, totalOutputTokens: 0 };
 
@@ -869,9 +936,10 @@ async function generateAllTranslationsForEntity(
 
   if (englishExistsInDb && enLangRecord) {
     englishSource = activeTranslations.find((t: any) => t.language_id === enLangRecord.id);
-    // Check if English has actual content beyond just name
+    // Check if English has actual content beyond just name/title
     englishHasContent = englishSource && contentFields.some((f: string) => {
       const val = englishSource[f];
+      if (Array.isArray(val)) return val.length > 0;
       return val && typeof val === 'string' && val.trim().length > 0;
     });
   }
@@ -879,13 +947,19 @@ async function generateAllTranslationsForEntity(
   // If English exists but is empty (name-only from CDN import), we need to generate English content first
   const needsEnglishGeneration = englishExistsInDb && !englishHasContent;
 
-  const entityName = entity.name || entity.code || entity.slug || '';
+  const entityName = entity.name || entity.title || entity.code || entity.slug || '';
 
   // Build extra field rules
   const extraRules = entityType === 'subject'
     ? 'name = full subject name; short_intro = 1-2 sentences; long_intro = 3-5 sentences.'
     : entityType === 'chapter' || entityType === 'topic'
     ? `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; prerequisites = what learners should know; learning_objectives = what they'll achieve.`
+    : entityType === 'course'
+    ? `title = full course title; short_intro = 1-2 sentences; long_intro = 3-5 sentences; tagline = catchy one-liner; video_title = concise video title; video_description = 2-3 sentence video description; is_new_title = badge text like "New" or "Updated"; tags = comma-separated relevant tags; prerequisites = comma-separated prerequisite knowledge; skills_gain = comma-separated skills students will gain; what_you_will_learn = comma-separated learning outcomes; course_includes = comma-separated items included (e.g. "10 video lectures, 5 quizzes"); course_is_for = comma-separated target audience descriptions; apply_for_designations = comma-separated career designations; demand_in_countries = comma-separated country names; salary_standard = comma-separated salary ranges; future_courses = comma-separated next course suggestions; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
+    : entityType === 'course_module'
+    ? `name = full module name; short_intro = 1-2 sentences; description = 3-5 sentence module description; tags = comma-separated relevant tags; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
+    : entityType === 'bundle'
+    ? `title = full bundle title; short_description = 1-2 sentences; description = 3-5 sentence bundle description; highlights = comma-separated key highlights; tags = comma-separated relevant tags; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
     : `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; tags = comma-separated relevant tags; video_title = concise video title; video_description = 2-3 sentence video description; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`;
 
   // ─── Step A: If English exists but is empty, generate English content first ───
@@ -901,6 +975,7 @@ RULES: ${extraRules} Write in a natural, human way. Be thorough and informative.
       const { text: enText, inputTokens: enIn, outputTokens: enOut } = await callAI(provider, enSystemPrompt, enUserContent);
       const enTranslated = parseJSON(enText);
       const enFields = extractMaterialFields(enTranslated, cfg.fields);
+      applyJsonbConversion(enFields, cfg.jsonbFields);
 
       // Generate structured data for sub-topic translations
       const enStructuredData = buildStructuredData(enFields, 'en');
@@ -1020,6 +1095,7 @@ USER INSTRUCTIONS: ${userPrompt}`;
         totalOutputTokens += sOut;
         const translated = parseJSON(singleText);
         const translatedFields = extractMaterialFields(translated, cfg.fields);
+        applyJsonbConversion(translatedFields, cfg.jsonbFields);
         const sd = buildStructuredData(translatedFields, lang.iso_code);
 
         const record: any = {
@@ -1056,6 +1132,7 @@ USER INSTRUCTIONS: ${userPrompt}`;
       if (!translated) { results.push({ language: lang.name, iso_code: lang.iso_code, status: 'error', error: 'AI did not return translation' }); continue; }
 
       const translatedFields = extractMaterialFields(translated, cfg.fields);
+      applyJsonbConversion(translatedFields, cfg.jsonbFields);
       const sd = buildStructuredData(translatedFields, lang.iso_code);
 
       const record: any = {
@@ -1086,8 +1163,10 @@ USER INSTRUCTIONS: ${userPrompt}`;
     // If English was generated via bulk (no content path), update entity + English translation
     if (!englishHasContent && allTranslations['en']) {
       const enFields = extractMaterialFields(allTranslations['en'], cfg.fields);
+      applyJsonbConversion(enFields, cfg.jsonbFields);
       const enSd = buildStructuredData(enFields, 'en');
-      if (enFields.name) await supabase.from(cfg.table).update({ name: enFields.name }).eq('id', entityId);
+      const enNameVal = enFields[primaryNameField];
+      if (enNameVal) await supabase.from(cfg.table).update({ name: typeof enNameVal === 'string' ? enNameVal : entity.name }).eq('id', entityId);
       if (englishSource?.id) {
         await supabase.from(cfg.translationTable).update({ ...enFields, ...(enSd && { structured_data: enSd }), updated_by: userId }).eq('id', englishSource.id);
       }
@@ -6393,10 +6472,10 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
     if (!userId) return err(res, 'Authentication required', 401);
     if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
-    const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider } = req.body;
+    const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider, force_regenerate } = req.body;
 
     // Validate entity_type
-    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic'];
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle'];
     if (!entity_type || !validTypes.includes(entity_type)) {
       return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
     }
@@ -6426,7 +6505,8 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
       }
 
       // Fetch all translations to find entities needing content
-      const contentFields = cfg.fields.filter(f => f !== 'name');
+      const bulkNameField = cfg.nameField || 'name';
+      const contentFields = cfg.fields.filter(f => f !== bulkNameField);
       const selectFields = [cfg.idField, 'language_id', ...contentFields].join(', ');
       const allTranslations = await fetchAll<Record<string, any>>(cfg.translationTable, selectFields, {
         filters: q => q.is('deleted_at', null),
@@ -6439,6 +6519,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
         totalTransMap.set(eid, (totalTransMap.get(eid) || 0) + 1);
         const hasContent = contentFields.some((f: string) => {
           const val = t[f];
+          if (Array.isArray(val)) return val.length > 0;
           return val && typeof val === 'string' && val.trim().length > 0;
         });
         if (hasContent) transMap.set(eid, (transMap.get(eid) || 0) + 1);
@@ -6483,7 +6564,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
       const batchResults = await Promise.allSettled(
         batch.map(async (entityId) => {
           const { results: langResults, totalInputTokens: inTok, totalOutputTokens: outTok } =
-            await generateAllTranslationsForEntity(entity_type, entityId, String(userId), provider, prompt || undefined);
+            await generateAllTranslationsForEntity(entity_type, entityId, String(userId), provider, prompt || undefined, !!force_regenerate);
           return { entityId, langResults, inTok, outTok };
         })
       );
