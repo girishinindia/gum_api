@@ -11683,6 +11683,8 @@ export async function autoTranslateAssessment(req: Request, res: Response) {
     if (aErr) return err(res, aErr.message, 500);
     if (!assessments || assessments.length === 0) return err(res, 'No assessments found to translate', 404);
 
+    console.log(`[autoTranslateAssessment] Found ${assessments.length} assessment(s) to process, ${materialLangs.length} target lang(s)`);
+
     let totalTranslated = 0;
     let totalSolutionTranslated = 0;
     let totalErrors = 0;
@@ -11691,15 +11693,22 @@ export async function autoTranslateAssessment(req: Request, res: Response) {
 
     for (const assessment of assessments) {
       // ─── 1. Translate assessment_translations ───
-      const { data: engTrans } = await supabase
+      const { data: engTrans, error: engTransErr } = await supabase
         .from('assessment_translations')
         .select('title, description, problem_statement_html, instructions, prerequisites, submission_guidelines, hints, tech_stack, learning_outcomes, tags, focus_keyword')
         .eq('assessment_id', assessment.id)
         .eq('language_id', 7)
-        .is('deleted_at', null)
-        .single();
+        .maybeSingle();
 
-      if (!engTrans || !engTrans.title) continue;
+      if (engTransErr) {
+        console.error(`[autoTranslateAssessment] Error fetching English translation for assessment ${assessment.id}:`, engTransErr.message);
+        totalErrors++;
+        continue;
+      }
+      if (!engTrans || !engTrans.title) {
+        console.log(`[autoTranslateAssessment] No English translation found for assessment ${assessment.id}, skipping`);
+        continue;
+      }
 
       // Find missing languages for assessment_translations
       const { data: existingTrans } = await supabase
@@ -11709,6 +11718,7 @@ export async function autoTranslateAssessment(req: Request, res: Response) {
         .is('deleted_at', null);
       const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
       const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
+      console.log(`[autoTranslateAssessment] Assessment ${assessment.id}: existing langs=[${[...existingLangIds].join(',')}], missing=${missingLangs.length}`);
 
       if (missingLangs.length > 0) {
         // Batch all languages in a single AI call
@@ -11757,7 +11767,7 @@ Return ONLY valid JSON (no markdown):
             for (const lang of missingLangs) {
               const t = parsed.translations[lang.iso_code];
               if (t && t.title) {
-                const { error: insErr } = await supabase.from('assessment_translations').insert({
+                const { error: insErr } = await supabase.from('assessment_translations').upsert({
                   assessment_id: assessment.id,
                   language_id: lang.id,
                   title: t.title,
@@ -11775,10 +11785,11 @@ Return ONLY valid JSON (no markdown):
                   tags: engTrans.tags || [],
                   structured_data: [],
                   is_active: true,
+                  deleted_at: null,
                   created_by: userId,
-                });
+                }, { onConflict: 'assessment_id,language_id' });
                 if (!insErr) totalTranslated++;
-                else totalErrors++;
+                else { console.error(`[autoTranslateAssessment] Insert translation failed for assessment ${assessment.id}, lang ${lang.iso_code}:`, insErr.message); totalErrors++; }
               }
             }
           }
@@ -11799,13 +11810,17 @@ Return ONLY valid JSON (no markdown):
       if (solutions && solutions.length > 0) {
         for (const sol of solutions) {
           // Get English solution translation
-          const { data: engSolTrans } = await supabase
+          const { data: engSolTrans, error: engSolErr } = await supabase
             .from('assessment_solution_translations')
             .select('title, description, html_content, video_title, video_description')
             .eq('assessment_solution_id', sol.id)
             .eq('language_id', 7)
-            .is('deleted_at', null)
-            .single();
+            .maybeSingle();
+
+          if (engSolErr) {
+            console.error(`[autoTranslateAssessment] Error fetching English solution translation for solution ${sol.id}:`, engSolErr.message);
+            continue;
+          }
 
           if (!engSolTrans || (!engSolTrans.title && !engSolTrans.html_content && !engSolTrans.video_description)) continue;
 
@@ -11860,7 +11875,7 @@ Return ONLY valid JSON (no markdown):
               for (const lang of missingSolLangs) {
                 const st = solParsed.translations[lang.iso_code];
                 if (st && (st.title || st.html_content || st.video_title)) {
-                  const { error: solInsErr } = await supabase.from('assessment_solution_translations').insert({
+                  const { error: solInsErr } = await supabase.from('assessment_solution_translations').upsert({
                     assessment_solution_id: sol.id,
                     language_id: lang.id,
                     title: st.title || engSolTrans.title || 'Solution',
@@ -11869,10 +11884,11 @@ Return ONLY valid JSON (no markdown):
                     video_title: st.video_title || null,
                     video_description: st.video_description || null,
                     is_active: true,
+                    deleted_at: null,
                     created_by: userId,
-                  });
+                  }, { onConflict: 'assessment_solution_id,language_id' });
                   if (!solInsErr) totalSolutionTranslated++;
-                  else totalErrors++;
+                  else { console.error(`[autoTranslateAssessment] Insert solution translation failed for sol ${sol.id}, lang ${lang.iso_code}:`, solInsErr.message); totalErrors++; }
                 }
               }
             }
