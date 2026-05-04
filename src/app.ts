@@ -87,6 +87,12 @@ import orderingQuestionRoutes from './modules/ordering-questions/orderingQuestio
 import orderingQuestionTranslationRoutes from './modules/ordering-question-translations/orderingQuestionTranslation.routes';
 import orderingItemRoutes from './modules/ordering-items/orderingItem.routes';
 import orderingItemTranslationRoutes from './modules/ordering-item-translations/orderingItemTranslation.routes';
+import assessmentRoutes from './modules/assessments/assessment.routes';
+import assessmentTranslationRoutes from './modules/assessment-translations/assessmentTranslation.routes';
+import assessmentAttachmentRoutes from './modules/assessment-attachments/assessmentAttachment.routes';
+import assessmentAttachmentTranslationRoutes from './modules/assessment-attachment-translations/assessmentAttachmentTranslation.routes';
+import assessmentSolutionRoutes from './modules/assessment-solutions/assessmentSolution.routes';
+import assessmentSolutionTranslationRoutes from './modules/assessment-solution-translations/assessmentSolutionTranslation.routes';
 
 const app = express();
 
@@ -195,6 +201,12 @@ app.use(`${api}/ordering-questions`,              orderingQuestionRoutes);
 app.use(`${api}/ordering-question-translations`,  orderingQuestionTranslationRoutes);
 app.use(`${api}/ordering-items`,                  orderingItemRoutes);
 app.use(`${api}/ordering-item-translations`,      orderingItemTranslationRoutes);
+app.use(`${api}/assessments`,                      assessmentRoutes);
+app.use(`${api}/assessment-translations`,          assessmentTranslationRoutes);
+app.use(`${api}/assessment-attachments`,           assessmentAttachmentRoutes);
+app.use(`${api}/assessment-attachment-translations`, assessmentAttachmentTranslationRoutes);
+app.use(`${api}/assessment-solutions`,             assessmentSolutionRoutes);
+app.use(`${api}/assessment-solution-translations`, assessmentSolutionTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

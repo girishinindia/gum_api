@@ -11119,3 +11119,489 @@ Return ONLY valid JSON:
     return err(res, error.message || 'Failed to auto-translate ordering questions', 500);
   }
 }
+
+export async function autoGenerateAssessment(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const {
+      assessment_type,
+      scope_id,
+      num_assessments = 0,
+      difficulty_mix = 'auto',
+      provider: reqProvider,
+      auto_translate = false,
+    } = req.body;
+
+    // Validate assessment_type
+    const validTypes = ['exercise', 'assignment', 'mini_project', 'capstone_project'];
+    if (!validTypes.includes(assessment_type)) return err(res, `assessment_type must be one of: ${validTypes.join(', ')}`, 400);
+    if (!scope_id) return err(res, 'scope_id is required', 400);
+
+    const rawNum = parseInt(num_assessments) || 0;
+    const isAutoCount = rawNum <= 0;
+    const numAssessments = isAutoCount ? 0 : Math.max(1, rawNum);
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Map type to scope
+    const typeScopeMap: Record<string, { scope: string; table: string; fkCol: string }> = {
+      exercise: { scope: 'sub_topic', table: 'sub_topics', fkCol: 'sub_topic_id' },
+      assignment: { scope: 'topic', table: 'topics', fkCol: 'topic_id' },
+      mini_project: { scope: 'chapter', table: 'chapters', fkCol: 'chapter_id' },
+      capstone_project: { scope: 'course', table: 'courses', fkCol: 'course_id' },
+    };
+    const scopeConfig = typeScopeMap[assessment_type];
+
+    // Verify scope entity exists
+    const { data: scopeEntity } = await supabase.from(scopeConfig.table).select('id, slug, name').eq('id', scope_id).single();
+    if (!scopeEntity) return err(res, `${scopeConfig.scope} with id ${scope_id} not found`, 404);
+
+    // Gather tutorial content from sub-topics
+    let subTopicContent: { sub_topic_name: string; content: string }[] = [];
+
+    if (assessment_type === 'exercise') {
+      // For exercises, get the single sub-topic's English page
+      const { data: stTrans } = await supabase
+        .from('sub_topic_translations')
+        .select('page, sub_topics!inner(id, name, slug)')
+        .eq('sub_topic_id', scope_id)
+        .eq('language_id', 7)
+        .not('page', 'is', null)
+        .is('deleted_at', null)
+        .limit(1)
+        .single();
+      if (stTrans && stTrans.page) {
+        const cdnPath = stTrans.page.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+        try {
+          const html = await downloadBunnyFile(cdnPath);
+          const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          if (text.length > 50) subTopicContent.push({ sub_topic_name: (stTrans as any).sub_topics?.name || '', content: text.slice(0, 30000) });
+        } catch {}
+      }
+    } else if (assessment_type === 'assignment') {
+      // For assignments, get all sub-topics under this topic
+      const { data: stTransList } = await supabase
+        .from('sub_topic_translations')
+        .select('page, sub_topics!inner(id, name, slug, topic_id)')
+        .eq('sub_topics.topic_id', scope_id)
+        .eq('language_id', 7)
+        .not('page', 'is', null)
+        .is('deleted_at', null);
+      for (const st of (stTransList || [])) {
+        if (!st.page) continue;
+        const cdnPath = st.page.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+        try {
+          const html = await downloadBunnyFile(cdnPath);
+          const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          if (text.length > 50) subTopicContent.push({ sub_topic_name: (st as any).sub_topics?.name || '', content: text.slice(0, 15000) });
+        } catch {}
+      }
+    } else if (assessment_type === 'mini_project') {
+      // For mini projects, get all sub-topics under all topics in this chapter
+      const { data: topics } = await supabase.from('topics').select('id, name').eq('chapter_id', scope_id).is('deleted_at', null);
+      for (const topic of (topics || [])) {
+        const { data: stTransList } = await supabase
+          .from('sub_topic_translations')
+          .select('page, sub_topics!inner(id, name, slug, topic_id)')
+          .eq('sub_topics.topic_id', topic.id)
+          .eq('language_id', 7)
+          .not('page', 'is', null)
+          .is('deleted_at', null)
+          .limit(3); // Limit per topic to stay within token limits
+        for (const st of (stTransList || [])) {
+          if (!st.page) continue;
+          const cdnPath = st.page.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+          try {
+            const html = await downloadBunnyFile(cdnPath);
+            const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text.length > 50) subTopicContent.push({ sub_topic_name: (st as any).sub_topics?.name || '', content: text.slice(0, 8000) });
+          } catch {}
+        }
+      }
+    } else {
+      // For capstone projects, gather content from course modules → subjects → chapters → topics → sub-topics
+      const { data: modules } = await supabase.from('course_modules').select('id').eq('course_id', scope_id).is('deleted_at', null).limit(5);
+      for (const mod of (modules || [])) {
+        const { data: subjects } = await supabase.from('course_module_subjects').select('subject_id').eq('course_module_id', mod.id).is('deleted_at', null).limit(3);
+        for (const sub of (subjects || [])) {
+          const { data: chapters } = await supabase.from('chapters').select('id, name').eq('subject_id', sub.subject_id).is('deleted_at', null).limit(2);
+          for (const ch of (chapters || [])) {
+            const { data: topics } = await supabase.from('topics').select('id, name').eq('chapter_id', ch.id).is('deleted_at', null).limit(2);
+            for (const topic of (topics || [])) {
+              const { data: stTransList } = await supabase
+                .from('sub_topic_translations')
+                .select('page, sub_topics!inner(id, name, topic_id)')
+                .eq('sub_topics.topic_id', topic.id)
+                .eq('language_id', 7)
+                .not('page', 'is', null)
+                .is('deleted_at', null)
+                .limit(1);
+              for (const st of (stTransList || [])) {
+                if (!st.page) continue;
+                const cdnPath = st.page.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+                try {
+                  const html = await downloadBunnyFile(cdnPath);
+                  const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+                  if (text.length > 50) subTopicContent.push({ sub_topic_name: (st as any).sub_topics?.name || '', content: text.slice(0, 5000) });
+                } catch {}
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (subTopicContent.length === 0) {
+      return err(res, 'No tutorial content found for this scope. Ensure sub-topics have English HTML pages uploaded.', 404);
+    }
+
+    // Combine content for AI (limit total to ~50k chars)
+    let combinedContent = '';
+    for (const sc of subTopicContent) {
+      const entry = `\n--- Sub-topic: ${sc.sub_topic_name} ---\n${sc.content}\n`;
+      if (combinedContent.length + entry.length > 50000) break;
+      combinedContent += entry;
+    }
+
+    // Build AI prompt based on type
+    const typeDescriptions: Record<string, string> = {
+      exercise: 'a coding exercise (small, focused practice problem targeting a specific concept from the sub-topic)',
+      assignment: 'a programming assignment (moderate scope, covers multiple concepts from the topic)',
+      mini_project: 'a mini project (substantial hands-on project covering the chapter material)',
+      capstone_project: 'a capstone project (comprehensive project integrating knowledge across the entire course)',
+    };
+
+    const diffMode = typeof difficulty_mix === 'string' ? difficulty_mix : 'auto';
+    let difficultyInstruction = '';
+    if (diffMode === 'easy') difficultyInstruction = 'ALL assessments should be EASY difficulty.';
+    else if (diffMode === 'medium') difficultyInstruction = 'ALL assessments should be MEDIUM difficulty.';
+    else if (diffMode === 'hard') difficultyInstruction = 'ALL assessments should be HARD difficulty.';
+    else if (diffMode === 'mixed' && !isAutoCount) {
+      difficultyInstruction = `Mix difficulties: ~30% easy, ~50% medium, ~20% hard.`;
+    } else {
+      difficultyInstruction = 'Automatically assign difficulty based on content complexity.';
+    }
+
+    const quantityInstruction = isAutoCount
+      ? `Generate ALL meaningful ${assessment_type.replace('_', ' ')}s that the content supports. For exercises: 3-8 per sub-topic. For assignments: 2-5 per topic. For mini projects: 1-3 per chapter. For capstone projects: 1-2 per course.`
+      : `Generate EXACTLY ${numAssessments} ${assessment_type.replace('_', ' ')}(s).`;
+
+    const solutionTypeInstruction = (assessment_type === 'exercise' || assessment_type === 'assignment')
+      ? 'Include an HTML solution with the complete working code and explanation. Wrap code in appropriate HTML tags with syntax highlighting classes.'
+      : 'Provide a solution outline describing the expected deliverables, key milestones, and evaluation criteria (as HTML).';
+
+    const systemPrompt = `You are an expert educational content creator for GrowUpMore — an online learning platform.
+Based on the provided tutorial content, generate ${typeDescriptions[assessment_type]}.
+
+Scope: "${scopeEntity.name || scopeEntity.slug}" (${scopeConfig.scope})
+
+QUANTITY: ${quantityInstruction}
+
+DIFFICULTY: ${difficultyInstruction}
+
+SOLUTION TYPE: ${solutionTypeInstruction}
+
+REQUIREMENTS FOR EACH ASSESSMENT:
+- title: Clear, descriptive title (e.g., "Build a Todo App with React Hooks")
+- description: 2-3 sentence overview of what the student will build/solve
+- problem_statement_html: Complete HTML problem statement with:
+  * Clear objective/goal
+  * Requirements/specifications (numbered list)
+  * Constraints or rules
+  * Example input/output (if applicable)
+  * Code snippets wrapped in <pre><code class="language-xxx"> tags
+- instructions: Step-by-step guidance (HTML)
+- prerequisites: What the student should know before attempting
+- submission_guidelines: What to submit and in what format
+- hints: 2-3 helpful hints without giving away the solution
+- solution_html: Complete solution with working code and explanation (HTML)
+- tech_stack: Array of technologies used (e.g., ["React", "TypeScript", "CSS"])
+- learning_outcomes: Array of what the student will learn (e.g., ["Understand state management", "Implement CRUD operations"])
+- tags: Array of relevant tags (e.g., ["react", "hooks", "state-management"])
+- difficulty_level: "easy" | "medium" | "hard"
+- estimated_hours: Estimated completion time in hours (0.5 for exercises, 1-3 for assignments, 3-8 for mini projects, 10-40 for capstone)
+- points: Points value (easy=10, medium=25, hard=50 for exercises; scale up for larger types)
+
+IMPORTANT:
+- Content must be STRICTLY based on the provided tutorial material
+- Problems should be practical and hands-on
+- Solutions must be complete and working
+- Use proper HTML formatting with code highlighting
+- Each assessment must be unique and test different aspects
+
+Return ONLY a valid JSON object (no markdown, no code blocks):
+{
+  "assessments": [
+    {
+      "title": "Assessment title",
+      "description": "Brief description",
+      "problem_statement_html": "<div>...</div>",
+      "instructions": "<ol><li>...</li></ol>",
+      "prerequisites": "Knowledge of X, Y, Z",
+      "submission_guidelines": "Submit your solution as...",
+      "hints": "Hint 1. Hint 2. Hint 3.",
+      "solution_html": "<div>Complete solution...</div>",
+      "tech_stack": ["tech1", "tech2"],
+      "learning_outcomes": ["outcome1", "outcome2"],
+      "tags": ["tag1", "tag2"],
+      "difficulty_level": "medium",
+      "estimated_hours": 2,
+      "points": 25
+    }
+  ]
+}`;
+
+    let aiResult;
+    try {
+      aiResult = await callAI(provider, systemPrompt, combinedContent, isAutoCount ? 65536 : Math.max(16384, numAssessments * 4096));
+    } catch (aiErr: any) {
+      return err(res, `AI generation failed: ${aiErr.message}`, 500);
+    }
+
+    let parsed: any;
+    try {
+      parsed = parseJSON(aiResult.text);
+    } catch (parseErr: any) {
+      console.error('Assessment AI JSON parse error:', parseErr.message, 'AI text (first 500):', aiResult.text?.slice(0, 500));
+      return err(res, 'AI returned invalid JSON. Please try again.', 500);
+    }
+
+    const assessments = parsed.assessments || (Array.isArray(parsed) ? parsed : []);
+    if (!assessments.length) {
+      return err(res, 'AI returned no assessments. Please try again.', 500);
+    }
+
+    // Get English language ID
+    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+    if (!enLang) return err(res, 'English language not found in system', 500);
+
+    // Get max display_order
+    const { data: existingAssessments } = await supabase
+      .from('assessments')
+      .select('display_order')
+      .eq(scopeConfig.fkCol, scope_id)
+      .eq('assessment_type', assessment_type)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: false })
+      .limit(1);
+    let nextDisplayOrder = ((existingAssessments?.[0]?.display_order) || 0) + 1;
+
+    // Get material languages for translation
+    let materialLangs: any[] = [];
+    if (auto_translate) {
+      const { data: langs } = await supabase
+        .from('languages')
+        .select('id, iso_code, name')
+        .eq('is_active', true)
+        .eq('for_material', true)
+        .neq('id', 7) // exclude English
+        .order('id');
+      materialLangs = langs || [];
+    }
+
+    let totalCreated = 0;
+    let totalTranslations = 0;
+    let totalSolutions = 0;
+    const createdAssessments: any[] = [];
+
+    for (const a of assessments) {
+      if (!a.title || !a.problem_statement_html) continue;
+
+      const diffLevel = ['easy', 'medium', 'hard'].includes(a.difficulty_level) ? a.difficulty_level : 'medium';
+      const slug = await generateUniqueSlug(supabase, 'assessments', a.title);
+
+      // Insert assessment record
+      const assessmentBody: any = {
+        slug,
+        assessment_type,
+        assessment_scope: scopeConfig.scope,
+        difficulty_level: diffLevel,
+        points: a.points || 10,
+        estimated_hours: a.estimated_hours || null,
+        due_days: assessment_type === 'capstone_project' ? 30 : assessment_type === 'mini_project' ? 14 : assessment_type === 'assignment' ? 7 : 3,
+        is_mandatory: false,
+        display_order: nextDisplayOrder++,
+        is_active: true,
+        [scopeConfig.fkCol]: scope_id,
+        created_by: userId,
+      };
+
+      const { data: newAssessment, error: insErr } = await supabase
+        .from('assessments')
+        .insert(assessmentBody)
+        .select('*')
+        .single();
+      if (insErr) {
+        console.error(`Failed to insert assessment "${a.title}":`, insErr.message);
+        continue;
+      }
+      totalCreated++;
+
+      // Insert English translation
+      const translationBody: any = {
+        assessment_id: newAssessment.id,
+        language_id: enLang.id,
+        title: a.title,
+        description: a.description || null,
+        problem_statement_html: a.problem_statement_html,
+        instructions: a.instructions || null,
+        prerequisites: a.prerequisites || null,
+        submission_guidelines: a.submission_guidelines || null,
+        hints: a.hints || null,
+        meta_title: a.title.slice(0, 70),
+        meta_description: (a.description || '').slice(0, 160),
+        focus_keyword: (a.tags?.[0] || a.title.split(' ')[0] || '').toLowerCase(),
+        tech_stack: a.tech_stack || [],
+        learning_outcomes: a.learning_outcomes || [],
+        tags: a.tags || [],
+        structured_data: [],
+        is_active: true,
+        created_by: userId,
+      };
+
+      const { error: transErr } = await supabase
+        .from('assessment_translations')
+        .insert(translationBody);
+      if (transErr) {
+        console.error(`Failed to insert translation for assessment ${newAssessment.id}:`, transErr.message);
+      } else {
+        totalTranslations++;
+      }
+
+      // Insert solution
+      if (a.solution_html) {
+        const solutionBody: any = {
+          assessment_id: newAssessment.id,
+          solution_type: 'html',
+          file_name: `${slug}-solution.html`,
+          file_url: null, // HTML stored in solution translations
+          display_order: 1,
+          is_active: true,
+          created_by: userId,
+        };
+
+        const { data: newSolution, error: solErr } = await supabase
+          .from('assessment_solutions')
+          .insert(solutionBody)
+          .select('id')
+          .single();
+        if (!solErr && newSolution) {
+          totalSolutions++;
+          // Insert English solution translation with the HTML content
+          await supabase.from('assessment_solution_translations').insert({
+            assessment_solution_id: newSolution.id,
+            language_id: enLang.id,
+            video_title: `Solution: ${a.title}`,
+            video_description: a.solution_html,
+            is_active: true,
+            created_by: userId,
+          });
+        }
+      }
+
+      // Auto-translate to other languages
+      if (auto_translate && materialLangs.length > 0) {
+        for (const lang of materialLangs) {
+          try {
+            const transPrompt = `Translate the following educational assessment content from English to ${lang.name} (${lang.iso_code}).
+RULES:
+- Translate ALL text content to ${lang.name}
+- Keep ALL technical terms, code keywords, variable names, function names, class names, and programming syntax in English (do NOT translate code)
+- Keep HTML tags intact — only translate the text between tags
+- Keep JSON structure intact
+- Maintain the same tone and clarity
+
+Return ONLY valid JSON (no markdown):
+{
+  "title": "translated title",
+  "description": "translated description",
+  "problem_statement_html": "translated HTML (code stays English)",
+  "instructions": "translated instructions HTML",
+  "prerequisites": "translated prerequisites",
+  "submission_guidelines": "translated guidelines",
+  "hints": "translated hints"
+}`;
+
+            const contentToTranslate = JSON.stringify({
+              title: a.title,
+              description: a.description || '',
+              problem_statement_html: (a.problem_statement_html || '').slice(0, 15000),
+              instructions: (a.instructions || '').slice(0, 5000),
+              prerequisites: a.prerequisites || '',
+              submission_guidelines: a.submission_guidelines || '',
+              hints: a.hints || '',
+            });
+
+            const transResult = await callAI(provider, transPrompt, contentToTranslate, 16384);
+            const translated = parseJSON(transResult.text);
+
+            if (translated && translated.title) {
+              await supabase.from('assessment_translations').insert({
+                assessment_id: newAssessment.id,
+                language_id: lang.id,
+                title: translated.title,
+                description: translated.description || null,
+                problem_statement_html: translated.problem_statement_html || null,
+                instructions: translated.instructions || null,
+                prerequisites: translated.prerequisites || null,
+                submission_guidelines: translated.submission_guidelines || null,
+                hints: translated.hints || null,
+                meta_title: (translated.title || '').slice(0, 70),
+                meta_description: (translated.description || '').slice(0, 160),
+                focus_keyword: translationBody.focus_keyword,
+                tech_stack: a.tech_stack || [],
+                learning_outcomes: a.learning_outcomes || [], // keep English for now
+                tags: a.tags || [],
+                structured_data: [],
+                is_active: true,
+                created_by: userId,
+              });
+              totalTranslations++;
+            }
+          } catch (transErr: any) {
+            console.error(`Translation to ${lang.iso_code} failed for assessment ${newAssessment.id}:`, transErr.message);
+          }
+        }
+      }
+
+      createdAssessments.push({
+        id: newAssessment.id,
+        slug: newAssessment.slug,
+        title: a.title,
+        difficulty: diffLevel,
+      });
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'assessment_auto_generated',
+      targetType: 'assessment',
+      targetId: scope_id,
+      targetName: `${assessment_type}:${scopeEntity.slug}`,
+      ip: getClientIp(req),
+    });
+
+    return ok(res, {
+      assessments: createdAssessments,
+      summary: {
+        type: assessment_type,
+        scope: scopeConfig.scope,
+        scope_name: scopeEntity.name || scopeEntity.slug,
+        assessments_created: totalCreated,
+        translations_created: totalTranslations,
+        solutions_created: totalSolutions,
+        languages_translated: auto_translate ? materialLangs.length : 0,
+      },
+      usage: {
+        prompt_tokens: aiResult.inputTokens,
+        completion_tokens: aiResult.outputTokens,
+        total_tokens: aiResult.inputTokens + aiResult.outputTokens,
+      },
+    }, `Generated ${totalCreated} ${assessment_type.replace('_', ' ')}(s) for ${scopeEntity.name || scopeEntity.slug}`);
+  } catch (error: any) {
+    console.error('autoGenerateAssessment error:', error);
+    return err(res, error.message || 'Failed to auto-generate assessments', 500);
+  }
+}

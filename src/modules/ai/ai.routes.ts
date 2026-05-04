@@ -107,4 +107,7 @@ r.post('/auto-generate-ordering', requirePermission('ordering_question', 'create
 // Auto translate existing Ordering questions to missing languages
 r.post('/auto-translate-ordering', requirePermission('ordering_question_translation', 'create'), ctrl.autoTranslateOrdering);
 
+// Auto generate assessments (exercises, assignments, mini projects, capstone projects)
+r.post('/auto-generate-assessment', requirePermission('assessment', 'create'), ctrl.autoGenerateAssessment);
+
 export default r;

@@ -319,9 +319,13 @@ export async function createFull(req: Request, res: Response) {
       finalDisplayOrder = (maxRow && maxRow.length > 0 && maxRow[0].display_order != null) ? maxRow[0].display_order + 1 : 1;
     }
 
+    // Map frontend mcq_type values to DB enum values
+    const typeMap: Record<string, string> = { single_choice: 'single', multiple_choice: 'multiple', true_false: 'true_false', single: 'single', multiple: 'multiple' };
+    const dbMcqType = typeMap[mcq_type] || mcq_type;
+
     // 1. Create the MCQ question
     const { data: question, error: qErr } = await supabase.from('mcq_questions').insert({
-      topic_id, code, slug, mcq_type,
+      topic_id, code, slug, mcq_type: dbMcqType,
       difficulty_level: difficulty_level || 'medium',
       points: points || 1,
       display_order: finalDisplayOrder,
@@ -398,10 +402,13 @@ export async function updateFull(req: Request, res: Response) {
       options, points, display_order, is_mandatory, is_active
     } = req.body;
 
+    // Map frontend mcq_type values to DB enum values
+    const typeMap: Record<string, string> = { single_choice: 'single', multiple_choice: 'multiple', true_false: 'true_false', single: 'single', multiple: 'multiple' };
+
     // 1. Update the MCQ question
     const questionUpdates: any = { updated_by: req.user!.id };
-    if (topic_id !== undefined) questionUpdates.topic_id = topic_id;
-    if (mcq_type !== undefined) questionUpdates.mcq_type = mcq_type;
+    if (topic_id !== undefined && topic_id !== '') questionUpdates.topic_id = topic_id;
+    if (mcq_type !== undefined) questionUpdates.mcq_type = typeMap[mcq_type] || mcq_type;
     if (difficulty_level !== undefined) questionUpdates.difficulty_level = difficulty_level;
     if (points !== undefined) questionUpdates.points = points;
     if (display_order !== undefined) questionUpdates.display_order = display_order;

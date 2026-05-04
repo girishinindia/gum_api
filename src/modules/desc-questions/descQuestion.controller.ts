@@ -291,8 +291,7 @@ export async function createFull(req: Request, res: Response) {
       descriptive_question_id: question.id,
       language_id: 7,
       question_text,
-      answer_text: answer_text || null,
-      explanation: explanation || null,
+      explanation: explanation || answer_text || null,
       hint: hint || null,
       is_active: true,
       created_by: req.user!.id,
@@ -328,7 +327,7 @@ export async function updateFull(req: Request, res: Response) {
 
     // 1. Update the descriptive question
     const questionUpdates: any = { updated_by: req.user!.id };
-    if (topic_id !== undefined) questionUpdates.topic_id = topic_id;
+    if (topic_id !== undefined && topic_id !== '') questionUpdates.topic_id = topic_id;
     if (answer_type !== undefined) questionUpdates.answer_type = answer_type;
     if (difficulty_level !== undefined) questionUpdates.difficulty_level = difficulty_level;
     if (points !== undefined) questionUpdates.points = points;
@@ -355,8 +354,7 @@ export async function updateFull(req: Request, res: Response) {
       if (existingQT) {
         await supabase.from('descriptive_question_translations').update({
           question_text,
-          answer_text: answer_text ?? null,
-          explanation: explanation ?? null,
+          explanation: explanation ?? answer_text ?? null,
           hint: hint ?? null,
           updated_by: req.user!.id,
         }).eq('id', existingQT.id);
@@ -365,8 +363,7 @@ export async function updateFull(req: Request, res: Response) {
           descriptive_question_id: id,
           language_id: 7,
           question_text,
-          answer_text: answer_text ?? null,
-          explanation: explanation ?? null,
+          explanation: explanation ?? answer_text ?? null,
           hint: hint ?? null,
           is_active: true,
           created_by: req.user!.id,

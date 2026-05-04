@@ -401,7 +401,7 @@ export async function updateFull(req: Request, res: Response) {
 
     // 1. Update the OW question
     const questionUpdates: any = { updated_by: req.user!.id };
-    if (topic_id !== undefined) questionUpdates.topic_id = topic_id;
+    if (topic_id !== undefined && topic_id !== '') questionUpdates.topic_id = topic_id;
     if (question_type !== undefined) questionUpdates.question_type = question_type;
     if (difficulty_level !== undefined) questionUpdates.difficulty_level = difficulty_level;
     if (points !== undefined) questionUpdates.points = points;
