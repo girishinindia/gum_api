@@ -118,8 +118,25 @@ async function callAI(provider: AIProvider, systemPrompt: string, userContent: s
 }
 
 function parseJSON(raw: string): any {
-  const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  return JSON.parse(cleaned);
+  // Strip markdown code fences (```json ... ``` or ``` ... ```)
+  let cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  // If it still doesn't start with { or [, try to extract JSON from the response
+  if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+    const jsonStart = cleaned.search(/[\[{]/);
+    if (jsonStart >= 0) cleaned = cleaned.slice(jsonStart);
+  }
+  // If it doesn't end with } or ], try to find the last valid closing bracket
+  if (!cleaned.endsWith('}') && !cleaned.endsWith(']')) {
+    const lastBrace = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+    if (lastBrace >= 0) cleaned = cleaned.slice(0, lastBrace + 1);
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // Try fixing common AI issues: trailing commas before } or ]
+    const fixedCommas = cleaned.replace(/,\s*([}\]])/g, '$1');
+    return JSON.parse(fixedCommas);
+  }
 }
 
 /**
@@ -6972,8 +6989,18 @@ Return ONLY a valid JSON object (no markdown, no code blocks) with this exact st
         if (!qId) continue;
 
         // Batch insert all options for this question
-        const optInserts = q.options
-          .filter((o: any) => o.option_text)
+        // Enforce single correct answer for single_choice and true_false
+        let filteredOpts = q.options.filter((o: any) => o.option_text);
+        if ((q.mcq_type === 'single_choice' || q.mcq_type === 'true_false') && filteredOpts.filter((o: any) => o.is_correct).length > 1) {
+          // Keep only the first correct option as correct, set rest to false
+          let foundFirst = false;
+          filteredOpts = filteredOpts.map((o: any) => {
+            if (o.is_correct && !foundFirst) { foundFirst = true; return o; }
+            if (o.is_correct && foundFirst) return { ...o, is_correct: false };
+            return o;
+          });
+        }
+        const optInserts = filteredOpts
           .map((o: any, oi: number) => ({
             mcq_question_id: qId,
             is_correct: !!o.is_correct,

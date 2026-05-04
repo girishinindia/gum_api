@@ -459,6 +459,17 @@ export async function updateFull(req: Request, res: Response) {
         await supabase.from('mcq_options').delete().eq('mcq_question_id', id);
       }
 
+      // Enforce single correct for single_choice / true_false
+      const effectiveType = questionUpdates.mcq_type || old.mcq_type;
+      if ((effectiveType === 'single' || effectiveType === 'single_choice' || effectiveType === 'true_false') &&
+          options.filter((o: any) => o.is_correct).length > 1) {
+        let foundFirst = false;
+        options.forEach((o: any) => {
+          if (o.is_correct && !foundFirst) { foundFirst = true; }
+          else if (o.is_correct) { o.is_correct = false; }
+        });
+      }
+
       // Insert new options
       const optionInserts = options.map((o: any, idx: number) => ({
         mcq_question_id: id,
