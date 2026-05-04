@@ -6,6 +6,8 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { uploadRawFile } from '../../services/storage.service';
+import { deleteFromBunny } from '../../config/bunny';
 
 const CACHE_KEY = 'assessment_solutions:all';
 const clearCache = async (assessmentId?: number) => {
@@ -63,6 +65,22 @@ export async function create(req: Request, res: Response) {
   const { data: assessment } = await supabase.from('assessments').select('id, slug').eq('id', body.assessment_id).single();
   if (!assessment) return err(res, 'Assessment not found', 404);
 
+  // Handle file upload to Bunny CDN
+  const file = req.file;
+  if (file) {
+    const ts = Date.now();
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cdnPath = `assessments/${assessment.slug}/solutions/${ts}_${safeName}`;
+    try {
+      body.file_url = await uploadRawFile(file.buffer, cdnPath);
+      body.file_name = file.originalname;
+      body.file_size_bytes = file.size;
+      body.mime_type = file.mimetype;
+    } catch (uploadErr: any) {
+      return err(res, `File upload failed: ${uploadErr.message}`, 500);
+    }
+  }
+
   body.created_by = req.user!.id;
 
   const { data, error: e } = await supabase
@@ -79,13 +97,40 @@ export async function create(req: Request, res: Response) {
 
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessment_solutions').select('*').eq('id', id).single();
+  const { data: old } = await supabase.from('assessment_solutions').select('*, assessments(slug)').eq('id', id).single();
   if (!old) return err(res, 'Assessment solution not found', 404);
 
   const updates = parseMultipartBody(req);
   updates.updated_by = req.user!.id;
 
-  if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+  // Handle file upload to Bunny CDN
+  const file = req.file;
+  if (file) {
+    const slug = (old as any).assessments?.slug || `assessment-${old.assessment_id}`;
+    const ts = Date.now();
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cdnPath = `assessments/${slug}/solutions/${ts}_${safeName}`;
+    try {
+      updates.file_url = await uploadRawFile(file.buffer, cdnPath);
+      updates.file_name = file.originalname;
+      updates.file_size_bytes = file.size;
+      updates.mime_type = file.mimetype;
+      // Delete old file from CDN if it existed
+      if (old.file_url) {
+        try {
+          const oldPath = new URL(old.file_url).pathname.replace(/^\//, '');
+          await deleteFromBunny(oldPath);
+        } catch { /* best effort */ }
+      }
+    } catch (uploadErr: any) {
+      return err(res, `File upload failed: ${uploadErr.message}`, 500);
+    }
+  }
+
+  // Remove join data from updates
+  delete updates.assessments;
+
+  if (Object.keys(updates).filter(k => k !== 'updated_by').length === 0 && !file) return err(res, 'Nothing to update', 400);
 
   const { data, error: e } = await supabase
     .from('assessment_solutions')
@@ -146,8 +191,16 @@ export async function restore(req: Request, res: Response) {
 
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessment_solutions').select('assessment_id, file_name').eq('id', id).single();
+  const { data: old } = await supabase.from('assessment_solutions').select('assessment_id, file_name, file_url').eq('id', id).single();
   if (!old) return err(res, 'Assessment solution not found', 404);
+
+  // Delete file from CDN
+  if (old.file_url) {
+    try {
+      const oldPath = new URL(old.file_url).pathname.replace(/^\//, '');
+      await deleteFromBunny(oldPath);
+    } catch { /* best effort */ }
+  }
 
   // Delete translations first
   await supabase.from('assessment_solution_translations').delete().eq('assessment_solution_id', id);

@@ -309,6 +309,385 @@ export async function remove(req: Request, res: Response) {
   return ok(res, null, 'Assessment permanently deleted');
 }
 
+// ── Create Full (Assessment + English Translation) ──
+export async function createFull(req: Request, res: Response) {
+  try {
+    const body = parseMultipartBody(req);
+    const {
+      // Assessment fields
+      assessment_type, assessment_scope, content_type,
+      sub_topic_id, topic_id, chapter_id, course_id,
+      points, difficulty_level, due_days, estimated_hours,
+      is_mandatory, display_order, is_active,
+      // English translation fields
+      title, description, instructions, html_content,
+      tech_stack, learning_outcomes, tags,
+      image_1, image_2,
+      meta_title, meta_description, meta_keywords, canonical_url,
+      og_site_name, og_title, og_description, og_type, og_image, og_url,
+      twitter_site, twitter_title, twitter_description, twitter_image, twitter_card,
+      robots_directive, focus_keyword, structured_data,
+    } = body;
+
+    if (!assessment_type) return err(res, 'assessment_type is required', 400);
+    if (!title) return err(res, 'title (English) is required', 400);
+
+    // Auto-derive scope from type
+    const scopeMap: Record<string, string> = {
+      exercise: 'sub_topic', assignment: 'topic', mini_project: 'chapter', capstone_project: 'course',
+    };
+    const finalScope = assessment_scope || scopeMap[assessment_type];
+    if (!finalScope) return err(res, 'Could not determine assessment_scope', 400);
+
+    const assessmentBody: any = {
+      assessment_type,
+      assessment_scope: finalScope,
+      content_type: content_type || 'coding',
+      sub_topic_id: sub_topic_id || null,
+      topic_id: topic_id || null,
+      chapter_id: chapter_id || null,
+      course_id: course_id || null,
+      points: points ?? 0,
+      difficulty_level: difficulty_level || 'medium',
+      due_days: due_days || null,
+      estimated_hours: estimated_hours || null,
+      is_mandatory: is_mandatory ?? true,
+      display_order: display_order ?? 0,
+      is_active: is_active ?? true,
+      created_by: req.user!.id,
+    };
+
+    // Validate type-scope-FK consistency
+    const typeErr = validateTypeScope(assessmentBody);
+    if (typeErr) return err(res, typeErr, 400);
+
+    // Verify FK exists
+    const fkErr = await verifyForeignKey(assessmentBody);
+    if (fkErr) return err(res, fkErr, 404);
+
+    // Auto-generate slug
+    const slugSource = body.slug || title || `${assessment_type}-${Date.now()}`;
+    assessmentBody.slug = await generateUniqueSlug(supabase, 'assessments', slugSource);
+
+    // Auto display_order if not provided
+    if (assessmentBody.display_order === 0) {
+      const fkMap: Record<string, string> = { sub_topic: 'sub_topic_id', topic: 'topic_id', chapter: 'chapter_id', course: 'course_id' };
+      const fkCol = fkMap[finalScope];
+      const fkVal = fkCol ? assessmentBody[fkCol] : null;
+      if (fkCol && fkVal) {
+        const { data: maxRow } = await supabase
+          .from('assessments').select('display_order')
+          .eq(fkCol, fkVal).eq('assessment_type', assessment_type).is('deleted_at', null)
+          .order('display_order', { ascending: false }).limit(1);
+        assessmentBody.display_order = (maxRow && maxRow.length > 0 && maxRow[0].display_order != null)
+          ? maxRow[0].display_order + 1 : 1;
+      }
+    }
+
+    // 1. Create assessment
+    const { data: assessment, error: aErr } = await supabase
+      .from('assessments')
+      .insert(assessmentBody)
+      .select(FK_SELECT)
+      .single();
+    if (aErr) {
+      if (aErr.code === '23505') return err(res, 'Assessment slug already exists', 409);
+      return err(res, aErr.message, 500);
+    }
+
+    // 2. Create English translation (language_id = 7)
+    const translationBody: any = {
+      assessment_id: assessment.id,
+      language_id: 7,
+      title,
+      description: description || null,
+      instructions: instructions || null,
+      html_content: html_content || null,
+      tech_stack: tech_stack ? (typeof tech_stack === 'string' ? JSON.parse(tech_stack) : tech_stack) : [],
+      learning_outcomes: learning_outcomes ? (typeof learning_outcomes === 'string' ? JSON.parse(learning_outcomes) : learning_outcomes) : [],
+      tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [],
+      image_1: image_1 || null,
+      image_2: image_2 || null,
+      meta_title: meta_title || null,
+      meta_description: meta_description || null,
+      meta_keywords: meta_keywords || null,
+      canonical_url: canonical_url || null,
+      og_site_name: og_site_name || null,
+      og_title: og_title || null,
+      og_description: og_description || null,
+      og_type: og_type || null,
+      og_image: og_image || null,
+      og_url: og_url || null,
+      twitter_site: twitter_site || null,
+      twitter_title: twitter_title || null,
+      twitter_description: twitter_description || null,
+      twitter_image: twitter_image || null,
+      twitter_card: twitter_card || 'summary_large_image',
+      robots_directive: robots_directive || 'index,follow',
+      focus_keyword: focus_keyword || null,
+      structured_data: structured_data ? (typeof structured_data === 'string' ? JSON.parse(structured_data) : structured_data) : [],
+      is_active: true,
+      created_by: req.user!.id,
+    };
+
+    const { data: translation, error: tErr } = await supabase
+      .from('assessment_translations')
+      .insert(translationBody)
+      .select()
+      .single();
+    if (tErr) return err(res, `Translation insert failed: ${tErr.message}`, 500);
+
+    await clearCache(getScopeId(assessmentBody), assessmentBody.assessment_scope);
+    logAdmin({ actorId: req.user!.id, action: 'assessment_created', targetType: 'assessment', targetId: assessment.id, targetName: assessment.slug, ip: getClientIp(req) });
+
+    return ok(res, {
+      ...assessment,
+      english_translation: translation,
+    }, 'Assessment created with English translation', 201);
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to create full assessment', 500);
+  }
+}
+
+// ── Update Full (Assessment + Upsert Translation for a specific language) ──
+export async function updateFull(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id as string);
+    const { data: old } = await supabase.from('assessments').select('*').eq('id', id).single();
+    if (!old) return err(res, 'Assessment not found', 404);
+
+    const body = parseMultipartBody(req);
+    const {
+      // Assessment fields
+      assessment_type, content_type,
+      sub_topic_id, topic_id, chapter_id, course_id,
+      points, difficulty_level, due_days, estimated_hours,
+      is_mandatory, display_order, is_active,
+      // Translation fields
+      language_id,
+      title, description, instructions, html_content,
+      tech_stack, learning_outcomes, tags,
+      image_1, image_2,
+      meta_title, meta_description, meta_keywords, canonical_url,
+      og_site_name, og_title, og_description, og_type, og_image, og_url,
+      twitter_site, twitter_title, twitter_description, twitter_image, twitter_card,
+      robots_directive, focus_keyword, structured_data,
+    } = body;
+
+    // 1. Update assessment record
+    const assessmentUpdates: any = { updated_by: req.user!.id };
+    if (content_type !== undefined) assessmentUpdates.content_type = content_type;
+    if (sub_topic_id !== undefined) assessmentUpdates.sub_topic_id = sub_topic_id;
+    if (topic_id !== undefined) assessmentUpdates.topic_id = topic_id;
+    if (chapter_id !== undefined) assessmentUpdates.chapter_id = chapter_id;
+    if (course_id !== undefined) assessmentUpdates.course_id = course_id;
+    if (points !== undefined) assessmentUpdates.points = points;
+    if (difficulty_level !== undefined) assessmentUpdates.difficulty_level = difficulty_level;
+    if (due_days !== undefined) assessmentUpdates.due_days = due_days;
+    if (estimated_hours !== undefined) assessmentUpdates.estimated_hours = estimated_hours;
+    if (is_mandatory !== undefined) assessmentUpdates.is_mandatory = is_mandatory;
+    if (display_order !== undefined) assessmentUpdates.display_order = display_order;
+    if (is_active !== undefined) assessmentUpdates.is_active = is_active;
+
+    // Permission check for active toggle
+    if ('is_active' in assessmentUpdates && assessmentUpdates.is_active !== old.is_active) {
+      if (!hasPermission(req, 'assessment', 'activate')) {
+        return err(res, 'Permission denied: assessment:activate required', 403);
+      }
+    }
+
+    // If type/scope changed, validate consistency
+    if (assessment_type || assessmentUpdates.sub_topic_id || assessmentUpdates.topic_id || assessmentUpdates.chapter_id || assessmentUpdates.course_id) {
+      const merged = { ...old, ...assessmentUpdates };
+      if (assessment_type) {
+        merged.assessment_type = assessment_type;
+        const scopeMap: Record<string, string> = { exercise: 'sub_topic', assignment: 'topic', mini_project: 'chapter', capstone_project: 'course' };
+        merged.assessment_scope = scopeMap[assessment_type] || merged.assessment_scope;
+        assessmentUpdates.assessment_type = assessment_type;
+        assessmentUpdates.assessment_scope = merged.assessment_scope;
+      }
+      const typeErr = validateTypeScope(merged);
+      if (typeErr) return err(res, typeErr, 400);
+      const fkErr = await verifyForeignKey(merged);
+      if (fkErr) return err(res, fkErr, 404);
+    }
+
+    // Re-generate slug if title changed
+    if (title && title !== body._old_title) {
+      assessmentUpdates.slug = await generateUniqueSlug(supabase, 'assessments', title, id);
+    }
+
+    const { data: updatedAssessment, error: aErr } = await supabase
+      .from('assessments')
+      .update(assessmentUpdates)
+      .eq('id', id)
+      .select(FK_SELECT)
+      .single();
+    if (aErr) {
+      if (aErr.code === '23505') return err(res, 'Assessment slug already exists', 409);
+      return err(res, aErr.message, 500);
+    }
+
+    // 2. Upsert translation for the specified language (default to English = 7)
+    let translationResult: any = null;
+    const langId = language_id || 7;
+    if (title) {
+      const translationBody: any = {
+        assessment_id: id,
+        language_id: langId,
+        title,
+        description: description ?? null,
+        instructions: instructions ?? null,
+        html_content: html_content ?? null,
+        tech_stack: tech_stack ? (typeof tech_stack === 'string' ? JSON.parse(tech_stack) : tech_stack) : [],
+        learning_outcomes: learning_outcomes ? (typeof learning_outcomes === 'string' ? JSON.parse(learning_outcomes) : learning_outcomes) : [],
+        tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [],
+        image_1: image_1 ?? null,
+        image_2: image_2 ?? null,
+        meta_title: meta_title ?? null,
+        meta_description: meta_description ?? null,
+        meta_keywords: meta_keywords ?? null,
+        canonical_url: canonical_url ?? null,
+        og_site_name: og_site_name ?? null,
+        og_title: og_title ?? null,
+        og_description: og_description ?? null,
+        og_type: og_type ?? null,
+        og_image: og_image ?? null,
+        og_url: og_url ?? null,
+        twitter_site: twitter_site ?? null,
+        twitter_title: twitter_title ?? null,
+        twitter_description: twitter_description ?? null,
+        twitter_image: twitter_image ?? null,
+        twitter_card: twitter_card ?? 'summary_large_image',
+        robots_directive: robots_directive ?? 'index,follow',
+        focus_keyword: focus_keyword ?? null,
+        structured_data: structured_data ? (typeof structured_data === 'string' ? JSON.parse(structured_data) : structured_data) : [],
+        is_active: true,
+        deleted_at: null,
+        created_by: req.user!.id,
+      };
+
+      const { data: trans, error: tErr } = await supabase
+        .from('assessment_translations')
+        .upsert(translationBody, { onConflict: 'assessment_id,language_id' })
+        .select()
+        .single();
+      if (tErr) return err(res, `Translation upsert failed: ${tErr.message}`, 500);
+      translationResult = trans;
+    }
+
+    await clearCache(getScopeId(old), old.assessment_scope);
+    if (assessmentUpdates.assessment_scope && assessmentUpdates.assessment_scope !== old.assessment_scope) {
+      await clearCache(getScopeId(assessmentUpdates), assessmentUpdates.assessment_scope);
+    }
+
+    logAdmin({ actorId: req.user!.id, action: 'assessment_updated', targetType: 'assessment', targetId: id, targetName: updatedAssessment.slug, ip: getClientIp(req) });
+
+    return ok(res, {
+      ...updatedAssessment,
+      updated_translation: translationResult,
+    }, 'Assessment updated');
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to update full assessment', 500);
+  }
+}
+
+// ── Get Full (Assessment + All Translations + Attachments + Solutions + Coverage) ──
+export async function getFullById(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id as string);
+    const { data: assessment, error: aErr } = await supabase
+      .from('assessments')
+      .select(FK_SELECT)
+      .eq('id', id)
+      .single();
+    if (aErr || !assessment) return err(res, 'Assessment not found', 404);
+
+    // Get all translations
+    const { data: translations } = await supabase
+      .from('assessment_translations')
+      .select('*')
+      .eq('assessment_id', id)
+      .is('deleted_at', null);
+
+    // Get all attachments with their translations
+    const { data: attachments } = await supabase
+      .from('assessment_attachments')
+      .select('*')
+      .eq('assessment_id', id)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: true });
+
+    const attachmentIds = (attachments || []).map((a: any) => a.id);
+    let attachmentTranslations: any[] = [];
+    if (attachmentIds.length > 0) {
+      const { data } = await supabase
+        .from('assessment_attachment_translations')
+        .select('*')
+        .in('assessment_attachment_id', attachmentIds)
+        .is('deleted_at', null);
+      attachmentTranslations = data || [];
+    }
+
+    // Get all solutions with their translations
+    const { data: solutions } = await supabase
+      .from('assessment_solutions')
+      .select('*')
+      .eq('assessment_id', id)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: true });
+
+    const solutionIds = (solutions || []).map((s: any) => s.id);
+    let solutionTranslations: any[] = [];
+    if (solutionIds.length > 0) {
+      const { data } = await supabase
+        .from('assessment_solution_translations')
+        .select('*')
+        .in('assessment_solution_id', solutionIds)
+        .is('deleted_at', null);
+      solutionTranslations = data || [];
+    }
+
+    // Get all material languages for coverage
+    const { data: languages } = await supabase
+      .from('languages')
+      .select('id, name, iso_code, for_material')
+      .eq('for_material', true)
+      .eq('is_active', true);
+
+    // Build translation coverage
+    const transLangIds = new Set((translations || []).map((t: any) => t.language_id));
+    const coverage = (languages || []).map((lang: any) => ({
+      language_id: lang.id,
+      language_name: lang.name,
+      language_code: lang.iso_code,
+      has_translation: transLangIds.has(lang.id),
+    }));
+
+    // Enrich attachments with their translations
+    const enrichedAttachments = (attachments || []).map((att: any) => ({
+      ...att,
+      translations: attachmentTranslations.filter((at: any) => at.assessment_attachment_id === att.id),
+    }));
+
+    // Enrich solutions with their translations
+    const enrichedSolutions = (solutions || []).map((sol: any) => ({
+      ...sol,
+      translations: solutionTranslations.filter((st: any) => st.assessment_solution_id === sol.id),
+    }));
+
+    return ok(res, {
+      ...assessment,
+      translations: translations || [],
+      attachments: enrichedAttachments,
+      solutions: enrichedSolutions,
+      translation_coverage: coverage,
+    });
+  } catch (error: any) {
+    return err(res, error.message || 'Failed to get full assessment', 500);
+  }
+}
+
 // ── Helpers ──
 
 function getScopeId(row: any): number | undefined {
