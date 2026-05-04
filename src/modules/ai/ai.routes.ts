@@ -109,5 +109,6 @@ r.post('/auto-translate-ordering', requirePermission('ordering_question_translat
 
 // Auto generate assessments (exercises, assignments, mini projects, capstone projects)
 r.post('/auto-generate-assessment', requirePermission('assessment', 'create'), ctrl.autoGenerateAssessment);
+r.post('/auto-translate-assessment', requirePermission('assessment_translation', 'create'), ctrl.autoTranslateAssessment);
 
 export default r;

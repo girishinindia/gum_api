@@ -11605,3 +11605,283 @@ Return ONLY valid JSON (no markdown):
     return err(res, error.message || 'Failed to auto-generate assessments', 500);
   }
 }
+
+// ─── Auto-Translate Existing Assessments ─────────────────────────────────────
+export async function autoTranslateAssessment(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { assessment_ids, scope_id, assessment_type, provider: reqProvider } = req.body;
+    if (!assessment_ids && !scope_id) {
+      return err(res, 'assessment_ids[] or scope_id (with assessment_type) is required', 400);
+    }
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    // Get target languages (non-English material languages)
+    const { data: materialLangs } = await supabase
+      .from('languages')
+      .select('id, iso_code, name')
+      .eq('is_active', true)
+      .eq('for_material', true)
+      .neq('id', 7)
+      .order('id');
+    if (!materialLangs || materialLangs.length === 0) return err(res, 'No target languages found', 404);
+
+    // Find assessments to translate
+    let assessmentsQuery = supabase
+      .from('assessments')
+      .select('id, slug, assessment_type')
+      .is('deleted_at', null)
+      .eq('is_active', true);
+
+    if (assessment_ids && Array.isArray(assessment_ids) && assessment_ids.length > 0) {
+      assessmentsQuery = assessmentsQuery.in('id', assessment_ids);
+    } else if (scope_id && assessment_type) {
+      const scopeMap: Record<string, string> = {
+        exercise: 'sub_topic_id',
+        assignment: 'topic_id',
+        mini_project: 'chapter_id',
+        capstone_project: 'course_id',
+      };
+      const fkCol = scopeMap[assessment_type];
+      if (!fkCol) return err(res, 'Invalid assessment_type', 400);
+      assessmentsQuery = assessmentsQuery.eq(fkCol, scope_id).eq('assessment_type', assessment_type);
+    } else {
+      return err(res, 'assessment_ids[] or (scope_id + assessment_type) required', 400);
+    }
+
+    const { data: assessments, error: aErr } = await assessmentsQuery;
+    if (aErr) return err(res, aErr.message, 500);
+    if (!assessments || assessments.length === 0) return err(res, 'No assessments found to translate', 404);
+
+    let totalTranslated = 0;
+    let totalSolutionTranslated = 0;
+    let totalErrors = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    for (const assessment of assessments) {
+      // ─── 1. Translate assessment_translations ───
+      const { data: engTrans } = await supabase
+        .from('assessment_translations')
+        .select('title, description, problem_statement_html, instructions, prerequisites, submission_guidelines, hints, tech_stack, learning_outcomes, tags, focus_keyword')
+        .eq('assessment_id', assessment.id)
+        .eq('language_id', 7)
+        .is('deleted_at', null)
+        .single();
+
+      if (!engTrans || !engTrans.title) continue;
+
+      // Find missing languages for assessment_translations
+      const { data: existingTrans } = await supabase
+        .from('assessment_translations')
+        .select('language_id')
+        .eq('assessment_id', assessment.id)
+        .is('deleted_at', null);
+      const existingLangIds = new Set((existingTrans || []).map(t => t.language_id));
+      const missingLangs = materialLangs.filter(l => !existingLangIds.has(l.id));
+
+      if (missingLangs.length > 0) {
+        // Batch all languages in a single AI call
+        const langList = missingLangs.map(l => `${l.name} (${l.iso_code})`).join(', ');
+        const transPrompt = `Translate the following educational assessment content from English to these languages: ${langList}.
+
+RULES:
+- Translate ALL text content to the target language
+- Keep ALL technical terms, code keywords, variable names, function names, class names, and programming syntax in English (do NOT translate code)
+- Keep HTML tags intact — only translate the text between tags
+- Maintain the same tone and clarity
+- Keep JSON structure intact
+
+Return ONLY valid JSON (no markdown):
+{
+  "translations": {
+    "<iso_code>": {
+      "title": "translated title",
+      "description": "translated description",
+      "problem_statement_html": "translated HTML (code stays English)",
+      "instructions": "translated instructions HTML",
+      "prerequisites": "translated prerequisites",
+      "submission_guidelines": "translated guidelines",
+      "hints": "translated hints"
+    }
+  }
+}`;
+
+        const contentToTranslate = JSON.stringify({
+          title: engTrans.title,
+          description: engTrans.description || '',
+          problem_statement_html: (engTrans.problem_statement_html || '').slice(0, 15000),
+          instructions: (engTrans.instructions || '').slice(0, 5000),
+          prerequisites: engTrans.prerequisites || '',
+          submission_guidelines: engTrans.submission_guidelines || '',
+          hints: engTrans.hints || '',
+        });
+
+        try {
+          const transResult = await callAI(provider, transPrompt, contentToTranslate, Math.max(16384, missingLangs.length * 4096));
+          totalInputTokens += transResult.inputTokens || 0;
+          totalOutputTokens += transResult.outputTokens || 0;
+          const parsed = parseJSON(transResult.text);
+
+          if (parsed && parsed.translations) {
+            for (const lang of missingLangs) {
+              const t = parsed.translations[lang.iso_code];
+              if (t && t.title) {
+                const { error: insErr } = await supabase.from('assessment_translations').insert({
+                  assessment_id: assessment.id,
+                  language_id: lang.id,
+                  title: t.title,
+                  description: t.description || null,
+                  problem_statement_html: t.problem_statement_html || null,
+                  instructions: t.instructions || null,
+                  prerequisites: t.prerequisites || null,
+                  submission_guidelines: t.submission_guidelines || null,
+                  hints: t.hints || null,
+                  meta_title: (t.title || '').slice(0, 70),
+                  meta_description: (t.description || '').slice(0, 160),
+                  focus_keyword: engTrans.focus_keyword || '',
+                  tech_stack: engTrans.tech_stack || [],
+                  learning_outcomes: engTrans.learning_outcomes || [],
+                  tags: engTrans.tags || [],
+                  structured_data: [],
+                  is_active: true,
+                  created_by: userId,
+                });
+                if (!insErr) totalTranslated++;
+                else totalErrors++;
+              }
+            }
+          }
+        } catch (e: any) {
+          console.error(`Assessment ${assessment.id} translation failed:`, e.message);
+          totalErrors++;
+        }
+      }
+
+      // ─── 2. Translate assessment_solution_translations ───
+      const { data: solutions } = await supabase
+        .from('assessment_solutions')
+        .select('id')
+        .eq('assessment_id', assessment.id)
+        .is('deleted_at', null)
+        .eq('is_active', true);
+
+      if (solutions && solutions.length > 0) {
+        for (const sol of solutions) {
+          // Get English solution translation
+          const { data: engSolTrans } = await supabase
+            .from('assessment_solution_translations')
+            .select('title, description, html_content, video_title, video_description')
+            .eq('assessment_solution_id', sol.id)
+            .eq('language_id', 7)
+            .is('deleted_at', null)
+            .single();
+
+          if (!engSolTrans || (!engSolTrans.title && !engSolTrans.html_content && !engSolTrans.video_description)) continue;
+
+          // Find missing languages for solution translations
+          const { data: existingSolTrans } = await supabase
+            .from('assessment_solution_translations')
+            .select('language_id')
+            .eq('assessment_solution_id', sol.id)
+            .is('deleted_at', null);
+          const existingSolLangIds = new Set((existingSolTrans || []).map(t => t.language_id));
+          const missingSolLangs = materialLangs.filter(l => !existingSolLangIds.has(l.id));
+
+          if (missingSolLangs.length === 0) continue;
+
+          const solLangList = missingSolLangs.map(l => `${l.name} (${l.iso_code})`).join(', ');
+          const solPrompt = `Translate the following educational assessment solution from English to these languages: ${solLangList}.
+
+RULES:
+- Translate ALL text content to the target language
+- Keep ALL technical terms, code, variable names, function names in English
+- Keep HTML tags intact — only translate the text between tags
+- Maintain the same clarity and formatting
+
+Return ONLY valid JSON (no markdown):
+{
+  "translations": {
+    "<iso_code>": {
+      "title": "translated title",
+      "description": "translated description",
+      "html_content": "translated solution HTML (code stays English)",
+      "video_title": "translated video title",
+      "video_description": "translated video description"
+    }
+  }
+}`;
+
+          const solContent = JSON.stringify({
+            title: engSolTrans.title || '',
+            description: engSolTrans.description || '',
+            html_content: (engSolTrans.html_content || engSolTrans.video_description || '').slice(0, 15000),
+            video_title: engSolTrans.video_title || '',
+            video_description: (engSolTrans.video_description || '').slice(0, 5000),
+          });
+
+          try {
+            const solResult = await callAI(provider, solPrompt, solContent, Math.max(16384, missingSolLangs.length * 4096));
+            totalInputTokens += solResult.inputTokens || 0;
+            totalOutputTokens += solResult.outputTokens || 0;
+            const solParsed = parseJSON(solResult.text);
+
+            if (solParsed && solParsed.translations) {
+              for (const lang of missingSolLangs) {
+                const st = solParsed.translations[lang.iso_code];
+                if (st && (st.title || st.html_content || st.video_title)) {
+                  const { error: solInsErr } = await supabase.from('assessment_solution_translations').insert({
+                    assessment_solution_id: sol.id,
+                    language_id: lang.id,
+                    title: st.title || engSolTrans.title || 'Solution',
+                    description: st.description || null,
+                    html_content: st.html_content || null,
+                    video_title: st.video_title || null,
+                    video_description: st.video_description || null,
+                    is_active: true,
+                    created_by: userId,
+                  });
+                  if (!solInsErr) totalSolutionTranslated++;
+                  else totalErrors++;
+                }
+              }
+            }
+          } catch (e: any) {
+            console.error(`Solution ${sol.id} translation failed:`, e.message);
+            totalErrors++;
+          }
+        }
+      }
+    }
+
+    logAdmin({
+      actorId: userId,
+      action: 'assessment_auto_translated',
+      targetType: 'assessment',
+      targetId: assessments[0]?.id,
+      targetName: `translated ${assessments.length} assessment(s)`,
+      ip: getClientIp(req),
+    });
+
+    return ok(res, {
+      summary: {
+        assessments_processed: assessments.length,
+        assessment_translations_created: totalTranslated,
+        solution_translations_created: totalSolutionTranslated,
+        errors: totalErrors,
+        languages: materialLangs.length,
+      },
+      usage: {
+        prompt_tokens: totalInputTokens,
+        completion_tokens: totalOutputTokens,
+        total_tokens: totalInputTokens + totalOutputTokens,
+      },
+    }, `Translated ${assessments.length} assessment(s) to ${materialLangs.length} languages`);
+  } catch (error: any) {
+    console.error('autoTranslateAssessment error:', error);
+    return err(res, error.message || 'Failed to auto-translate assessments', 500);
+  }
+}
