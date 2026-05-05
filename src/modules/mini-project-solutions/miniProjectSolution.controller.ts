@@ -144,7 +144,14 @@ export async function update(req: Request, res: Response) {
     const title = updates.video_title || old.video_title || 'solution-video';
     const result = await uploadVideoToStream(videoFile.buffer, title, collectionId);
     updates.video = result.embedUrl;
-    updates.video_thumbnail = result.thumbnailUrl;
+    // Only set auto-generated thumbnail if no custom thumbnail is being uploaded alongside
+    // and no existing custom thumbnail exists (custom ones are in /thumbnails/ path)
+    const hasCustomThumbExisting = old.video_thumbnail && old.video_thumbnail.includes('/thumbnails/');
+    if (!thumbnailFile && hasCustomThumbExisting) {
+      // Preserve existing custom thumbnail — don't overwrite with auto-generated one
+    } else {
+      updates.video_thumbnail = result.thumbnailUrl;
+    }
   }
 
   // If custom thumbnail uploaded, upload to CDN (overrides auto-generated one)
