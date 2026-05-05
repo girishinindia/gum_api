@@ -782,12 +782,10 @@ const COURSE_MODULE_JSONB_FIELDS = ['tags'];
 
 const MATERIAL_FIELDS_COURSE_BATCH = [
   'title', 'short_description', 'description',
-  'tags',
+  'requirements', 'what_you_learn',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
-  'focus_keyword',
 ];
-const COURSE_BATCH_JSONB_FIELDS = ['tags'];
+const COURSE_BATCH_JSONB_FIELDS: string[] = [];
 
 const MATERIAL_FIELDS_WEBINAR = [
   'title', 'short_description', 'description',
