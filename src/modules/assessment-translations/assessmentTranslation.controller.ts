@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
-import { uploadToBunny, deleteFromBunny } from '../../config/bunny';
+import { uploadToBunny, deleteFromBunny, purgeBunnyCdn } from '../../config/bunny';
 import { hasPermission } from '../../middleware/rbac';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
@@ -61,10 +61,11 @@ async function buildExerciseCdnPath(exerciseId: number, langIsoCode: string, suf
     return null;
   }
 
-  const topicName = topic.slug || topic.name?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '') || exercise.slug;
+  // Use the exercise slug as filename base (unique per exercise, prevents CDN path collisions)
+  const exerciseName = exercise.slug;
   const filename = suffix === 'solution'
-    ? `${topicName}_solution.html`
-    : `${topicName}.html`;
+    ? `${exerciseName}_solution.html`
+    : `${exerciseName}.html`;
 
   return `materials/${subject.slug}/${chapter.slug}/${topic.slug}/topic_exercise/${langIsoCode}/${filename}`;
 }
@@ -117,7 +118,8 @@ export async function create(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
     try {
       const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
-      body.file_url = cdnUrl;
+      body.file_url = `${cdnUrl}?v=${Date.now()}`;
+      purgeBunnyCdn(cdnUrl);
     } catch (uploadErr: any) {
       console.error('[createTranslation] Bunny upload failed for file:', cdnPath, uploadErr?.message);
       return err(res, `File upload failed: ${uploadErr?.message || 'Unknown error'}`, 500);
@@ -130,7 +132,8 @@ export async function create(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
     try {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
-      body.file_solution_url = cdnUrl;
+      body.file_solution_url = `${cdnUrl}?v=${Date.now()}`;
+      purgeBunnyCdn(cdnUrl);
     } catch (uploadErr: any) {
       console.error('[createTranslation] Bunny upload failed for file_solution:', cdnPath, uploadErr?.message);
       return err(res, `Solution file upload failed: ${uploadErr?.message || 'Unknown error'}`, 500);
@@ -175,7 +178,8 @@ export async function update(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
     try {
       const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
-      updates.file_url = cdnUrl;
+      updates.file_url = `${cdnUrl}?v=${Date.now()}`;
+      purgeBunnyCdn(cdnUrl);
     } catch (uploadErr: any) {
       console.error('[updateTranslation] Bunny upload failed for file:', cdnPath, uploadErr?.message);
       return err(res, `File upload failed: ${uploadErr?.message || 'Unknown error'}`, 500);
@@ -191,7 +195,8 @@ export async function update(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
     try {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
-      updates.file_solution_url = cdnUrl;
+      updates.file_solution_url = `${cdnUrl}?v=${Date.now()}`;
+      purgeBunnyCdn(cdnUrl);
     } catch (uploadErr: any) {
       console.error('[updateTranslation] Bunny upload failed for file_solution:', cdnPath, uploadErr?.message);
       return err(res, `Solution file upload failed: ${uploadErr?.message || 'Unknown error'}`, 500);
