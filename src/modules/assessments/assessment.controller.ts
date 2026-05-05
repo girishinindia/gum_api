@@ -2,45 +2,41 @@ import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
 import { hasPermission } from '../../middleware/rbac';
-import { logAdmin, logData } from '../../services/activityLog.service';
+import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { deleteFromBunny, uploadToBunny } from '../../config/bunny';
+import { config } from '../../config';
 
-const CACHE_KEY = 'assessments:all';
-const clearCache = async (scopeId?: number, scopeType?: string) => {
+const TABLE = 'assesment_exercise';
+const TRANS_TABLE = 'assesment_exercise_translations';
+const CACHE_KEY = 'assesment_exercise:all';
+const clearCache = async () => {
   await redis.del(CACHE_KEY);
-  if (scopeId && scopeType) await redis.del(`assessments:${scopeType}:${scopeId}`);
 };
+
+const FK_SELECT = `*, topics!assessment_exercises_sub_topic_id_fkey(name, slug, chapter_id, chapters(name, slug, subject_id, subjects(name, slug))), ${TRANS_TABLE}(id, language_id, name)`;
 
 function parseMultipartBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
-  if (typeof body.is_mandatory === 'string') body.is_mandatory = body.is_mandatory === 'true';
+  if (typeof body.topic_id === 'string') {
+    body.topic_id = body.topic_id === '' || body.topic_id === 'null' ? null : parseInt(body.topic_id) || null;
+  }
+  if (typeof body.points === 'string') body.points = parseFloat(body.points) || 0;
   if (typeof body.display_order === 'string') body.display_order = parseInt(body.display_order) || 0;
-  if (typeof body.points === 'string') body.points = parseInt(body.points) || 0;
-  if (typeof body.due_days === 'string') body.due_days = parseInt(body.due_days) || null;
-  if (typeof body.estimated_hours === 'string') body.estimated_hours = parseFloat(body.estimated_hours) || null;
-  if (typeof body.sub_topic_id === 'string') body.sub_topic_id = body.sub_topic_id === '' || body.sub_topic_id === 'null' ? null : parseInt(body.sub_topic_id) || null;
-  if (typeof body.topic_id === 'string') body.topic_id = body.topic_id === '' || body.topic_id === 'null' ? null : parseInt(body.topic_id) || null;
-  if (typeof body.chapter_id === 'string') body.chapter_id = body.chapter_id === '' || body.chapter_id === 'null' ? null : parseInt(body.chapter_id) || null;
-  if (typeof body.course_id === 'string') body.course_id = body.course_id === '' || body.course_id === 'null' ? null : parseInt(body.course_id) || null;
+  // difficulty_level stays as string
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
 }
 
-const FK_SELECT = `*,
-  sub_topics(id, slug),
-  topics(id, slug, chapter_id),
-  chapters(id, slug, subject_id),
-  courses(id, slug)`;
-
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
 
-  let q = supabase.from('assessments').select(FK_SELECT, { count: 'exact' });
+  let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  // Search
+  // Search by translation name
   if (search) q = q.ilike('slug', `%${search}%`);
 
   // Soft-delete filter
@@ -50,19 +46,9 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
-  // Type filter
-  if (req.query.assessment_type) q = q.eq('assessment_type', req.query.assessment_type as string);
-
-  // Scope filters (cascade)
-  if (req.query.sub_topic_id) q = q.eq('sub_topic_id', parseInt(req.query.sub_topic_id as string));
-  else if (req.query.topic_id) q = q.eq('topic_id', parseInt(req.query.topic_id as string));
-  else if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
-  else if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
-
-  // Difficulty filter
+  // Filters
+  if (req.query.topic_id) q = q.eq('topic_id', parseInt(req.query.topic_id as string));
   if (req.query.difficulty_level) q = q.eq('difficulty_level', req.query.difficulty_level as string);
-
-  // Active filter
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
@@ -72,128 +58,68 @@ export async function list(req: Request, res: Response) {
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
 
-  // Enrich with English translation title
-  const ids = (data || []).map((a: any) => a.id);
-  let titleMap: Record<number, string> = {};
-  if (ids.length > 0) {
-    const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
-    if (enLang) {
-      const { data: enTrans } = await supabase
-        .from('assessment_translations')
-        .select('assessment_id, title')
-        .in('assessment_id', ids)
-        .eq('language_id', enLang.id)
-        .is('deleted_at', null);
-      if (enTrans) {
-        for (const t of enTrans) titleMap[t.assessment_id] = t.title;
-      }
-    }
-  }
-
-  // Enrich with counts
-  let attachmentCountMap: Record<number, number> = {};
-  let solutionCountMap: Record<number, number> = {};
-  if (ids.length > 0) {
-    const { data: attCounts } = await supabase
-      .from('assessment_attachments')
-      .select('assessment_id')
-      .in('assessment_id', ids)
-      .is('deleted_at', null);
-    if (attCounts) {
-      for (const a of attCounts) attachmentCountMap[a.assessment_id] = (attachmentCountMap[a.assessment_id] || 0) + 1;
-    }
-    const { data: solCounts } = await supabase
-      .from('assessment_solutions')
-      .select('assessment_id')
-      .in('assessment_id', ids)
-      .is('deleted_at', null);
-    if (solCounts) {
-      for (const s of solCounts) solutionCountMap[s.assessment_id] = (solutionCountMap[s.assessment_id] || 0) + 1;
-    }
-  }
-
-  const enriched = (data || []).map((a: any) => ({
-    ...a,
-    english_title: titleMap[a.id] || null,
-    attachment_count: attachmentCountMap[a.id] || 0,
-    solution_count: solutionCountMap[a.id] || 0,
-  }));
+  // Enrich with total_languages and English name as title
+  const enriched = (data || []).map((row: any) => {
+    const translations = row[TRANS_TABLE] || [];
+    const enTrans = translations.find((t: any) => t.language_id === 7);
+    return {
+      ...row,
+      title: enTrans?.name || row.slug || '(untitled)',
+      total_languages: translations.length,
+    };
+  });
 
   return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase
-    .from('assessments')
+    .from(TABLE)
     .select(FK_SELECT)
     .eq('id', req.params.id)
     .single();
-  if (e || !data) return err(res, 'Assessment not found', 404);
+  if (e || !data) return err(res, 'Assessment exercise not found', 404);
   return ok(res, data);
 }
 
 export async function create(req: Request, res: Response) {
   const body = parseMultipartBody(req);
 
-  if (body.is_active === false && !hasPermission(req, 'assessment', 'activate')) {
-    return err(res, 'Permission denied: assessment:activate required to create inactive', 403);
-  }
-
-  // Validate type-scope-FK consistency
-  const typeErr = validateTypeScope(body);
-  if (typeErr) return err(res, typeErr, 400);
-
-  // Verify FK exists
-  const fkErr = await verifyForeignKey(body);
-  if (fkErr) return err(res, fkErr, 404);
+  // Auto-generate slug from a name (use body.name if provided, else 'exercise')
+  const slugSource = body.name || body.slug_source || 'exercise';
+  body.slug = await generateUniqueSlug(supabase, TABLE, slugSource, undefined, { column: 'topic_id', value: body.topic_id });
+  delete body.name;
+  delete body.slug_source;
 
   // Set audit field
   body.created_by = req.user!.id;
 
-  // Auto-generate slug
-  const slugSource = body.slug || body.title || `${body.assessment_type}-${Date.now()}`;
-  body.slug = await generateUniqueSlug(supabase, 'assessments', slugSource);
-
   const { data, error: e } = await supabase
-    .from('assessments')
+    .from(TABLE)
     .insert(body)
     .select(FK_SELECT)
     .single();
   if (e) {
-    if (e.code === '23505') return err(res, 'Assessment slug already exists', 409);
+    if (e.code === '23505') return err(res, 'Assessment exercise slug already exists', 409);
     return err(res, e.message, 500);
   }
 
-  await clearCache(getScopeId(body), body.assessment_scope);
-  logAdmin({ actorId: req.user!.id, action: 'assessment_created', targetType: 'assessment', targetId: data.id, targetName: data.slug, ip: getClientIp(req) });
-  return ok(res, data, 'Assessment created', 201);
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_created', targetType: 'assessment_exercise', targetId: data.id, targetName: data.slug, ip: getClientIp(req) });
+  return ok(res, data, 'Assessment exercise created', 201);
 }
 
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessments').select('*').eq('id', id).single();
-  if (!old) return err(res, 'Assessment not found', 404);
+  const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
+  if (!old) return err(res, 'Assessment exercise not found', 404);
 
   const updates = parseMultipartBody(req);
 
-  if ('is_active' in updates && updates.is_active !== old.is_active) {
-    if (!hasPermission(req, 'assessment', 'activate')) {
-      return err(res, 'Permission denied: assessment:activate required to change active status', 403);
-    }
-  }
-
-  // If type/scope changed, validate consistency
-  if (updates.assessment_type || updates.assessment_scope) {
-    const merged = { ...old, ...updates };
-    const typeErr = validateTypeScope(merged);
-    if (typeErr) return err(res, typeErr, 400);
-  }
-
-  // If FK changed, verify it exists
-  if (updates.sub_topic_id || updates.topic_id || updates.chapter_id || updates.course_id) {
-    const merged = { ...old, ...updates };
-    const fkErr = await verifyForeignKey(merged);
-    if (fkErr) return err(res, fkErr, 404);
+  // Re-generate slug if name provided
+  if (updates.name) {
+    updates.slug = await generateUniqueSlug(supabase, TABLE, updates.name, id, { column: 'topic_id', value: updates.topic_id || old.topic_id });
+    delete updates.name;
   }
 
   updates.updated_by = req.user!.id;
@@ -201,13 +127,13 @@ export async function update(req: Request, res: Response) {
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
 
   const { data, error: e } = await supabase
-    .from('assessments')
+    .from(TABLE)
     .update(updates)
     .eq('id', id)
     .select(FK_SELECT)
     .single();
   if (e) {
-    if (e.code === '23505') return err(res, 'Assessment slug already exists', 409);
+    if (e.code === '23505') return err(res, 'Assessment exercise slug already exists', 409);
     return err(res, e.message, 500);
   }
 
@@ -219,530 +145,331 @@ export async function update(req: Request, res: Response) {
     }
   }
 
-  await clearCache(getScopeId(old), old.assessment_scope);
-  if (updates.assessment_scope && updates.assessment_scope !== old.assessment_scope) {
-    await clearCache(getScopeId(updates), updates.assessment_scope);
-  }
-
-  logAdmin({ actorId: req.user!.id, action: 'assessment_updated', targetType: 'assessment', targetId: id, targetName: data.slug, changes, ip: getClientIp(req) });
-  return ok(res, data, 'Assessment updated');
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated', targetType: 'assessment_exercise', targetId: id, targetName: data.slug, changes, ip: getClientIp(req) });
+  return ok(res, data, 'Assessment exercise updated');
 }
 
 export async function softDelete(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessments').select('slug, assessment_scope, sub_topic_id, topic_id, chapter_id, course_id, deleted_at').eq('id', id).single();
-  if (!old) return err(res, 'Assessment not found', 404);
-  if (old.deleted_at) return err(res, 'Assessment is already in trash', 400);
+  const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Assessment exercise not found', 404);
+  if (old.deleted_at) return err(res, 'Assessment exercise is already in trash', 400);
 
   const now = new Date().toISOString();
 
   const { data, error: e } = await supabase
-    .from('assessments')
+    .from(TABLE)
     .update({ deleted_at: now, is_active: false })
     .eq('id', id)
     .select()
     .single();
   if (e) return err(res, e.message, 500);
 
-  // Cascade soft-delete to translations, attachments, solutions
-  await supabase.from('assessment_translations').update({ deleted_at: now, is_active: false }).eq('assessment_id', id).is('deleted_at', null);
-  await supabase.from('assessment_attachments').update({ deleted_at: now, is_active: false }).eq('assessment_id', id).is('deleted_at', null);
-  await supabase.from('assessment_solutions').update({ deleted_at: now, is_active: false }).eq('assessment_id', id).is('deleted_at', null);
+  // Cascade soft-delete to translations
+  await supabase.from(TRANS_TABLE).update({ deleted_at: now, is_active: false }).eq('assesment_exercise_id', id).is('deleted_at', null);
 
-  await clearCache(getScopeId(old), old.assessment_scope);
-  logAdmin({ actorId: req.user!.id, action: 'assessment_soft_deleted', targetType: 'assessment', targetId: id, targetName: old.slug, ip: getClientIp(req) });
-  return ok(res, data, 'Assessment moved to trash');
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_soft_deleted', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  return ok(res, data, 'Assessment exercise moved to trash');
 }
 
 export async function restore(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessments').select('slug, assessment_scope, sub_topic_id, topic_id, chapter_id, course_id, deleted_at').eq('id', id).single();
-  if (!old) return err(res, 'Assessment not found', 404);
-  if (!old.deleted_at) return err(res, 'Assessment is not in trash', 400);
+  const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
+  if (!old) return err(res, 'Assessment exercise not found', 404);
+  if (!old.deleted_at) return err(res, 'Assessment exercise is not in trash', 400);
 
   const { data, error: e } = await supabase
-    .from('assessments')
+    .from(TABLE)
     .update({ deleted_at: null, is_active: true })
     .eq('id', id)
     .select()
     .single();
   if (e) return err(res, e.message, 500);
 
-  // Cascade restore
-  await supabase.from('assessment_translations').update({ deleted_at: null, is_active: true }).eq('assessment_id', id).not('deleted_at', 'is', null);
-  await supabase.from('assessment_attachments').update({ deleted_at: null, is_active: true }).eq('assessment_id', id).not('deleted_at', 'is', null);
-  await supabase.from('assessment_solutions').update({ deleted_at: null, is_active: true }).eq('assessment_id', id).not('deleted_at', 'is', null);
+  // Cascade restore translations
+  await supabase.from(TRANS_TABLE).update({ deleted_at: null, is_active: true }).eq('assesment_exercise_id', id).not('deleted_at', 'is', null);
 
-  await clearCache(getScopeId(old), old.assessment_scope);
-  logAdmin({ actorId: req.user!.id, action: 'assessment_restored', targetType: 'assessment', targetId: id, targetName: old.slug, ip: getClientIp(req) });
-  return ok(res, data, 'Assessment restored');
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_restored', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  return ok(res, data, 'Assessment exercise restored');
 }
 
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('assessments').select('slug, assessment_scope, sub_topic_id, topic_id, chapter_id, course_id').eq('id', id).single();
-  if (!old) return err(res, 'Assessment not found', 404);
+  const { data: old } = await supabase.from(TABLE).select('slug').eq('id', id).single();
+  if (!old) return err(res, 'Assessment exercise not found', 404);
 
-  // Delete children first (FK constraint order)
-  // Solution translations → solutions → attachment translations → attachments → assessment translations → assessment
-  const { data: solutions } = await supabase.from('assessment_solutions').select('id').eq('assessment_id', id);
-  if (solutions && solutions.length > 0) {
-    const solIds = solutions.map((s: any) => s.id);
-    await supabase.from('assessment_solution_translations').delete().in('assessment_solution_id', solIds);
-    await supabase.from('assessment_solutions').delete().eq('assessment_id', id);
+  // Get translations to delete CDN files
+  const { data: translations } = await supabase
+    .from(TRANS_TABLE)
+    .select('id, file_url, file_solution_url')
+    .eq('assesment_exercise_id', id);
+
+  if (translations && translations.length > 0) {
+    for (const t of translations) {
+      if (t.file_url) {
+        try {
+          const oldPath = new URL(t.file_url).pathname.replace(/^\//, '');
+          await deleteFromBunny(oldPath);
+        } catch { /* best effort */ }
+      }
+      if (t.file_solution_url) {
+        try {
+          const oldPath = new URL(t.file_solution_url).pathname.replace(/^\//, '');
+          await deleteFromBunny(oldPath);
+        } catch { /* best effort */ }
+      }
+    }
   }
 
-  const { data: attachments } = await supabase.from('assessment_attachments').select('id').eq('assessment_id', id);
-  if (attachments && attachments.length > 0) {
-    const attIds = attachments.map((a: any) => a.id);
-    await supabase.from('assessment_attachment_translations').delete().in('assessment_attachment_id', attIds);
-    await supabase.from('assessment_attachments').delete().eq('assessment_id', id);
-  }
-
-  await supabase.from('assessment_translations').delete().eq('assessment_id', id);
-
-  const { error: e } = await supabase.from('assessments').delete().eq('id', id);
+  // Delete translations first, then the exercise
+  await supabase.from(TRANS_TABLE).delete().eq('assesment_exercise_id', id);
+  const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 
-  await clearCache(getScopeId(old), old.assessment_scope);
-  logAdmin({ actorId: req.user!.id, action: 'assessment_deleted', targetType: 'assessment', targetId: id, targetName: old.slug, ip: getClientIp(req) });
-  return ok(res, null, 'Assessment permanently deleted');
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_deleted', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  return ok(res, null, 'Assessment exercise permanently deleted');
 }
 
-// ── Create Full (Assessment + English Translation) ──
-export async function createFull(req: Request, res: Response) {
-  try {
-    const body = parseMultipartBody(req);
-    const {
-      // Assessment fields
-      assessment_type, assessment_scope, content_type,
-      sub_topic_id, topic_id, chapter_id, course_id,
-      points, difficulty_level, due_days, estimated_hours,
-      is_mandatory, display_order, is_active,
-      // English translation fields
-      title, description, instructions, html_content,
-      tech_stack, learning_outcomes, tags,
-      image_1, image_2,
-      meta_title, meta_description, meta_keywords, canonical_url,
-      og_site_name, og_title, og_description, og_type, og_image, og_url,
-      twitter_site, twitter_title, twitter_description, twitter_image, twitter_card,
-      robots_directive, focus_keyword, structured_data,
-    } = body;
+/* ─── CDN helpers ─── */
 
-    if (!assessment_type) return err(res, 'assessment_type is required', 400);
-    if (!title) return err(res, 'title (English) is required', 400);
+/**
+ * Build CDN path for exercise files.
+ * NEW format: materials/<subject-slug>/<chapter-slug>/<topic-slug>/topic_exercise/<lang-iso>/<topic-name>.html
+ * Solution:  materials/<subject-slug>/<chapter-slug>/<topic-slug>/topic_exercise/<lang-iso>/<topic-name>_solution.html
+ */
+async function buildExerciseCdnPath(exerciseId: number, langIsoCode: string, suffix: string): Promise<string | null> {
+  const { data: exercise } = await supabase
+    .from(TABLE)
+    .select('id, slug, topic_id, topics!assessment_exercises_sub_topic_id_fkey(slug, name, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+    .eq('id', exerciseId)
+    .single();
+  if (!exercise || !(exercise as any).topics) return null;
+  const topic = (exercise as any).topics as any;
+  const chapter = topic?.chapters;
+  const subject = chapter?.subjects;
+  if (!subject?.slug || !chapter?.slug || !topic?.slug) return null;
 
-    // Auto-derive scope from type
-    const scopeMap: Record<string, string> = {
-      exercise: 'sub_topic', assignment: 'topic', mini_project: 'chapter', capstone_project: 'course',
-    };
-    const finalScope = assessment_scope || scopeMap[assessment_type];
-    if (!finalScope) return err(res, 'Could not determine assessment_scope', 400);
+  // Use the topic name (sanitized) as filename base
+  const topicName = topic.slug || topic.name?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '') || exercise.slug;
+  const filename = suffix === 'solution'
+    ? `${topicName}_solution.html`
+    : `${topicName}.html`;
 
-    const assessmentBody: any = {
-      assessment_type,
-      assessment_scope: finalScope,
-      content_type: content_type || 'coding',
-      sub_topic_id: sub_topic_id || null,
-      topic_id: topic_id || null,
-      chapter_id: chapter_id || null,
-      course_id: course_id || null,
-      points: points ?? 0,
-      difficulty_level: difficulty_level || 'medium',
-      due_days: due_days || null,
-      estimated_hours: estimated_hours || null,
-      is_mandatory: is_mandatory ?? true,
-      display_order: display_order ?? 0,
-      is_active: is_active ?? true,
-      created_by: req.user!.id,
-    };
-
-    // Validate type-scope-FK consistency
-    const typeErr = validateTypeScope(assessmentBody);
-    if (typeErr) return err(res, typeErr, 400);
-
-    // Verify FK exists
-    const fkErr = await verifyForeignKey(assessmentBody);
-    if (fkErr) return err(res, fkErr, 404);
-
-    // Auto-generate slug
-    const slugSource = body.slug || title || `${assessment_type}-${Date.now()}`;
-    assessmentBody.slug = await generateUniqueSlug(supabase, 'assessments', slugSource);
-
-    // Auto display_order if not provided
-    if (assessmentBody.display_order === 0) {
-      const fkMap: Record<string, string> = { sub_topic: 'sub_topic_id', topic: 'topic_id', chapter: 'chapter_id', course: 'course_id' };
-      const fkCol = fkMap[finalScope];
-      const fkVal = fkCol ? assessmentBody[fkCol] : null;
-      if (fkCol && fkVal) {
-        const { data: maxRow } = await supabase
-          .from('assessments').select('display_order')
-          .eq(fkCol, fkVal).eq('assessment_type', assessment_type).is('deleted_at', null)
-          .order('display_order', { ascending: false }).limit(1);
-        assessmentBody.display_order = (maxRow && maxRow.length > 0 && maxRow[0].display_order != null)
-          ? maxRow[0].display_order + 1 : 1;
-      }
-    }
-
-    // 1. Create assessment
-    const { data: assessment, error: aErr } = await supabase
-      .from('assessments')
-      .insert(assessmentBody)
-      .select(FK_SELECT)
-      .single();
-    if (aErr) {
-      if (aErr.code === '23505') return err(res, 'Assessment slug already exists', 409);
-      return err(res, aErr.message, 500);
-    }
-
-    // 2. Create English translation (language_id = 7)
-    const translationBody: any = {
-      assessment_id: assessment.id,
-      language_id: 7,
-      title,
-      description: description || null,
-      instructions: instructions || null,
-      html_content: html_content || null,
-      tech_stack: tech_stack ? (typeof tech_stack === 'string' ? JSON.parse(tech_stack) : tech_stack) : [],
-      learning_outcomes: learning_outcomes ? (typeof learning_outcomes === 'string' ? JSON.parse(learning_outcomes) : learning_outcomes) : [],
-      tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [],
-      image_1: image_1 || null,
-      image_2: image_2 || null,
-      meta_title: meta_title || null,
-      meta_description: meta_description || null,
-      meta_keywords: meta_keywords || null,
-      canonical_url: canonical_url || null,
-      og_site_name: og_site_name || null,
-      og_title: og_title || null,
-      og_description: og_description || null,
-      og_type: og_type || null,
-      og_image: og_image || null,
-      og_url: og_url || null,
-      twitter_site: twitter_site || null,
-      twitter_title: twitter_title || null,
-      twitter_description: twitter_description || null,
-      twitter_image: twitter_image || null,
-      twitter_card: twitter_card || 'summary_large_image',
-      robots_directive: robots_directive || 'index,follow',
-      focus_keyword: focus_keyword || null,
-      structured_data: structured_data ? (typeof structured_data === 'string' ? JSON.parse(structured_data) : structured_data) : [],
-      is_active: true,
-      created_by: req.user!.id,
-    };
-
-    const { data: translation, error: tErr } = await supabase
-      .from('assessment_translations')
-      .insert(translationBody)
-      .select()
-      .single();
-    if (tErr) return err(res, `Translation insert failed: ${tErr.message}`, 500);
-
-    await clearCache(getScopeId(assessmentBody), assessmentBody.assessment_scope);
-    logAdmin({ actorId: req.user!.id, action: 'assessment_created', targetType: 'assessment', targetId: assessment.id, targetName: assessment.slug, ip: getClientIp(req) });
-
-    return ok(res, {
-      ...assessment,
-      english_translation: translation,
-    }, 'Assessment created with English translation', 201);
-  } catch (error: any) {
-    return err(res, error.message || 'Failed to create full assessment', 500);
-  }
+  return `materials/${subject.slug}/${chapter.slug}/${topic.slug}/topic_exercise/${langIsoCode}/${filename}`;
 }
 
-// ── Update Full (Assessment + Upsert Translation for a specific language) ──
-export async function updateFull(req: Request, res: Response) {
-  try {
-    const id = parseInt(req.params.id as string);
-    const { data: old } = await supabase.from('assessments').select('*').eq('id', id).single();
-    if (!old) return err(res, 'Assessment not found', 404);
-
-    const body = parseMultipartBody(req);
-    const {
-      // Assessment fields
-      assessment_type, content_type,
-      sub_topic_id, topic_id, chapter_id, course_id,
-      points, difficulty_level, due_days, estimated_hours,
-      is_mandatory, display_order, is_active,
-      // Translation fields
-      language_id,
-      title, description, instructions, html_content,
-      tech_stack, learning_outcomes, tags,
-      image_1, image_2,
-      meta_title, meta_description, meta_keywords, canonical_url,
-      og_site_name, og_title, og_description, og_type, og_image, og_url,
-      twitter_site, twitter_title, twitter_description, twitter_image, twitter_card,
-      robots_directive, focus_keyword, structured_data,
-    } = body;
-
-    // 1. Update assessment record
-    const assessmentUpdates: any = { updated_by: req.user!.id };
-    if (content_type !== undefined) assessmentUpdates.content_type = content_type;
-    if (sub_topic_id !== undefined) assessmentUpdates.sub_topic_id = sub_topic_id;
-    if (topic_id !== undefined) assessmentUpdates.topic_id = topic_id;
-    if (chapter_id !== undefined) assessmentUpdates.chapter_id = chapter_id;
-    if (course_id !== undefined) assessmentUpdates.course_id = course_id;
-    if (points !== undefined) assessmentUpdates.points = points;
-    if (difficulty_level !== undefined) assessmentUpdates.difficulty_level = difficulty_level;
-    if (due_days !== undefined) assessmentUpdates.due_days = due_days;
-    if (estimated_hours !== undefined) assessmentUpdates.estimated_hours = estimated_hours;
-    if (is_mandatory !== undefined) assessmentUpdates.is_mandatory = is_mandatory;
-    if (display_order !== undefined) assessmentUpdates.display_order = display_order;
-    if (is_active !== undefined) assessmentUpdates.is_active = is_active;
-
-    // Permission check for active toggle
-    if ('is_active' in assessmentUpdates && assessmentUpdates.is_active !== old.is_active) {
-      if (!hasPermission(req, 'assessment', 'activate')) {
-        return err(res, 'Permission denied: assessment:activate required', 403);
-      }
-    }
-
-    // If type/scope changed, validate consistency
-    if (assessment_type || assessmentUpdates.sub_topic_id || assessmentUpdates.topic_id || assessmentUpdates.chapter_id || assessmentUpdates.course_id) {
-      const merged = { ...old, ...assessmentUpdates };
-      if (assessment_type) {
-        merged.assessment_type = assessment_type;
-        const scopeMap: Record<string, string> = { exercise: 'sub_topic', assignment: 'topic', mini_project: 'chapter', capstone_project: 'course' };
-        merged.assessment_scope = scopeMap[assessment_type] || merged.assessment_scope;
-        assessmentUpdates.assessment_type = assessment_type;
-        assessmentUpdates.assessment_scope = merged.assessment_scope;
-      }
-      const typeErr = validateTypeScope(merged);
-      if (typeErr) return err(res, typeErr, 400);
-      const fkErr = await verifyForeignKey(merged);
-      if (fkErr) return err(res, fkErr, 404);
-    }
-
-    // Re-generate slug if title changed
-    if (title && title !== body._old_title) {
-      assessmentUpdates.slug = await generateUniqueSlug(supabase, 'assessments', title, id);
-    }
-
-    const { data: updatedAssessment, error: aErr } = await supabase
-      .from('assessments')
-      .update(assessmentUpdates)
-      .eq('id', id)
-      .select(FK_SELECT)
-      .single();
-    if (aErr) {
-      if (aErr.code === '23505') return err(res, 'Assessment slug already exists', 409);
-      return err(res, aErr.message, 500);
-    }
-
-    // 2. Upsert translation for the specified language (default to English = 7)
-    let translationResult: any = null;
-    const langId = language_id || 7;
-    if (title) {
-      const translationBody: any = {
-        assessment_id: id,
-        language_id: langId,
-        title,
-        description: description ?? null,
-        instructions: instructions ?? null,
-        html_content: html_content ?? null,
-        tech_stack: tech_stack ? (typeof tech_stack === 'string' ? JSON.parse(tech_stack) : tech_stack) : [],
-        learning_outcomes: learning_outcomes ? (typeof learning_outcomes === 'string' ? JSON.parse(learning_outcomes) : learning_outcomes) : [],
-        tags: tags ? (typeof tags === 'string' ? JSON.parse(tags) : tags) : [],
-        image_1: image_1 ?? null,
-        image_2: image_2 ?? null,
-        meta_title: meta_title ?? null,
-        meta_description: meta_description ?? null,
-        meta_keywords: meta_keywords ?? null,
-        canonical_url: canonical_url ?? null,
-        og_site_name: og_site_name ?? null,
-        og_title: og_title ?? null,
-        og_description: og_description ?? null,
-        og_type: og_type ?? null,
-        og_image: og_image ?? null,
-        og_url: og_url ?? null,
-        twitter_site: twitter_site ?? null,
-        twitter_title: twitter_title ?? null,
-        twitter_description: twitter_description ?? null,
-        twitter_image: twitter_image ?? null,
-        twitter_card: twitter_card ?? 'summary_large_image',
-        robots_directive: robots_directive ?? 'index,follow',
-        focus_keyword: focus_keyword ?? null,
-        structured_data: structured_data ? (typeof structured_data === 'string' ? JSON.parse(structured_data) : structured_data) : [],
-        is_active: true,
-        deleted_at: null,
-        created_by: req.user!.id,
-      };
-
-      const { data: trans, error: tErr } = await supabase
-        .from('assessment_translations')
-        .upsert(translationBody, { onConflict: 'assessment_id,language_id' })
-        .select()
-        .single();
-      if (tErr) return err(res, `Translation upsert failed: ${tErr.message}`, 500);
-      translationResult = trans;
-    }
-
-    await clearCache(getScopeId(old), old.assessment_scope);
-    if (assessmentUpdates.assessment_scope && assessmentUpdates.assessment_scope !== old.assessment_scope) {
-      await clearCache(getScopeId(assessmentUpdates), assessmentUpdates.assessment_scope);
-    }
-
-    logAdmin({ actorId: req.user!.id, action: 'assessment_updated', targetType: 'assessment', targetId: id, targetName: updatedAssessment.slug, ip: getClientIp(req) });
-
-    return ok(res, {
-      ...updatedAssessment,
-      updated_translation: translationResult,
-    }, 'Assessment updated');
-  } catch (error: any) {
-    return err(res, error.message || 'Failed to update full assessment', 500);
-  }
+function cdnPathFromUrl(cdnUrl: string): string {
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }
 
-// ── Get Full (Assessment + All Translations + Attachments + Solutions + Coverage) ──
+/* ─── Full endpoints (exercise + English translation) ─── */
+
+const FULL_FK_SELECT = `*, topics!assessment_exercises_sub_topic_id_fkey(name, slug, chapter_id, chapters(name, slug, subject_id, subjects(name, slug))), ${TRANS_TABLE}(*, languages(id, name, iso_code, native_name))`;
+
 export async function getFullById(req: Request, res: Response) {
-  try {
-    const id = parseInt(req.params.id as string);
-    const { data: assessment, error: aErr } = await supabase
-      .from('assessments')
-      .select(FK_SELECT)
-      .eq('id', id)
+  const id = parseInt(req.params.id);
+
+  const { data: exercise, error: e } = await supabase
+    .from(TABLE)
+    .select(FULL_FK_SELECT)
+    .eq('id', id)
+    .single();
+  if (e || !exercise) return err(res, 'Assessment exercise not found', 404);
+
+  // Build translation coverage
+  const { data: allLanguages } = await supabase
+    .from('languages')
+    .select('id, name, iso_code')
+    .eq('is_active', true)
+    .order('name');
+
+  const existingLangIds = new Set(
+    ((exercise as any)[TRANS_TABLE] || []).map((t: any) => t.language_id)
+  );
+
+  const translation_coverage = (allLanguages || []).map((lang: any) => ({
+    language_id: lang.id,
+    language_name: lang.name,
+    language_code: lang.iso_code,
+    has_translation: existingLangIds.has(lang.id),
+  }));
+
+  return ok(res, { ...exercise, translation_coverage });
+}
+
+export async function createFull(req: Request, res: Response) {
+  const body = parseMultipartBody(req);
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+  // Extract exercise fields (no title on parent)
+  const exerciseData: any = {
+    topic_id: body.topic_id,
+    points: body.points,
+    difficulty_level: body.difficulty_level,
+    display_order: body.display_order,
+    is_active: body.is_active,
+  };
+
+  // Auto-generate slug from the English name
+  const slugSource = body.name || body.title || 'exercise';
+  exerciseData.slug = await generateUniqueSlug(supabase, TABLE, slugSource, undefined, { column: 'topic_id', value: body.topic_id });
+  exerciseData.created_by = req.user!.id;
+
+  // Insert exercise
+  const { data: exercise, error: exErr } = await supabase
+    .from(TABLE)
+    .insert(exerciseData)
+    .select(FK_SELECT)
+    .single();
+  if (exErr) {
+    if (exErr.code === '23505') return err(res, 'Assessment exercise slug already exists', 409);
+    return err(res, exErr.message, 500);
+  }
+
+  // Build English translation
+  const translationData: any = {
+    assesment_exercise_id: exercise.id,
+    language_id: 7, // English
+    name: body.name || body.title || exercise.slug,
+    description: body.description || null,
+    is_active: true,
+    created_by: req.user!.id,
+  };
+
+  // Handle file uploads
+  if (files?.file?.[0]) {
+    const cdnPath = await buildExerciseCdnPath(exercise.id, 'en', 'main');
+    if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
+    const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
+    translationData.file_url = cdnUrl;
+  }
+
+  if (files?.file_solution?.[0]) {
+    const cdnPath = await buildExerciseCdnPath(exercise.id, 'en', 'solution');
+    if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
+    const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
+    translationData.file_solution_url = cdnUrl;
+  }
+
+  // Insert English translation
+  const { data: translation, error: trErr } = await supabase
+    .from(TRANS_TABLE)
+    .insert(translationData)
+    .select('*, languages(id, name, iso_code, native_name)')
+    .single();
+  if (trErr) return err(res, trErr.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_created_full', targetType: 'assessment_exercise', targetId: exercise.id, targetName: exercise.slug, ip: getClientIp(req) });
+  return ok(res, { ...exercise, [TRANS_TABLE]: [translation] }, 'Assessment exercise created with English translation', 201);
+}
+
+export async function updateFull(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const body = parseMultipartBody(req);
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+  // Get existing exercise
+  const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
+  if (!old) return err(res, 'Assessment exercise not found', 404);
+
+  // Build exercise updates (no title on parent)
+  const exerciseUpdates: any = {};
+  if (body.points !== undefined) exerciseUpdates.points = body.points;
+  if (body.difficulty_level !== undefined) exerciseUpdates.difficulty_level = body.difficulty_level;
+  if (body.display_order !== undefined) exerciseUpdates.display_order = body.display_order;
+  if (body.is_active !== undefined) exerciseUpdates.is_active = body.is_active;
+
+  // Re-generate slug if name changed
+  if (body.name) {
+    exerciseUpdates.slug = await generateUniqueSlug(supabase, TABLE, body.name, id, { column: 'topic_id', value: body.topic_id || old.topic_id });
+  }
+
+  exerciseUpdates.updated_by = req.user!.id;
+
+  // Update exercise
+  const { data: exercise, error: exErr } = await supabase
+    .from(TABLE)
+    .update(exerciseUpdates)
+    .eq('id', id)
+    .select(FK_SELECT)
+    .single();
+  if (exErr) {
+    if (exErr.code === '23505') return err(res, 'Assessment exercise slug already exists', 409);
+    return err(res, exErr.message, 500);
+  }
+
+  // Find or create English translation
+  const { data: existingTrans } = await supabase
+    .from(TRANS_TABLE)
+    .select('*')
+    .eq('assesment_exercise_id', id)
+    .eq('language_id', 7)
+    .single();
+
+  const translationUpdates: any = {
+    updated_by: req.user!.id,
+  };
+  if (body.name) translationUpdates.name = body.name;
+  if (body.description !== undefined) translationUpdates.description = body.description;
+
+  // Handle file uploads
+  if (files?.file?.[0]) {
+    if (existingTrans?.file_url) {
+      try { await deleteFromBunny(cdnPathFromUrl(existingTrans.file_url)); } catch (_) {}
+    }
+    const cdnPath = await buildExerciseCdnPath(id, 'en', 'main');
+    if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
+    const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
+    translationUpdates.file_url = cdnUrl;
+  }
+
+  if (files?.file_solution?.[0]) {
+    if (existingTrans?.file_solution_url) {
+      try { await deleteFromBunny(cdnPathFromUrl(existingTrans.file_solution_url)); } catch (_) {}
+    }
+    const cdnPath = await buildExerciseCdnPath(id, 'en', 'solution');
+    if (!cdnPath) return err(res, 'Could not resolve exercise CDN path (check topic hierarchy)', 400);
+    const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
+    translationUpdates.file_solution_url = cdnUrl;
+  }
+
+  let translation;
+  if (existingTrans) {
+    // Update existing translation
+    const { data, error: trErr } = await supabase
+      .from(TRANS_TABLE)
+      .update(translationUpdates)
+      .eq('id', existingTrans.id)
+      .select('*, languages(id, name, iso_code, native_name)')
       .single();
-    if (aErr || !assessment) return err(res, 'Assessment not found', 404);
-
-    // Get all translations
-    const { data: translations } = await supabase
-      .from('assessment_translations')
-      .select('*')
-      .eq('assessment_id', id)
-      .is('deleted_at', null);
-
-    // Get all attachments with their translations
-    const { data: attachments } = await supabase
-      .from('assessment_attachments')
-      .select('*')
-      .eq('assessment_id', id)
-      .is('deleted_at', null)
-      .order('display_order', { ascending: true });
-
-    const attachmentIds = (attachments || []).map((a: any) => a.id);
-    let attachmentTranslations: any[] = [];
-    if (attachmentIds.length > 0) {
-      const { data } = await supabase
-        .from('assessment_attachment_translations')
-        .select('*')
-        .in('assessment_attachment_id', attachmentIds)
-        .is('deleted_at', null);
-      attachmentTranslations = data || [];
-    }
-
-    // Get all solutions with their translations
-    const { data: solutions } = await supabase
-      .from('assessment_solutions')
-      .select('*')
-      .eq('assessment_id', id)
-      .is('deleted_at', null)
-      .order('display_order', { ascending: true });
-
-    const solutionIds = (solutions || []).map((s: any) => s.id);
-    let solutionTranslations: any[] = [];
-    if (solutionIds.length > 0) {
-      const { data } = await supabase
-        .from('assessment_solution_translations')
-        .select('*')
-        .in('assessment_solution_id', solutionIds)
-        .is('deleted_at', null);
-      solutionTranslations = data || [];
-    }
-
-    // Get all material languages for coverage
-    const { data: languages } = await supabase
-      .from('languages')
-      .select('id, name, iso_code, for_material')
-      .eq('for_material', true)
-      .eq('is_active', true);
-
-    // Build translation coverage
-    const transLangIds = new Set((translations || []).map((t: any) => t.language_id));
-    const coverage = (languages || []).map((lang: any) => ({
-      language_id: lang.id,
-      language_name: lang.name,
-      language_code: lang.iso_code,
-      has_translation: transLangIds.has(lang.id),
-    }));
-
-    // Enrich attachments with their translations
-    const enrichedAttachments = (attachments || []).map((att: any) => ({
-      ...att,
-      translations: attachmentTranslations.filter((at: any) => at.assessment_attachment_id === att.id),
-    }));
-
-    // Enrich solutions with their translations
-    const enrichedSolutions = (solutions || []).map((sol: any) => ({
-      ...sol,
-      translations: solutionTranslations.filter((st: any) => st.assessment_solution_id === sol.id),
-    }));
-
-    return ok(res, {
-      ...assessment,
-      translations: translations || [],
-      attachments: enrichedAttachments,
-      solutions: enrichedSolutions,
-      translation_coverage: coverage,
-    });
-  } catch (error: any) {
-    return err(res, error.message || 'Failed to get full assessment', 500);
-  }
-}
-
-// ── Helpers ──
-
-function getScopeId(row: any): number | undefined {
-  return row.sub_topic_id || row.topic_id || row.chapter_id || row.course_id;
-}
-
-function validateTypeScope(body: any): string | null {
-  const type = body.assessment_type;
-  const scope = body.assessment_scope;
-
-  if (!type || !scope) return null; // let DB constraint handle
-
-  const validMap: Record<string, string> = {
-    exercise: 'sub_topic',
-    assignment: 'topic',
-    mini_project: 'chapter',
-    capstone_project: 'course',
-  };
-
-  if (validMap[type] && validMap[type] !== scope) {
-    return `assessment_type '${type}' requires assessment_scope '${validMap[type]}', got '${scope}'`;
+    if (trErr) return err(res, trErr.message, 500);
+    translation = data;
+  } else {
+    // Create new English translation
+    const { data, error: trErr } = await supabase
+      .from(TRANS_TABLE)
+      .insert({
+        assesment_exercise_id: id,
+        language_id: 7,
+        name: body.name || old.slug,
+        description: body.description || null,
+        file_url: translationUpdates.file_url || null,
+        file_solution_url: translationUpdates.file_solution_url || null,
+        is_active: true,
+        created_by: req.user!.id,
+      })
+      .select('*, languages(id, name, iso_code, native_name)')
+      .single();
+    if (trErr) return err(res, trErr.message, 500);
+    translation = data;
   }
 
-  // Validate FK matches scope
-  const fkMap: Record<string, string> = {
-    sub_topic: 'sub_topic_id',
-    topic: 'topic_id',
-    chapter: 'chapter_id',
-    course: 'course_id',
-  };
-
-  const requiredFk = fkMap[scope];
-  if (requiredFk && !body[requiredFk]) {
-    return `assessment_scope '${scope}' requires ${requiredFk} to be set`;
-  }
-
-  return null;
-}
-
-async function verifyForeignKey(body: any): Promise<string | null> {
-  if (body.sub_topic_id) {
-    const { data } = await supabase.from('sub_topics').select('id').eq('id', body.sub_topic_id).single();
-    if (!data) return 'Sub-topic not found';
-  }
-  if (body.topic_id) {
-    const { data } = await supabase.from('topics').select('id').eq('id', body.topic_id).single();
-    if (!data) return 'Topic not found';
-  }
-  if (body.chapter_id) {
-    const { data } = await supabase.from('chapters').select('id').eq('id', body.chapter_id).single();
-    if (!data) return 'Chapter not found';
-  }
-  if (body.course_id) {
-    const { data } = await supabase.from('courses').select('id').eq('id', body.course_id).single();
-    if (!data) return 'Course not found';
-  }
-  return null;
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated_full', targetType: 'assessment_exercise', targetId: id, targetName: exercise.slug, ip: getClientIp(req) });
+  return ok(res, { ...exercise, [TRANS_TABLE]: [translation] }, 'Assessment exercise updated with English translation');
 }

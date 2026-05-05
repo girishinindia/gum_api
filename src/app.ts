@@ -87,12 +87,14 @@ import orderingQuestionRoutes from './modules/ordering-questions/orderingQuestio
 import orderingQuestionTranslationRoutes from './modules/ordering-question-translations/orderingQuestionTranslation.routes';
 import orderingItemRoutes from './modules/ordering-items/orderingItem.routes';
 import orderingItemTranslationRoutes from './modules/ordering-item-translations/orderingItemTranslation.routes';
-import assessmentRoutes from './modules/assessments/assessment.routes';
-import assessmentTranslationRoutes from './modules/assessment-translations/assessmentTranslation.routes';
-import assessmentAttachmentRoutes from './modules/assessment-attachments/assessmentAttachment.routes';
-import assessmentAttachmentTranslationRoutes from './modules/assessment-attachment-translations/assessmentAttachmentTranslation.routes';
-import assessmentSolutionRoutes from './modules/assessment-solutions/assessmentSolution.routes';
-import assessmentSolutionTranslationRoutes from './modules/assessment-solution-translations/assessmentSolutionTranslation.routes';
+import exerciseRoutes from './modules/assessments/assessment.routes';
+import exerciseTranslationRoutes from './modules/assessment-translations/assessmentTranslation.routes';
+import miniProjectRoutes from './modules/mini-projects/miniProject.routes';
+import miniProjectTranslationRoutes from './modules/mini-project-translations/miniProjectTranslation.routes';
+import miniProjectSolutionRoutes from './modules/mini-project-solutions/miniProjectSolution.routes';
+import capstoneProjectRoutes from './modules/capstone-projects/capstoneProject.routes';
+import capstoneProjectTranslationRoutes from './modules/capstone-project-translations/capstoneProjectTranslation.routes';
+import capstoneProjectSolutionRoutes from './modules/capstone-project-solutions/capstoneProjectSolution.routes';
 
 const app = express();
 
@@ -201,12 +203,14 @@ app.use(`${api}/ordering-questions`,              orderingQuestionRoutes);
 app.use(`${api}/ordering-question-translations`,  orderingQuestionTranslationRoutes);
 app.use(`${api}/ordering-items`,                  orderingItemRoutes);
 app.use(`${api}/ordering-item-translations`,      orderingItemTranslationRoutes);
-app.use(`${api}/assessments`,                      assessmentRoutes);
-app.use(`${api}/assessment-translations`,          assessmentTranslationRoutes);
-app.use(`${api}/assessment-attachments`,           assessmentAttachmentRoutes);
-app.use(`${api}/assessment-attachment-translations`, assessmentAttachmentTranslationRoutes);
-app.use(`${api}/assessment-solutions`,             assessmentSolutionRoutes);
-app.use(`${api}/assessment-solution-translations`, assessmentSolutionTranslationRoutes);
+app.use(`${api}/assessment-exercises`,               exerciseRoutes);
+app.use(`${api}/assessment-exercise-translations`,   exerciseTranslationRoutes);
+app.use(`${api}/assessment-mini-projects`,           miniProjectRoutes);
+app.use(`${api}/assessment-mini-project-translations`, miniProjectTranslationRoutes);
+app.use(`${api}/assessment-mini-project-solutions`,  miniProjectSolutionRoutes);
+app.use(`${api}/assessment-capstone-projects`,           capstoneProjectRoutes);
+app.use(`${api}/assessment-capstone-project-translations`, capstoneProjectTranslationRoutes);
+app.use(`${api}/assessment-capstone-project-solutions`,  capstoneProjectSolutionRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
