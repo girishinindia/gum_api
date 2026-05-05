@@ -91,9 +91,6 @@ export async function create(req: Request, res: Response) {
   delete body.name;
   delete body.slug_source;
 
-  // Set audit field
-  body.created_by = req.user!.id;
-
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)
@@ -317,7 +314,6 @@ export async function createFull(req: Request, res: Response) {
   // Auto-generate slug from the English name
   const slugSource = body.name || body.title || 'exercise';
   exerciseData.slug = await generateUniqueSlug(supabase, TABLE, slugSource, undefined, { column: 'topic_id', value: body.topic_id });
-  exerciseData.created_by = req.user!.id;
 
   // Insert exercise
   const { data: exercise, error: exErr } = await supabase
@@ -337,7 +333,6 @@ export async function createFull(req: Request, res: Response) {
     name: body.name || body.title || exercise.slug,
     description: body.description || null,
     is_active: true,
-    created_by: req.user!.id,
   };
 
   // Handle file uploads
@@ -461,7 +456,6 @@ export async function updateFull(req: Request, res: Response) {
         file_url: translationUpdates.file_url || null,
         file_solution_url: translationUpdates.file_solution_url || null,
         is_active: true,
-        created_by: req.user!.id,
       })
       .select('*, languages(id, name, iso_code, native_name)')
       .single();

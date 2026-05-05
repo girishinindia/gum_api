@@ -11147,5 +11147,484 @@ Return ONLY valid JSON:
   }
 }
 
-// autoGenerateAssessment and autoTranslateAssessment were removed — old assessment tables dropped.
-// Exercises and Assignments now use HTML file uploads with auto-translation via translatePage.
+// ─── Auto Translate Assessment HTML Files ───
+
+/**
+ * Generalized helper: translate an HTML file from CDN to all missing for_material languages.
+ * Works for exercises, mini projects, and capstone projects.
+ */
+async function translateAssessmentHtml(opts: {
+  htmlContent: string;
+  cdnPathBuilder: (langIsoCode: string) => string;
+  existingTranslations: Array<{ language_id: number; file_url?: string | null }>;
+  tableName: string;
+  parentIdColumn: string;
+  parentId: number;
+  parentName: string;
+  contextLabel: string;
+  provider: AIProvider;
+  userId: string | number;
+}): Promise<{
+  results: Array<{ language: string; iso_code: string; status: string; file_url?: string; error?: string }>;
+  inputTokens: number;
+  outputTokens: number;
+}> {
+  const { htmlContent, cdnPathBuilder, existingTranslations, tableName, parentIdColumn, parentId, parentName, contextLabel, provider, userId } = opts;
+
+  // Get all active material languages
+  const { data: allLangs } = await supabase
+    .from('languages')
+    .select('id, name, native_name, iso_code')
+    .eq('is_active', true)
+    .eq('for_material', true)
+    .order('id');
+
+  if (!allLangs || allLangs.length === 0) {
+    return { results: [], inputTokens: 0, outputTokens: 0 };
+  }
+
+  // Find which languages already have translations with file_url
+  const existingLangIds = new Set(existingTranslations.filter(t => t.file_url).map(t => t.language_id));
+  const englishLang = allLangs.find(l => l.iso_code === 'en');
+  const englishLangId = englishLang?.id || 7;
+
+  // Target languages = all for_material languages EXCEPT English and those already translated
+  const targetLangs = allLangs.filter(l => l.id !== englishLangId && !existingLangIds.has(l.id));
+
+  if (targetLangs.length === 0) {
+    return { results: [], inputTokens: 0, outputTokens: 0 };
+  }
+
+  const results: Array<{ language: string; iso_code: string; status: string; file_url?: string; error?: string }> = [];
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  // Translate to each target language in parallel
+  const translationPromises = targetLangs.map(async (lang) => {
+    try {
+      const systemPrompt = `You are an expert translator. Translate the following HTML page from English to ${lang.name} (${lang.native_name}).
+
+CRITICAL RULES:
+1. Preserve ALL HTML tags, attributes, classes, IDs, styles, scripts EXACTLY as they are. Do NOT modify any HTML structure.
+2. Only translate the visible text content between HTML tags.
+3. Keep ALL technical terms, related programming and technical keywords, and code in English.
+4. Keep brand names and product names in English (Google, Microsoft, Apple, GitHub, Stack Overflow, VS Code, etc.)
+5. Keep code snippets, code examples, and inline code EXACTLY in English - do not translate any code.
+6. Do NOT translate content inside <code>, <pre>, <script>, <style> tags.
+7. Do NOT add any explanation, comments, or wrapper - return ONLY the translated HTML.
+8. This is a ${contextLabel} about "${parentName}" - keep technical terms in English where translation would sound unnatural.
+9. Use natural, easy-to-understand ${lang.name} for non-technical content. Mix English technical words naturally within ${lang.name} sentences.
+10. Do NOT translate alt attributes of images if they contain technical terms.
+11. STRICTLY IMPORTANT: ALL English words and phrases that already appear in the source text MUST be preserved EXACTLY as-is in the translation. Do NOT translate, transliterate, or replace any English word from the source into the target language.
+
+Return ONLY the complete translated HTML document, nothing else.`;
+
+      const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
+      const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
+
+      // Clean AI response
+      let translatedHtml = aiResult.text.trim();
+      if (translatedHtml.startsWith('```html')) {
+        translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
+      } else if (translatedHtml.startsWith('```')) {
+        translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+
+      if (!translatedHtml || translatedHtml.length < 50) {
+        return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: 'AI returned empty or too short translation', inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+      }
+
+      // Upload to CDN
+      const cdnPath = cdnPathBuilder(lang.iso_code);
+      const fileUrl = await uploadRawFile(Buffer.from(translatedHtml, 'utf-8'), cdnPath);
+
+      // Check if translation record exists (without file)
+      const existingRec = existingTranslations.find(t => t.language_id === lang.id);
+
+      if (existingRec) {
+        // Update existing record with file_url
+        const { error: updErr } = await supabase
+          .from(tableName)
+          .update({ file_url: fileUrl, updated_by: userId })
+          .eq(parentIdColumn, parentId)
+          .eq('language_id', lang.id)
+          .is('deleted_at', null);
+        if (updErr) {
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB update failed: ${updErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+        }
+      } else {
+        // Insert new translation record
+        const insertData: any = {
+          [parentIdColumn]: parentId,
+          language_id: lang.id,
+          name: parentName,
+          file_url: fileUrl,
+          is_active: true,
+          created_by: userId,
+        };
+        const { error: insErr } = await supabase.from(tableName).insert(insertData);
+        if (insErr) {
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB insert failed: ${insErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+        }
+      }
+
+      return { language: lang.name, iso_code: lang.iso_code, status: 'success' as const, file_url: fileUrl, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+    } catch (langErr: any) {
+      console.error(`Assessment translation failed for ${lang.name}:`, langErr);
+      return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: langErr.message || 'Translation failed', inputTokens: 0, outputTokens: 0 };
+    }
+  });
+
+  const settled = await Promise.allSettled(translationPromises);
+  for (const outcome of settled) {
+    if (outcome.status === 'fulfilled') {
+      const r = outcome.value;
+      totalInputTokens += r.inputTokens;
+      totalOutputTokens += r.outputTokens;
+      results.push({ language: r.language, iso_code: r.iso_code, status: r.status, file_url: r.file_url, error: r.error });
+    } else {
+      results.push({ language: 'unknown', iso_code: 'unknown', status: 'error', error: outcome.reason?.message || 'Unexpected error' });
+    }
+  }
+
+  return { results, inputTokens: totalInputTokens, outputTokens: totalOutputTokens };
+}
+
+/**
+ * POST /ai/auto-translate-exercise
+ * Translates exercise HTML files to all missing for_material languages.
+ * Body: { exercise_id?: number, exercise_ids?: number[], provider?: string }
+ */
+export async function autoTranslateExercise(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(req.body.provider)) ? req.body.provider : 'gemini';
+
+    // Support single or multiple exercise IDs
+    let exerciseIds: number[] = [];
+    if (req.body.exercise_ids && Array.isArray(req.body.exercise_ids)) {
+      exerciseIds = req.body.exercise_ids.map((id: any) => parseInt(id)).filter((id: number) => id > 0);
+    } else if (req.body.exercise_id) {
+      exerciseIds = [parseInt(req.body.exercise_id)];
+    }
+    if (exerciseIds.length === 0) return err(res, 'exercise_id or exercise_ids is required', 400);
+
+    const allResults: any[] = [];
+    let totalInput = 0, totalOutput = 0;
+
+    for (const exerciseId of exerciseIds) {
+      // Get English translation with file_url
+      const { data: englishTrans } = await supabase
+        .from('assesment_exercise_translations')
+        .select('id, file_url, name, language_id')
+        .eq('assesment_exercise_id', exerciseId)
+        .eq('language_id', 7) // English
+        .is('deleted_at', null)
+        .single();
+
+      if (!englishTrans?.file_url) {
+        allResults.push({ exercise_id: exerciseId, status: 'skipped', error: 'No English translation with file found' });
+        continue;
+      }
+
+      // Fetch HTML content from CDN
+      let htmlContent: string;
+      try {
+        const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+        const buffer = await downloadBunnyFile(cdnPath);
+        htmlContent = buffer.toString('utf-8');
+      } catch (fetchErr: any) {
+        allResults.push({ exercise_id: exerciseId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
+        continue;
+      }
+
+      if (!htmlContent || htmlContent.length < 50) {
+        allResults.push({ exercise_id: exerciseId, status: 'skipped', error: 'English HTML too short' });
+        continue;
+      }
+
+      // Get all existing translations for this exercise
+      const { data: existingTrans } = await supabase
+        .from('assesment_exercise_translations')
+        .select('language_id, file_url')
+        .eq('assesment_exercise_id', exerciseId)
+        .is('deleted_at', null);
+
+      // Build CDN path for exercise
+      const { data: exercise } = await supabase
+        .from('assesment_exercise')
+        .select('id, slug, topic_id, topics!assessment_exercises_sub_topic_id_fkey(slug, name, chapter_id, chapters(slug, subject_id, subjects(slug)))')
+        .eq('id', exerciseId)
+        .single();
+
+      if (!exercise || !(exercise as any).topics) {
+        allResults.push({ exercise_id: exerciseId, status: 'error', error: 'Could not resolve exercise hierarchy' });
+        continue;
+      }
+
+      const topic = (exercise as any).topics as any;
+      const chapter = topic?.chapters;
+      const subject = chapter?.subjects;
+      const topicSlug = topic?.slug || '';
+
+      const cdnPathBuilder = (langIso: string) => {
+        return `materials/${subject?.slug}/${chapter?.slug}/${topic?.slug}/topic_exercise/${langIso}/${topicSlug}.html`;
+      };
+
+      const { results, inputTokens, outputTokens } = await translateAssessmentHtml({
+        htmlContent,
+        cdnPathBuilder,
+        existingTranslations: existingTrans || [],
+        tableName: 'assesment_exercise_translations',
+        parentIdColumn: 'assesment_exercise_id',
+        parentId: exerciseId,
+        parentName: englishTrans.name || exercise.slug || 'exercise',
+        contextLabel: 'programming exercise',
+        provider,
+        userId,
+      });
+
+      totalInput += inputTokens;
+      totalOutput += outputTokens;
+      allResults.push({ exercise_id: exerciseId, results, success: results.filter(r => r.status === 'success').length, errors: results.filter(r => r.status === 'error').length });
+    }
+
+    // Clear caches
+    await redis.del('assesment_exercise_translations:all');
+
+    const totalSuccess = allResults.reduce((sum, r) => sum + (r.success || 0), 0);
+    const totalErrors = allResults.reduce((sum, r) => sum + (r.errors || 0), 0);
+
+    logAdmin({ actorId: userId, action: 'exercise_auto_translated', targetType: 'exercise_translation', targetId: exerciseIds[0], targetName: `${exerciseIds.length} exercises`, ip: getClientIp(req), metadata: { provider, totalSuccess, totalErrors } });
+
+    return ok(res, { items: allResults, summary: { exercises: exerciseIds.length, translations_created: totalSuccess, errors: totalErrors }, tokens: { input: totalInput, output: totalOutput } }, `Translated ${totalSuccess} exercise translations`);
+  } catch (error: any) {
+    console.error('autoTranslateExercise error:', error);
+    return err(res, error.message || 'Failed to auto-translate exercises', 500);
+  }
+}
+
+/**
+ * POST /ai/auto-translate-mini-project
+ * Translates mini project HTML files to all missing for_material languages.
+ * Body: { mini_project_id?: number, mini_project_ids?: number[], provider?: string }
+ */
+export async function autoTranslateMiniProject(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(req.body.provider)) ? req.body.provider : 'gemini';
+
+    let projectIds: number[] = [];
+    if (req.body.mini_project_ids && Array.isArray(req.body.mini_project_ids)) {
+      projectIds = req.body.mini_project_ids.map((id: any) => parseInt(id)).filter((id: number) => id > 0);
+    } else if (req.body.mini_project_id) {
+      projectIds = [parseInt(req.body.mini_project_id)];
+    }
+    if (projectIds.length === 0) return err(res, 'mini_project_id or mini_project_ids is required', 400);
+
+    const allResults: any[] = [];
+    let totalInput = 0, totalOutput = 0;
+
+    for (const projectId of projectIds) {
+      // Get English translation with file_url
+      const { data: englishTrans } = await supabase
+        .from('assesment_mini_projects_translations')
+        .select('id, file_url, name, language_id')
+        .eq('mini_project_id', projectId)
+        .eq('language_id', 7)
+        .is('deleted_at', null)
+        .single();
+
+      if (!englishTrans?.file_url) {
+        allResults.push({ mini_project_id: projectId, status: 'skipped', error: 'No English translation with file found' });
+        continue;
+      }
+
+      // Fetch HTML from CDN
+      let htmlContent: string;
+      try {
+        const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+        const buffer = await downloadBunnyFile(cdnPath);
+        htmlContent = buffer.toString('utf-8');
+      } catch (fetchErr: any) {
+        allResults.push({ mini_project_id: projectId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
+        continue;
+      }
+
+      if (!htmlContent || htmlContent.length < 50) {
+        allResults.push({ mini_project_id: projectId, status: 'skipped', error: 'English HTML too short' });
+        continue;
+      }
+
+      // Get existing translations
+      const { data: existingTrans } = await supabase
+        .from('assesment_mini_projects_translations')
+        .select('language_id, file_url')
+        .eq('mini_project_id', projectId)
+        .is('deleted_at', null);
+
+      // Build CDN path
+      const { data: project } = await supabase
+        .from('assesment_mini_projects')
+        .select('id, slug, chapter_id, chapters(slug, subject_id, subjects(slug))')
+        .eq('id', projectId)
+        .single();
+
+      if (!project || !(project as any).chapters) {
+        allResults.push({ mini_project_id: projectId, status: 'error', error: 'Could not resolve project hierarchy' });
+        continue;
+      }
+
+      const chapter = (project as any).chapters as any;
+      const subject = chapter?.subjects;
+
+      const cdnPathBuilder = (langIso: string) => {
+        return `materials/${subject?.slug}/${chapter?.slug}/chapter_mini_project/${langIso}/${chapter?.slug}.html`;
+      };
+
+      const { results, inputTokens, outputTokens } = await translateAssessmentHtml({
+        htmlContent,
+        cdnPathBuilder,
+        existingTranslations: existingTrans || [],
+        tableName: 'assesment_mini_projects_translations',
+        parentIdColumn: 'mini_project_id',
+        parentId: projectId,
+        parentName: englishTrans.name || project.slug || 'mini-project',
+        contextLabel: 'mini project assignment',
+        provider,
+        userId,
+      });
+
+      totalInput += inputTokens;
+      totalOutput += outputTokens;
+      allResults.push({ mini_project_id: projectId, results, success: results.filter(r => r.status === 'success').length, errors: results.filter(r => r.status === 'error').length });
+    }
+
+    await redis.del('assesment_mini_projects_translations:all');
+
+    const totalSuccess = allResults.reduce((sum, r) => sum + (r.success || 0), 0);
+    const totalErrors = allResults.reduce((sum, r) => sum + (r.errors || 0), 0);
+
+    logAdmin({ actorId: userId, action: 'mini_project_auto_translated', targetType: 'mini_project_translation', targetId: projectIds[0], targetName: `${projectIds.length} mini projects`, ip: getClientIp(req), metadata: { provider, totalSuccess, totalErrors } });
+
+    return ok(res, { items: allResults, summary: { projects: projectIds.length, translations_created: totalSuccess, errors: totalErrors }, tokens: { input: totalInput, output: totalOutput } }, `Translated ${totalSuccess} mini project translations`);
+  } catch (error: any) {
+    console.error('autoTranslateMiniProject error:', error);
+    return err(res, error.message || 'Failed to auto-translate mini projects', 500);
+  }
+}
+
+/**
+ * POST /ai/auto-translate-capstone
+ * Translates capstone project HTML files to all missing for_material languages.
+ * Body: { capstone_project_id?: number, capstone_project_ids?: number[], provider?: string }
+ */
+export async function autoTranslateCapstone(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(req.body.provider)) ? req.body.provider : 'gemini';
+
+    let projectIds: number[] = [];
+    if (req.body.capstone_project_ids && Array.isArray(req.body.capstone_project_ids)) {
+      projectIds = req.body.capstone_project_ids.map((id: any) => parseInt(id)).filter((id: number) => id > 0);
+    } else if (req.body.capstone_project_id) {
+      projectIds = [parseInt(req.body.capstone_project_id)];
+    }
+    if (projectIds.length === 0) return err(res, 'capstone_project_id or capstone_project_ids is required', 400);
+
+    const allResults: any[] = [];
+    let totalInput = 0, totalOutput = 0;
+
+    for (const projectId of projectIds) {
+      // Get English translation with file_url
+      const { data: englishTrans } = await supabase
+        .from('assesment_capstone_projects_translations')
+        .select('id, file_url, name, language_id')
+        .eq('capstone_project_id', projectId)
+        .eq('language_id', 7)
+        .is('deleted_at', null)
+        .single();
+
+      if (!englishTrans?.file_url) {
+        allResults.push({ capstone_project_id: projectId, status: 'skipped', error: 'No English translation with file found' });
+        continue;
+      }
+
+      // Fetch HTML from CDN
+      let htmlContent: string;
+      try {
+        const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+        const buffer = await downloadBunnyFile(cdnPath);
+        htmlContent = buffer.toString('utf-8');
+      } catch (fetchErr: any) {
+        allResults.push({ capstone_project_id: projectId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
+        continue;
+      }
+
+      if (!htmlContent || htmlContent.length < 50) {
+        allResults.push({ capstone_project_id: projectId, status: 'skipped', error: 'English HTML too short' });
+        continue;
+      }
+
+      // Get existing translations
+      const { data: existingTrans } = await supabase
+        .from('assesment_capstone_projects_translations')
+        .select('language_id, file_url')
+        .eq('capstone_project_id', projectId)
+        .is('deleted_at', null);
+
+      // Build CDN path
+      const { data: project } = await supabase
+        .from('assesment_capstone_projects')
+        .select('id, slug, course_id, courses(slug)')
+        .eq('id', projectId)
+        .single();
+
+      if (!project || !(project as any).courses) {
+        allResults.push({ capstone_project_id: projectId, status: 'error', error: 'Could not resolve project hierarchy' });
+        continue;
+      }
+
+      const course = (project as any).courses as any;
+
+      const cdnPathBuilder = (langIso: string) => {
+        return `materials/${course?.slug}/capstone/${langIso}/${project.slug}.html`;
+      };
+
+      const { results, inputTokens, outputTokens } = await translateAssessmentHtml({
+        htmlContent,
+        cdnPathBuilder,
+        existingTranslations: existingTrans || [],
+        tableName: 'assesment_capstone_projects_translations',
+        parentIdColumn: 'capstone_project_id',
+        parentId: projectId,
+        parentName: englishTrans.name || project.slug || 'capstone-project',
+        contextLabel: 'capstone project',
+        provider,
+        userId,
+      });
+
+      totalInput += inputTokens;
+      totalOutput += outputTokens;
+      allResults.push({ capstone_project_id: projectId, results, success: results.filter(r => r.status === 'success').length, errors: results.filter(r => r.status === 'error').length });
+    }
+
+    await redis.del('assesment_capstone_projects_translations:all');
+
+    const totalSuccess = allResults.reduce((sum, r) => sum + (r.success || 0), 0);
+    const totalErrors = allResults.reduce((sum, r) => sum + (r.errors || 0), 0);
+
+    logAdmin({ actorId: userId, action: 'capstone_auto_translated', targetType: 'capstone_project_translation', targetId: projectIds[0], targetName: `${projectIds.length} capstone projects`, ip: getClientIp(req), metadata: { provider, totalSuccess, totalErrors } });
+
+    return ok(res, { items: allResults, summary: { projects: projectIds.length, translations_created: totalSuccess, errors: totalErrors }, tokens: { input: totalInput, output: totalOutput } }, `Translated ${totalSuccess} capstone project translations`);
+  } catch (error: any) {
+    console.error('autoTranslateCapstone error:', error);
+    return err(res, error.message || 'Failed to auto-translate capstone projects', 500);
+  }
+}

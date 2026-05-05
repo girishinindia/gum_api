@@ -107,4 +107,9 @@ r.post('/auto-generate-ordering', requirePermission('ordering_question', 'create
 // Auto translate existing Ordering questions to missing languages
 r.post('/auto-translate-ordering', requirePermission('ordering_question_translation', 'create'), ctrl.autoTranslateOrdering);
 
+// Assessment AI translations (HTML file-based)
+r.post('/auto-translate-exercise', requirePermission('ai', 'create'), ctrl.autoTranslateExercise);
+r.post('/auto-translate-mini-project', requirePermission('ai', 'create'), ctrl.autoTranslateMiniProject);
+r.post('/auto-translate-capstone', requirePermission('ai', 'create'), ctrl.autoTranslateCapstone);
+
 export default r;

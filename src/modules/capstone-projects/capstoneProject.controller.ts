@@ -127,8 +127,6 @@ export async function create(req: Request, res: Response) {
     }
   }
 
-  body.created_by = req.user!.id;
-
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)
@@ -327,7 +325,6 @@ export async function createFull(req: Request, res: Response) {
 
   const slugSource = body.name || body.title || 'capstone-project';
   projectData.slug = await generateUniqueSlug(supabase, TABLE, slugSource, undefined, { column: 'course_id', value: body.course_id });
-  projectData.created_by = req.user!.id;
 
   // Handle solution ZIP upload
   if (files?.file_solution?.[0] && body.course_id) {
@@ -355,7 +352,6 @@ export async function createFull(req: Request, res: Response) {
     name: body.name || body.title || project.slug,
     description: body.description || null,
     is_active: true,
-    created_by: req.user!.id,
   };
 
   // Handle HTML file upload for English translation
@@ -462,7 +458,7 @@ export async function updateFull(req: Request, res: Response) {
   } else {
     const { data: t } = await supabase
       .from(TRANS_TABLE)
-      .insert({ capstone_project_id: id, language_id: 7, name: body.name || old.slug, ...translationUpdates, created_by: req.user!.id })
+      .insert({ capstone_project_id: id, language_id: 7, name: body.name || old.slug, ...translationUpdates })
       .select('*, languages(id, name, iso_code, native_name)')
       .single();
     translation = t;

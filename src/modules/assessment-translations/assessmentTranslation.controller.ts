@@ -117,8 +117,6 @@ export async function create(req: Request, res: Response) {
     body.file_solution_url = cdnUrl;
   }
 
-  body.created_by = req.user!.id;
-
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)

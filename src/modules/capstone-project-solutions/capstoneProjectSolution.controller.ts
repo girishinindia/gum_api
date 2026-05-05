@@ -103,8 +103,6 @@ export async function create(req: Request, res: Response) {
     body.video_thumbnail = await processAndUploadImage(thumbnailFile.buffer, thumbPath, { width: 480, height: 270, quality: 85 });
   }
 
-  body.created_by = req.user!.id;
-
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)
@@ -265,7 +263,6 @@ export async function bulkUpload(req: Request, res: Response) {
         video_short_intro: videoShortIntro,
         display_order: nextOrder++,
         is_active: true,
-        created_by: req.user!.id,
       };
 
       const { data, error: e } = await supabase.from(TABLE).insert(record).select(FK_SELECT).single();
