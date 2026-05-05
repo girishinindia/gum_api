@@ -73,7 +73,7 @@ export async function create(req: Request, res: Response) {
 
   // Verify course exists if provided
   if (body.course_id) {
-    const { data: course } = await supabase.from('courses').select('id, title').eq('id', body.course_id).single();
+    const { data: course } = await supabase.from('courses').select('id, name').eq('id', body.course_id).single();
     if (!course) return err(res, 'Course not found', 404);
   }
 
