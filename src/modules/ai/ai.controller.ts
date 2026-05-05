@@ -780,6 +780,15 @@ const MATERIAL_FIELDS_COURSE_MODULE = [
 ];
 const COURSE_MODULE_JSONB_FIELDS = ['tags'];
 
+const MATERIAL_FIELDS_COURSE_BATCH = [
+  'title', 'short_description', 'description',
+  'tags',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'focus_keyword',
+];
+const COURSE_BATCH_JSONB_FIELDS = ['tags'];
+
 const MATERIAL_FIELDS_BUNDLE = [
   'title', 'short_description', 'description',
   'highlights', 'tags',
@@ -816,7 +825,7 @@ function applyJsonbConversion(fields: Record<string, any>, jsonbFields?: string[
 }
 
 // ─── Reusable helper: generate AI translations for all for_material languages ───
-type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'course' | 'course_module' | 'bundle';
+type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'course' | 'course_module' | 'bundle' | 'course_batch';
 
 const ENTITY_CONFIG: Record<MaterialEntityType, {
   table: string;
@@ -834,6 +843,7 @@ const ENTITY_CONFIG: Record<MaterialEntityType, {
   course: { table: 'courses', translationTable: 'course_translations', idField: 'course_id', fields: MATERIAL_FIELDS_COURSE, entityLabel: 'course', jsonbFields: COURSE_JSONB_FIELDS, nameField: 'title' },
   course_module: { table: 'course_modules', translationTable: 'course_module_translations', idField: 'course_module_id', fields: MATERIAL_FIELDS_COURSE_MODULE, entityLabel: 'course module', jsonbFields: COURSE_MODULE_JSONB_FIELDS },
   bundle: { table: 'bundles', translationTable: 'bundle_translations', idField: 'bundle_id', fields: MATERIAL_FIELDS_BUNDLE, entityLabel: 'bundle', jsonbFields: BUNDLE_JSONB_FIELDS, nameField: 'title' },
+  course_batch: { table: 'course_batches', translationTable: 'batch_translations', idField: 'batch_id', fields: MATERIAL_FIELDS_COURSE_BATCH, entityLabel: 'course batch', jsonbFields: COURSE_BATCH_JSONB_FIELDS, nameField: 'title' },
 };
 
 const DEFAULT_TRANSLATION_PROMPT = 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';

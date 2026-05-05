@@ -46,8 +46,8 @@ export async function generateUniqueSlug(
   supabaseClient: any,
   table: string,
   text: string,
-  existingId?: number,
-  scope?: { column: string; value: number },
+  existingId?: number | string,
+  scope?: { column: string; value: number | string },
 ): Promise<string> {
   const base = toSlug(text);
   if (!base) throw new Error('Cannot generate slug from empty text');

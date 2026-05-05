@@ -58,7 +58,7 @@ export async function list(req: Request, res: Response) {
 
   if (search) q = q.ilike('slug', `%${search}%`);
 
-  if (req.query.show_deleted === 'true') {
+  if (req.query.show_deleted === 'true' || req.query.status === 'deleted') {
     q = q.not('deleted_at', 'is', null);
   } else {
     q = q.is('deleted_at', null);
@@ -131,7 +131,7 @@ export async function create(req: Request, res: Response) {
 }
 
 export async function update(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
   const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
   if (!old) return err(res, 'Mini project not found', 404);
 
@@ -182,12 +182,12 @@ export async function update(req: Request, res: Response) {
   }
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'mini_project_updated', targetType: 'mini_project', targetId: id, targetName: data.slug, changes, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'mini_project_updated', targetType: 'mini_project', targetId: Number(id) || null, targetName: data.slug, changes, ip: getClientIp(req) });
   return ok(res, data, 'Mini project updated');
 }
 
 export async function softDelete(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
   const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Mini project not found', 404);
   if (old.deleted_at) return err(res, 'Mini project is already in trash', 400);
@@ -206,12 +206,12 @@ export async function softDelete(req: Request, res: Response) {
   await supabase.from(SOLUTION_TABLE).update({ deleted_at: now, is_active: false }).eq('mini_project_id', id).is('deleted_at', null);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'mini_project_soft_deleted', targetType: 'mini_project', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'mini_project_soft_deleted', targetType: 'mini_project', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, data, 'Mini project moved to trash');
 }
 
 export async function restore(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
   const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Mini project not found', 404);
   if (!old.deleted_at) return err(res, 'Mini project is not in trash', 400);
@@ -229,12 +229,12 @@ export async function restore(req: Request, res: Response) {
   await supabase.from(SOLUTION_TABLE).update({ deleted_at: null, is_active: true }).eq('mini_project_id', id).not('deleted_at', 'is', null);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'mini_project_restored', targetType: 'mini_project', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'mini_project_restored', targetType: 'mini_project', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, data, 'Mini project restored');
 }
 
 export async function remove(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
   const { data: old } = await supabase.from(TABLE).select('slug, file_solution_url').eq('id', id).single();
   if (!old) return err(res, 'Mini project not found', 404);
 
@@ -260,7 +260,7 @@ export async function remove(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'mini_project_deleted', targetType: 'mini_project', targetId: id, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'mini_project_deleted', targetType: 'mini_project', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, null, 'Mini project permanently deleted');
 }
 
@@ -269,7 +269,7 @@ export async function remove(req: Request, res: Response) {
 const FULL_FK_SELECT = `*, chapters!assesment_mini_projects_chapter_id_fkey(name, slug, subject_id, subjects(name, slug)), ${TRANS_TABLE}(*, languages(id, name, iso_code, native_name)), ${SOLUTION_TABLE}(*)`;
 
 export async function getFullById(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
 
   const { data: project, error: e } = await supabase
     .from(TABLE)
@@ -364,7 +364,7 @@ export async function createFull(req: Request, res: Response) {
 }
 
 export async function updateFull(req: Request, res: Response) {
-  const id = parseInt(req.params.id);
+  const id = req.params.id as string;
   const body = parseMultipartBody(req);
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
@@ -451,7 +451,7 @@ export async function updateFull(req: Request, res: Response) {
   }
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'mini_project_updated_full', targetType: 'mini_project', targetId: id, targetName: project.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'mini_project_updated_full', targetType: 'mini_project', targetId: Number(id) || null, targetName: project.slug, ip: getClientIp(req) });
   return ok(res, { ...project, [TRANS_TABLE]: translation ? [translation] : [] }, 'Mini project updated');
 }
 

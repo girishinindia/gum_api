@@ -69,6 +69,8 @@ import courseChapterTopicRoutes from './modules/course-chapter-topics/courseChap
 import bundleRoutes from './modules/bundles/bundle.routes';
 import bundleTranslationRoutes from './modules/bundle-translations/bundleTranslation.routes';
 import bundleCourseRoutes from './modules/bundle-courses/bundleCourse.routes';
+import courseBatchRoutes from './modules/course-batches/courseBatch.routes';
+import batchTranslationRoutes from './modules/batch-translations/batchTranslation.routes';
 import mcqQuestionRoutes from './modules/mcq-questions/mcqQuestion.routes';
 import mcqQuestionTranslationRoutes from './modules/mcq-question-translations/mcqQuestionTranslation.routes';
 import mcqOptionRoutes from './modules/mcq-options/mcqOption.routes';
@@ -185,6 +187,8 @@ app.use(`${api}/course-chapter-topics`,      courseChapterTopicRoutes);
 app.use(`${api}/bundles`,                    bundleRoutes);
 app.use(`${api}/bundle-translations`,        bundleTranslationRoutes);
 app.use(`${api}/bundle-courses`,             bundleCourseRoutes);
+app.use(`${api}/course-batches`,             courseBatchRoutes);
+app.use(`${api}/batch-translations`,         batchTranslationRoutes);
 app.use(`${api}/mcq-questions`,              mcqQuestionRoutes);
 app.use(`${api}/mcq-question-translations`,  mcqQuestionTranslationRoutes);
 app.use(`${api}/mcq-options`,                mcqOptionRoutes);
