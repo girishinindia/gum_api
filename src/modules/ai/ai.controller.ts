@@ -11646,3 +11646,40 @@ export async function autoTranslateCapstone(req: Request, res: Response) {
     return err(res, error.message || 'Failed to auto-translate capstone projects', 500);
   }
 }
+
+/**
+ * POST /ai/generate-all-translations
+ * Generate AI translations for a single entity (webinar, course_batch, course, etc.)
+ * Body: { entity_type, entity_id, provider? }
+ */
+export async function generateAllTranslations(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+
+    const { entity_type, entity_id, provider: reqProvider, prompt, force_regenerate } = req.body;
+    if (!entity_type || !entity_id) return err(res, 'entity_type and entity_id are required', 400);
+
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar'];
+    if (!validTypes.includes(entity_type)) return err(res, `Invalid entity_type. Must be one of: ${validTypes.join(', ')}`, 400);
+
+    const aiProvider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+
+    const result = await generateAllTranslationsForEntity(
+      entity_type as MaterialEntityType,
+      parseInt(entity_id),
+      String(userId),
+      aiProvider,
+      prompt || undefined,
+      !!force_regenerate,
+    );
+
+    return ok(res, {
+      results: result.results,
+      tokens: { input: result.totalInputTokens, output: result.totalOutputTokens },
+    }, `Generated ${result.results.length} translations for ${entity_type}`);
+  } catch (error: any) {
+    console.error('generateAllTranslations error:', error);
+    return err(res, error.message || 'Failed to generate translations', 500);
+  }
+}

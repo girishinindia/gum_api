@@ -58,6 +58,13 @@ export async function list(req: Request, res: Response) {
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
 
+  // Count total material languages for translation percentage
+  const { count: totalLangCount } = await supabase
+    .from('languages')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .eq('for_material', true);
+
   // Enrich with total_languages and English name as title
   const enriched = (data || []).map((row: any) => {
     const translations = row[TRANS_TABLE] || [];
@@ -65,7 +72,9 @@ export async function list(req: Request, res: Response) {
     return {
       ...row,
       title: enTrans?.name || row.slug || '(untitled)',
-      total_languages: translations.length,
+      english_title: enTrans?.name || null,
+      translation_count: translations.length,
+      total_languages: totalLangCount || 2,
     };
   });
 

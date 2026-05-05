@@ -78,7 +78,7 @@ export async function coverage(req: Request, res: Response) {
     .select('id, name, iso_code')
     .eq('is_active', true)
     .eq('for_material', true)
-    .order('display_order');
+    .order('id');
 
   if (!langs || langs.length === 0) return ok(res, []);
 

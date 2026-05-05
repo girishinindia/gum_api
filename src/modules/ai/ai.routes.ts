@@ -112,4 +112,7 @@ r.post('/auto-translate-exercise', requirePermission('ai', 'create'), ctrl.autoT
 r.post('/auto-translate-mini-project', requirePermission('ai', 'create'), ctrl.autoTranslateMiniProject);
 r.post('/auto-translate-capstone', requirePermission('ai', 'create'), ctrl.autoTranslateCapstone);
 
+// Generic: generate all translations for any entity type (webinar, course_batch, etc.)
+r.post('/generate-all-translations', requirePermission('ai', 'create'), ctrl.generateAllTranslations);
+
 export default r;
