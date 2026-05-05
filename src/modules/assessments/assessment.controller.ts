@@ -282,6 +282,7 @@ export async function getFullById(req: Request, res: Response) {
     .from('languages')
     .select('id, name, iso_code')
     .eq('is_active', true)
+    .eq('for_material', true)
     .order('name');
 
   const existingLangIds = new Set(
