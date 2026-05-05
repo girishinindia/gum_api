@@ -30,12 +30,9 @@ function parseMultipartBody(req: Request): any {
   for (const k of ['batch_id', 'language_id']) {
     if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
   }
-  // JSONB fields
-  for (const k of ['tags', 'structured_data']) {
-    if (typeof body[k] === 'string') {
-      try { body[k] = JSON.parse(body[k]); } catch { /* leave as-is */ }
-    }
-  }
+  // Remove fields that don't exist in the batch_translations table
+  const invalidFields = ['tags', 'structured_data', 'focus_keyword', 'og_title', 'og_description', 'twitter_title', 'twitter_description'];
+  for (const k of invalidFields) { delete body[k]; }
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   // Never allow writing search_vector directly
