@@ -107,7 +107,7 @@ export async function create(req: Request, res: Response) {
 }
 
 export async function update(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
   const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
   if (!old) return err(res, 'Assessment exercise not found', 404);
 
@@ -143,12 +143,12 @@ export async function update(req: Request, res: Response) {
   }
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated', targetType: 'assessment_exercise', targetId: Number(id) || null, targetName: data.slug, changes, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated', targetType: 'assessment_exercise', targetId: id, targetName: data.slug, changes, ip: getClientIp(req) });
   return ok(res, data, 'Assessment exercise updated');
 }
 
 export async function softDelete(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
   const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Assessment exercise not found', 404);
   if (old.deleted_at) return err(res, 'Assessment exercise is already in trash', 400);
@@ -167,12 +167,12 @@ export async function softDelete(req: Request, res: Response) {
   await supabase.from(TRANS_TABLE).update({ deleted_at: now, is_active: false }).eq('assesment_exercise_id', id).is('deleted_at', null);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_soft_deleted', targetType: 'assessment_exercise', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_soft_deleted', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, data, 'Assessment exercise moved to trash');
 }
 
 export async function restore(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
   const { data: old } = await supabase.from(TABLE).select('slug, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Assessment exercise not found', 404);
   if (!old.deleted_at) return err(res, 'Assessment exercise is not in trash', 400);
@@ -189,12 +189,12 @@ export async function restore(req: Request, res: Response) {
   await supabase.from(TRANS_TABLE).update({ deleted_at: null, is_active: true }).eq('assesment_exercise_id', id).not('deleted_at', 'is', null);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_restored', targetType: 'assessment_exercise', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_restored', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, data, 'Assessment exercise restored');
 }
 
 export async function remove(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
   const { data: old } = await supabase.from(TABLE).select('slug').eq('id', id).single();
   if (!old) return err(res, 'Assessment exercise not found', 404);
 
@@ -227,7 +227,7 @@ export async function remove(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_deleted', targetType: 'assessment_exercise', targetId: Number(id) || null, targetName: old.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_deleted', targetType: 'assessment_exercise', targetId: id, targetName: old.slug, ip: getClientIp(req) });
   return ok(res, null, 'Assessment exercise permanently deleted');
 }
 
@@ -238,7 +238,7 @@ export async function remove(req: Request, res: Response) {
  * NEW format: materials/<subject-slug>/<chapter-slug>/<topic-slug>/topic_exercise/<lang-iso>/<topic-name>.html
  * Solution:  materials/<subject-slug>/<chapter-slug>/<topic-slug>/topic_exercise/<lang-iso>/<topic-name>_solution.html
  */
-async function buildExerciseCdnPath(exerciseId: number | string, langIsoCode: string, suffix: string): Promise<string | null> {
+async function buildExerciseCdnPath(exerciseId: number, langIsoCode: string, suffix: string): Promise<string | null> {
   const { data: exercise } = await supabase
     .from(TABLE)
     .select('id, slug, topic_id, topics!assessment_exercises_sub_topic_id_fkey(slug, name, chapter_id, chapters(slug, subject_id, subjects(slug)))')
@@ -268,7 +268,7 @@ function cdnPathFromUrl(cdnUrl: string): string {
 const FULL_FK_SELECT = `*, topics!assessment_exercises_sub_topic_id_fkey(name, slug, chapter_id, chapters(name, slug, subject_id, subjects(name, slug))), ${TRANS_TABLE}(*, languages(id, name, iso_code, native_name))`;
 
 export async function getFullById(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
 
   const { data: exercise, error: e } = await supabase
     .from(TABLE)
@@ -365,7 +365,7 @@ export async function createFull(req: Request, res: Response) {
 }
 
 export async function updateFull(req: Request, res: Response) {
-  const id = req.params.id as string;
+  const id = parseInt(req.params.id as string);
   const body = parseMultipartBody(req);
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
@@ -465,6 +465,6 @@ export async function updateFull(req: Request, res: Response) {
   }
 
   await clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated_full', targetType: 'assessment_exercise', targetId: Number(id) || null, targetName: exercise.slug, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'assessment_exercise_updated_full', targetType: 'assessment_exercise', targetId: id, targetName: exercise.slug, ip: getClientIp(req) });
   return ok(res, { ...exercise, [TRANS_TABLE]: [translation] }, 'Assessment exercise updated with English translation');
 }
