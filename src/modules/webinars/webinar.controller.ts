@@ -6,12 +6,12 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 
-const TABLE = 'course_batches';
-const CACHE_KEY = 'course_batches:all';
+const TABLE = 'webinars';
+const CACHE_KEY = 'webinars:all';
 
 const clearCache = async (courseId?: number) => {
   await redis.del(CACHE_KEY);
-  if (courseId) await redis.del(`course_batches:course:${courseId}`);
+  if (courseId) await redis.del(`webinars:course:${courseId}`);
 };
 
 function parseBody(req: Request): any {
@@ -19,23 +19,18 @@ function parseBody(req: Request): any {
   // Boolean fields
   if (typeof body.is_free === 'string') body.is_free = body.is_free === 'true';
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
-  if (typeof body.includes_course_access === 'string') body.includes_course_access = body.includes_course_access === 'true';
   // Integer fields
-  for (const k of ['course_id', 'instructor_id', 'max_students', 'enrolled_count', 'display_order']) {
+  for (const k of ['course_id', 'chapter_id', 'instructor_id', 'max_attendees', 'registered_count', 'display_order', 'duration_minutes']) {
     if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
   }
   // Numeric fields
   if (typeof body.price === 'string') body.price = parseFloat(body.price) || 0;
-  // JSONB fields
-  if (typeof body.schedule === 'string') {
-    try { body.schedule = JSON.parse(body.schedule); } catch { /* leave as-is */ }
-  }
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
 }
 
-const FK_SELECT = `*, courses(name, slug), users!course_batches_instructor_id_fkey(id, full_name, email)`;
+const FK_SELECT = `*, courses(title, slug), users!webinars_instructor_id_fkey(id, full_name, email)`;
 
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
@@ -44,8 +39,9 @@ export async function list(req: Request, res: Response) {
 
   if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
-  if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
-  if (req.query.batch_owner) q = q.eq('batch_owner', req.query.batch_owner as string);
+  if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
+  if (req.query.webinar_status) q = q.eq('webinar_status', req.query.webinar_status as string);
+  if (req.query.webinar_owner) q = q.eq('webinar_owner', req.query.webinar_owner as string);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
@@ -68,71 +64,62 @@ export async function list(req: Request, res: Response) {
 
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
-  if (e || !data) return err(res, 'Course batch not found', 404);
+  if (e || !data) return err(res, 'Webinar not found', 404);
   return ok(res, data);
 }
 
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
-  // Verify course exists
-  const { data: course } = await supabase.from('courses').select('id').eq('id', body.course_id).single();
-  if (!course) return err(res, 'Course not found', 404);
+  // Verify course exists if provided
+  if (body.course_id) {
+    const { data: course } = await supabase.from('courses').select('id, title').eq('id', body.course_id).single();
+    if (!course) return err(res, 'Course not found', 404);
+  }
 
   // Verify instructor exists if provided
   if (body.instructor_id) {
-    const { data: user } = await supabase.from('users').select('id').eq('id', body.instructor_id).single();
-    if (!user) return err(res, 'Instructor not found', 404);
+    const { data: instructor } = await supabase.from('users').select('id').eq('id', body.instructor_id).single();
+    if (!instructor) return err(res, 'Instructor not found', 404);
   }
 
-  const { data, error: e } = await supabase
-    .from(TABLE)
-    .insert(body)
-    .select(FK_SELECT)
-    .single();
+  body.created_by = req.user!.id;
+
+  const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(body.course_id);
-  logAdmin({ actorId: req.user!.id, action: 'course_batch_created', targetType: 'course_batch', targetId: data.id, targetName: body.title || body.code || `batch:${data.id}`, ip: getClientIp(req) });
-  return ok(res, data, 'Course batch created', 201);
+  logAdmin({ actorId: req.user!.id, action: 'webinar_created', targetType: 'webinar', targetId: data.id, targetName: body.title, ip: getClientIp(req) });
+  return ok(res, data, 'Webinar created', 201);
 }
 
 export async function update(req: Request, res: Response) {
-  const id = parseInt(req.params.id as string);
+  const id = parseInt(req.params.id);
   const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
-  if (!old) return err(res, 'Course batch not found', 404);
+  if (!old) return err(res, 'Webinar not found', 404);
 
   const updates = parseBody(req);
-
-  // Verify instructor if changed
-  if (updates.instructor_id && updates.instructor_id !== old.instructor_id) {
-    const { data: user } = await supabase.from('users').select('id').eq('id', updates.instructor_id).single();
-    if (!user) return err(res, 'Instructor not found', 404);
-  }
-
   updates.updated_by = req.user!.id;
 
-  if (Object.keys(updates).filter(k => k !== 'updated_by').length === 0) {
-    return err(res, 'Nothing to update', 400);
+  // Verify new course if changed
+  if (updates.course_id && updates.course_id !== old.course_id) {
+    const { data: course } = await supabase.from('courses').select('id').eq('id', updates.course_id).single();
+    if (!course) return err(res, 'Course not found', 404);
   }
 
-  const { data, error: e } = await supabase
-    .from(TABLE)
-    .update(updates)
-    .eq('id', id)
-    .select(FK_SELECT)
-    .single();
+  const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.course_id);
-  logAdmin({ actorId: req.user!.id, action: 'course_batch_updated', targetType: 'course_batch', targetId: id, targetName: updates.title || old.title || `batch:${id}`, ip: getClientIp(req) });
-  return ok(res, data, 'Course batch updated');
+  if (updates.course_id && updates.course_id !== old.course_id) await clearCache(updates.course_id);
+  logAdmin({ actorId: req.user!.id, action: 'webinar_updated', targetType: 'webinar', targetId: id, targetName: updates.title || old.title, ip: getClientIp(req) });
+  return ok(res, data, 'Webinar updated');
 }
 
 export async function softDelete(req: Request, res: Response) {
-  const id = parseInt(req.params.id as string);
+  const id = parseInt(req.params.id);
   const { data: old } = await supabase.from(TABLE).select('course_id, title, deleted_at').eq('id', id).single();
-  if (!old) return err(res, 'Course batch not found', 404);
+  if (!old) return err(res, 'Webinar not found', 404);
   if (old.deleted_at) return err(res, 'Already in trash', 400);
 
   const now = new Date().toISOString();
@@ -145,14 +132,14 @@ export async function softDelete(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.course_id);
-  logAdmin({ actorId: req.user!.id, action: 'course_batch_soft_deleted', targetType: 'course_batch', targetId: id, targetName: old.title || `batch:${id}`, ip: getClientIp(req) });
-  return ok(res, data, 'Course batch moved to trash');
+  logAdmin({ actorId: req.user!.id, action: 'webinar_soft_deleted', targetType: 'webinar', targetId: id, targetName: old.title, ip: getClientIp(req) });
+  return ok(res, data, 'Webinar moved to trash');
 }
 
 export async function restore(req: Request, res: Response) {
-  const id = parseInt(req.params.id as string);
+  const id = parseInt(req.params.id);
   const { data: old } = await supabase.from(TABLE).select('course_id, title, deleted_at').eq('id', id).single();
-  if (!old) return err(res, 'Course batch not found', 404);
+  if (!old) return err(res, 'Webinar not found', 404);
   if (!old.deleted_at) return err(res, 'Not in trash', 400);
 
   const { data, error: e } = await supabase
@@ -164,22 +151,22 @@ export async function restore(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.course_id);
-  logAdmin({ actorId: req.user!.id, action: 'course_batch_restored', targetType: 'course_batch', targetId: id, targetName: old.title || `batch:${id}`, ip: getClientIp(req) });
-  return ok(res, data, 'Course batch restored');
+  logAdmin({ actorId: req.user!.id, action: 'webinar_restored', targetType: 'webinar', targetId: id, targetName: old.title, ip: getClientIp(req) });
+  return ok(res, data, 'Webinar restored');
 }
 
 export async function remove(req: Request, res: Response) {
-  const id = parseInt(req.params.id as string);
+  const id = parseInt(req.params.id);
   const { data: old } = await supabase.from(TABLE).select('course_id, title').eq('id', id).single();
-  if (!old) return err(res, 'Course batch not found', 404);
+  if (!old) return err(res, 'Webinar not found', 404);
 
-  // Cascade: delete translations
-  await supabase.from('batch_translations').delete().eq('batch_id', id);
+  // Cascade delete translations
+  await supabase.from('webinar_translations').delete().eq('webinar_id', id);
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 
   await clearCache(old.course_id);
-  logAdmin({ actorId: req.user!.id, action: 'course_batch_deleted', targetType: 'course_batch', targetId: id, targetName: old.title || `batch:${id}`, ip: getClientIp(req) });
-  return ok(res, null, 'Course batch permanently deleted');
+  logAdmin({ actorId: req.user!.id, action: 'webinar_deleted', targetType: 'webinar', targetId: id, targetName: old.title, ip: getClientIp(req) });
+  return ok(res, null, 'Webinar permanently deleted');
 }

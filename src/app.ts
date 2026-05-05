@@ -97,6 +97,8 @@ import miniProjectSolutionRoutes from './modules/mini-project-solutions/miniProj
 import capstoneProjectRoutes from './modules/capstone-projects/capstoneProject.routes';
 import capstoneProjectTranslationRoutes from './modules/capstone-project-translations/capstoneProjectTranslation.routes';
 import capstoneProjectSolutionRoutes from './modules/capstone-project-solutions/capstoneProjectSolution.routes';
+import webinarRoutes from './modules/webinars/webinar.routes';
+import webinarTranslationRoutes from './modules/webinar-translations/webinarTranslation.routes';
 
 const app = express();
 
@@ -215,6 +217,8 @@ app.use(`${api}/assessment-mini-project-solutions`,  miniProjectSolutionRoutes);
 app.use(`${api}/assessment-capstone-projects`,           capstoneProjectRoutes);
 app.use(`${api}/assessment-capstone-project-translations`, capstoneProjectTranslationRoutes);
 app.use(`${api}/assessment-capstone-project-solutions`,  capstoneProjectSolutionRoutes);
+app.use(`${api}/webinars`,                              webinarRoutes);
+app.use(`${api}/webinar-translations`,                  webinarTranslationRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

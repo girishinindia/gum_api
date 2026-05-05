@@ -112,6 +112,7 @@ export async function create(req: Request, res: Response) {
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
       body.file_solution_url = cdnUrl;
+      body.file_solution_name = files.file_solution[0].originalname;
     }
   }
 
@@ -153,6 +154,7 @@ export async function update(req: Request, res: Response) {
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
       updates.file_solution_url = cdnUrl;
+      updates.file_solution_name = files.file_solution[0].originalname;
     }
   }
 
