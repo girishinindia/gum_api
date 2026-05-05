@@ -6512,7 +6512,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
     const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider, force_regenerate } = req.body;
 
     // Validate entity_type
-    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle'];
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar'];
     if (!entity_type || !validTypes.includes(entity_type)) {
       return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
     }

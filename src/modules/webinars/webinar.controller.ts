@@ -30,7 +30,7 @@ function parseBody(req: Request): any {
   return body;
 }
 
-const FK_SELECT = `*, courses(title, slug), users!webinars_instructor_id_fkey(id, full_name, email)`;
+const FK_SELECT = `*, courses(name, slug), users!webinars_instructor_id_fkey(id, full_name, email)`;
 
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });

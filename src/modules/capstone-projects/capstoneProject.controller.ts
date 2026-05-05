@@ -166,7 +166,7 @@ export async function update(req: Request, res: Response) {
     const cdnPath = await buildSolutionCdnPath(courseId, slug);
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
-      updates.file_solution_url = cdnUrl;
+      updates.file_solution_url = `${cdnUrl}?v=${Date.now()}`;
       updates.file_solution_name = files.file_solution[0].originalname;
     }
   }
@@ -407,7 +407,7 @@ export async function updateFull(req: Request, res: Response) {
     const cdnPath = await buildSolutionCdnPath(courseId, slug);
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file_solution[0].buffer);
-      projectUpdates.file_solution_url = cdnUrl;
+      projectUpdates.file_solution_url = `${cdnUrl}?v=${Date.now()}`;
       projectUpdates.file_solution_name = files.file_solution[0].originalname;
     }
   }
@@ -447,7 +447,8 @@ export async function updateFull(req: Request, res: Response) {
     const cdnPath = await buildTranslationCdnPath(courseId, 'en', slug);
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
-      translationUpdates.file_url = cdnUrl;
+      translationUpdates.file_url = `${cdnUrl}?v=${Date.now()}`;
+      translationUpdates.file_name = files.file[0].originalname;
     }
   }
 

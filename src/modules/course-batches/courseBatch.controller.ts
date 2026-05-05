@@ -4,7 +4,7 @@ import { redis } from '../../config/redis';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 
 const TABLE = 'course_batches';
 const CACHE_KEY = 'course_batches:all';
@@ -85,6 +85,12 @@ export async function create(req: Request, res: Response) {
     if (!user) return err(res, 'Instructor not found', 404);
   }
 
+  // Auto-generate slug if not provided
+  if (!body.slug) {
+    const slugSource = body.title || body.code || 'batch';
+    body.slug = await generateUniqueSlug(supabase, TABLE, slugSource);
+  }
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)
@@ -108,6 +114,11 @@ export async function update(req: Request, res: Response) {
   if (updates.instructor_id && updates.instructor_id !== old.instructor_id) {
     const { data: user } = await supabase.from('users').select('id').eq('id', updates.instructor_id).single();
     if (!user) return err(res, 'Instructor not found', 404);
+  }
+
+  // Auto-generate slug if title changed and slug not explicitly provided
+  if (updates.title && updates.title !== old.title && !updates.slug) {
+    updates.slug = await generateUniqueSlug(supabase, TABLE, updates.title, id);
   }
 
   updates.updated_by = req.user!.id;
