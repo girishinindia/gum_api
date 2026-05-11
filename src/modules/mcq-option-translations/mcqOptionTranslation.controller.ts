@@ -187,6 +187,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'MCQ option translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent MCQ option is still deleted
+  const { data: parentMcqOption } = await supabase.from('mcq_options').select('deleted_at').eq('id', old.mcq_option_id).single();
+  if (parentMcqOption?.deleted_at) return err(res, 'Cannot restore translation — parent MCQ option is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('mcq_option_translations')
     .update({ deleted_at: null, is_active: true })

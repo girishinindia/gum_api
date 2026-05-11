@@ -219,6 +219,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Course translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent course is still deleted
+  const { data: parentCourse } = await supabase.from('courses').select('deleted_at').eq('id', old.course_id).single();
+  if (parentCourse?.deleted_at) return err(res, 'Cannot restore translation — parent course is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('course_translations')
     .update({ deleted_at: null, is_active: true })

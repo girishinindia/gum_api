@@ -259,6 +259,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Assessment exercise translation not found', 404);
   if (!old.deleted_at) return err(res, 'Not in trash', 400);
 
+  // Block restore if parent assessment exercise is still deleted
+  const { data: parentExercise } = await supabase.from(PARENT_TABLE).select('deleted_at').eq('id', old.assesment_exercise_id).single();
+  if (parentExercise?.deleted_at) return err(res, 'Cannot restore translation — parent assessment exercise is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .update({ deleted_at: null, is_active: true })

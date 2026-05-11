@@ -152,6 +152,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Matching question translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent matching question is still deleted
+  const { data: parentMatchingQuestion } = await supabase.from('matching_questions').select('deleted_at').eq('id', old.matching_question_id).single();
+  if (parentMatchingQuestion?.deleted_at) return err(res, 'Cannot restore translation — parent matching question is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('matching_question_translations')
     .update({ deleted_at: null, is_active: true })

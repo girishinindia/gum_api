@@ -1196,14 +1196,39 @@ USER INSTRUCTIONS: ${userPrompt}`;
     }
 
     // If English was generated via bulk (no content path), update entity + English translation
-    if (!englishHasContent && allTranslations['en']) {
+    if (!englishHasContent && allTranslations['en'] && enLangRecord) {
       const enFields = extractMaterialFields(allTranslations['en'], cfg.fields);
       applyJsonbConversion(enFields, cfg.jsonbFields);
       const enSd = buildStructuredData(enFields, 'en');
       const enNameVal = enFields[primaryNameField];
       if (enNameVal) await supabase.from(cfg.table).update({ name: typeof enNameVal === 'string' ? enNameVal : entity.name }).eq('id', entityId);
       if (englishSource?.id) {
+        // English record exists but was empty — update it
         await supabase.from(cfg.translationTable).update({ ...enFields, ...(enSd && { structured_data: enSd }), updated_by: userId }).eq('id', englishSource.id);
+        results.push({ language: 'English', iso_code: 'en', status: 'success', id: englishSource.id });
+      } else {
+        // English record doesn't exist at all — insert it
+        const enSoftDeletedId = softDeletedMap.get(enLangRecord.id);
+        if (enSoftDeletedId) {
+          // Restore soft-deleted English record with new content
+          const { data: enSaved, error: enErr } = await supabase.from(cfg.translationTable).update({
+            [cfg.idField]: entityId, language_id: enLangRecord.id,
+            ...enFields, ...(enSd && { structured_data: enSd }),
+            is_active: true, deleted_at: null, created_by: userId, updated_by: userId,
+          }).eq('id', enSoftDeletedId).select().single();
+          results.push(enErr
+            ? { language: 'English', iso_code: 'en', status: 'error', error: enErr.message }
+            : { language: 'English', iso_code: 'en', status: 'success', id: enSaved.id });
+        } else {
+          const { data: enSaved, error: enErr } = await supabase.from(cfg.translationTable).insert({
+            [cfg.idField]: entityId, language_id: enLangRecord.id,
+            ...enFields, ...(enSd && { structured_data: enSd }),
+            is_active: true, created_by: userId,
+          }).select().single();
+          results.push(enErr
+            ? { language: 'English', iso_code: 'en', status: 'error', error: enErr.message }
+            : { language: 'English', iso_code: 'en', status: 'success', id: enSaved.id });
+        }
       }
     }
   }

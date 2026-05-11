@@ -350,6 +350,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Category translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent category is still deleted
+  const { data: parentCategory } = await supabase.from('categories').select('deleted_at').eq('id', old.category_id).single();
+  if (parentCategory?.deleted_at) return err(res, 'Cannot restore translation — parent category is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('category_translations')
     .update({ deleted_at: null, is_active: true })

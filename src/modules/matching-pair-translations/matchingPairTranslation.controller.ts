@@ -152,6 +152,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Matching pair translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent matching pair is still deleted
+  const { data: parentMatchingPair } = await supabase.from('matching_pairs').select('deleted_at').eq('id', old.matching_pair_id).single();
+  if (parentMatchingPair?.deleted_at) return err(res, 'Cannot restore translation — parent matching pair is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('matching_pair_translations')
     .update({ deleted_at: null, is_active: true })

@@ -198,6 +198,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Descriptive question translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent descriptive question is still deleted
+  const { data: parentDescQuestion } = await supabase.from('descriptive_questions').select('deleted_at').eq('id', old.descriptive_question_id).single();
+  if (parentDescQuestion?.deleted_at) return err(res, 'Cannot restore translation — parent descriptive question is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('descriptive_question_translations')
     .update({ deleted_at: null, is_active: true })

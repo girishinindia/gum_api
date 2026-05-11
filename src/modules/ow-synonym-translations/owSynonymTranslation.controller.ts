@@ -152,6 +152,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'One word synonym translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent one-word synonym is still deleted
+  const { data: parentOwSynonym } = await supabase.from('one_word_synonyms').select('deleted_at').eq('id', old.one_word_synonym_id).single();
+  if (parentOwSynonym?.deleted_at) return err(res, 'Cannot restore translation — parent one-word synonym is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('one_word_synonym_translations')
     .update({ deleted_at: null, is_active: true })

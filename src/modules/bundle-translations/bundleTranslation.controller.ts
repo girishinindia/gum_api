@@ -219,6 +219,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Bundle translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent bundle is still deleted
+  const { data: parentBundle } = await supabase.from('bundles').select('deleted_at').eq('id', old.bundle_id).single();
+  if (parentBundle?.deleted_at) return err(res, 'Cannot restore translation — parent bundle is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('bundle_translations')
     .update({ deleted_at: null, is_active: true })

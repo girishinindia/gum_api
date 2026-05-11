@@ -498,6 +498,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Sub-topic translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent sub-topic is still deleted
+  const { data: parentSubTopic } = await supabase.from('sub_topics').select('deleted_at').eq('id', old.sub_topic_id).single();
+  if (parentSubTopic?.deleted_at) return err(res, 'Cannot restore translation — parent sub-topic is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('sub_topic_translations')
     .update({ deleted_at: null, is_active: true })

@@ -208,6 +208,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Webinar translation not found', 404);
   if (!old.deleted_at) return err(res, 'Not in trash', 400);
 
+  // Block restore if parent webinar is still deleted
+  const { data: parentWebinar } = await supabase.from(PARENT_TABLE).select('deleted_at').eq('id', old.webinar_id).single();
+  if (parentWebinar?.deleted_at) return err(res, 'Cannot restore translation — parent webinar is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .update({ deleted_at: null, is_active: true })

@@ -179,6 +179,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Batch translation not found', 404);
   if (!old.deleted_at) return err(res, 'Not in trash', 400);
 
+  // Block restore if parent batch is still deleted
+  const { data: parentBatch } = await supabase.from(PARENT_TABLE).select('deleted_at').eq('id', old.batch_id).single();
+  if (parentBatch?.deleted_at) return err(res, 'Cannot restore translation — parent batch is still in trash. Restore the batch first.', 400);
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .update({ deleted_at: null, is_active: true })

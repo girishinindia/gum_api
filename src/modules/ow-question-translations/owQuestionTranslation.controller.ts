@@ -198,6 +198,10 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'One word question translation not found', 404);
   if (!old.deleted_at) return err(res, 'Translation is not in trash', 400);
 
+  // Block restore if parent one-word question is still deleted
+  const { data: parentOwQuestion } = await supabase.from('one_word_questions').select('deleted_at').eq('id', old.one_word_question_id).single();
+  if (parentOwQuestion?.deleted_at) return err(res, 'Cannot restore translation — parent one-word question is still in trash. Restore it first.', 400);
+
   const { data, error: e } = await supabase
     .from('one_word_question_translations')
     .update({ deleted_at: null, is_active: true })
