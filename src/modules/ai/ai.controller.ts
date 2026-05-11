@@ -885,39 +885,99 @@ async function generateAllTranslationsForEntity(
     parentTopicSlug = parentTopic?.slug || 'topic';
   }
 
-  // Helper to generate JSON-LD structured data for sub-topic translations
+  // Helper to generate JSON-LD structured data for translations
   const buildStructuredData = (fields: any, isoCode: string): any[] | null => {
-    if (entityType !== 'sub_topic') return null;
     const SITE_URL = 'https://growupmore.com';
     const SITE_NAME = 'GrowUpMore';
-    const subTopicSlug = entity.slug || '';
-    const topicSlug = parentTopicSlug;
-    const headline = fields.meta_title || fields.og_title || fields.name || '';
-    const desc = fields.meta_description || fields.og_description || fields.short_intro || '';
-    const img = fields.og_image || fields.twitter_image || null;
-    const keywords = fields.meta_keywords || fields.focus_keyword || undefined;
-    const pageUrl = `${SITE_URL}/${isoCode}/subjects/${topicSlug}/${subTopicSlug}`;
-    return [
-      {
-        '@context': 'https://schema.org', '@type': 'Article',
-        name: headline, ...(desc && { description: desc }),
-        url: pageUrl, inLanguage: isoCode,
-        ...(img && { image: img }), ...(keywords && { keywords }),
-        isPartOf: { '@type': 'WebSite', name: SITE_NAME, url: SITE_URL },
-        provider: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
-      },
-      {
-        '@context': 'https://schema.org', '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${isoCode}` },
-          { '@type': 'ListItem', position: 2, name: 'Subjects', item: `${SITE_URL}/${isoCode}/subjects` },
-          { '@type': 'ListItem', position: 3, name: 'Subject', item: `${SITE_URL}/${isoCode}/subjects` },
-          { '@type': 'ListItem', position: 4, name: 'Topic', item: `${SITE_URL}/${isoCode}/subjects/${topicSlug}` },
-          { '@type': 'ListItem', position: 5, name: fields.name || '' },
-        ],
-      },
-      { '@context': 'https://schema.org', '@type': 'ItemList', name: fields.name || '', numberOfItems: 0, itemListElement: [] },
-    ];
+
+    if (entityType === 'sub_topic') {
+      const subTopicSlug = entity.slug || '';
+      const topicSlug = parentTopicSlug;
+      const headline = fields.meta_title || fields.og_title || fields.name || '';
+      const desc = fields.meta_description || fields.og_description || fields.short_intro || '';
+      const img = fields.og_image || fields.twitter_image || null;
+      const keywords = fields.meta_keywords || fields.focus_keyword || undefined;
+      const pageUrl = `${SITE_URL}/${isoCode}/subjects/${topicSlug}/${subTopicSlug}`;
+      return [
+        {
+          '@context': 'https://schema.org', '@type': 'Article',
+          name: headline, ...(desc && { description: desc }),
+          url: pageUrl, inLanguage: isoCode,
+          ...(img && { image: img }), ...(keywords && { keywords }),
+          isPartOf: { '@type': 'WebSite', name: SITE_NAME, url: SITE_URL },
+          provider: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+        },
+        {
+          '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${isoCode}` },
+            { '@type': 'ListItem', position: 2, name: 'Subjects', item: `${SITE_URL}/${isoCode}/subjects` },
+            { '@type': 'ListItem', position: 3, name: 'Subject', item: `${SITE_URL}/${isoCode}/subjects` },
+            { '@type': 'ListItem', position: 4, name: 'Topic', item: `${SITE_URL}/${isoCode}/subjects/${topicSlug}` },
+            { '@type': 'ListItem', position: 5, name: fields.name || '' },
+          ],
+        },
+        { '@context': 'https://schema.org', '@type': 'ItemList', name: fields.name || '', numberOfItems: 0, itemListElement: [] },
+      ];
+    }
+
+    if (entityType === 'course_batch') {
+      const batchSlug = entity.slug || entity.code || '';
+      const headline = fields.meta_title || fields.og_title || fields.title || '';
+      const desc = fields.meta_description || fields.og_description || fields.short_description || '';
+      const img = fields.og_image || fields.twitter_image || null;
+      const keywords = fields.meta_keywords || fields.focus_keyword || undefined;
+      const pageUrl = `${SITE_URL}/${isoCode}/batches/${batchSlug}`;
+      return [
+        {
+          '@context': 'https://schema.org', '@type': 'Course',
+          name: headline, ...(desc && { description: desc }),
+          url: pageUrl, inLanguage: isoCode,
+          ...(img && { image: img }), ...(keywords && { keywords }),
+          provider: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+          ...(fields.requirements && { coursePrerequisites: fields.requirements }),
+        },
+        {
+          '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${isoCode}` },
+            { '@type': 'ListItem', position: 2, name: 'Batches', item: `${SITE_URL}/${isoCode}/batches` },
+            { '@type': 'ListItem', position: 3, name: fields.title || '' },
+          ],
+        },
+      ];
+    }
+
+    if (entityType === 'webinar') {
+      const webinarSlug = entity.slug || entity.code || '';
+      const headline = fields.meta_title || fields.og_title || fields.title || '';
+      const desc = fields.meta_description || fields.og_description || fields.short_description || '';
+      const img = fields.og_image || fields.twitter_image || null;
+      const keywords = fields.meta_keywords || fields.focus_keyword || undefined;
+      const pageUrl = `${SITE_URL}/${isoCode}/webinars/${webinarSlug}`;
+      return [
+        {
+          '@context': 'https://schema.org', '@type': 'Event',
+          name: headline, ...(desc && { description: desc }),
+          url: pageUrl, inLanguage: isoCode,
+          ...(img && { image: img }), ...(keywords && { keywords }),
+          eventAttendanceMode: 'https://schema.org/OnlineEventAttendanceMode',
+          eventStatus: 'https://schema.org/EventScheduled',
+          organizer: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+          location: { '@type': 'VirtualLocation', url: pageUrl },
+        },
+        {
+          '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/${isoCode}` },
+            { '@type': 'ListItem', position: 2, name: 'Webinars', item: `${SITE_URL}/${isoCode}/webinars` },
+            { '@type': 'ListItem', position: 3, name: fields.title || '' },
+          ],
+        },
+      ];
+    }
+
+    return null;
   };
 
   // Fetch all for_material languages
