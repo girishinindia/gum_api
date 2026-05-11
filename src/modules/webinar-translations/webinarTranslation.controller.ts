@@ -130,7 +130,7 @@ export async function coverage(req: Request, res: Response) {
 
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const files = (req as any).files as { [fieldname: string]: Express.Multer.File[] } | undefined;
 
   // Verify parent exists
   const { data: webinar } = await supabase.from(PARENT_TABLE).select('id, title, slug').eq('id', body.webinar_id).single();
@@ -155,11 +155,24 @@ export async function create(req: Request, res: Response) {
     .single();
   if (dup) return err(res, 'Translation already exists for this language', 409);
 
+  const slug = webinar.slug || webinar.title?.toLowerCase().replace(/\s+/g, '-') || 'webinar';
+
   // Handle thumbnail upload
-  if (file) {
-    const slug = webinar.slug || webinar.title?.toLowerCase().replace(/\s+/g, '-') || 'webinar';
+  if (files?.thumbnail?.[0]) {
     const thumbPath = `thumbnails/webinars/${slug}-${lang.iso_code}-${Date.now()}.webp`;
-    body.thumbnail = await processAndUploadImage(file.buffer, thumbPath, { width: 640, height: 360, quality: 85 });
+    body.thumbnail = await processAndUploadImage(files.thumbnail[0].buffer, thumbPath, { width: 640, height: 360, quality: 85 });
+  }
+
+  // Handle OG image upload
+  if (files?.og_image?.[0]) {
+    const ogPath = `og/webinars/${slug}-${lang.iso_code}-${Date.now()}.webp`;
+    body.og_image = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
+  }
+
+  // Handle Twitter image upload
+  if (files?.twitter_image?.[0]) {
+    const twPath = `twitter/webinars/${slug}-${lang.iso_code}-${Date.now()}.webp`;
+    body.twitter_image = await processAndUploadImage(files.twitter_image[0].buffer, twPath, { width: 1200, height: 628, quality: 85 });
   }
 
   body.created_by = req.user!.id;
@@ -183,15 +196,28 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Webinar translation not found', 404);
 
   const updates = parseBody(req);
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const files = (req as any).files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+  const { data: webinar } = await supabase.from(PARENT_TABLE).select('slug, title').eq('id', old.webinar_id).single();
+  const { data: lang } = await supabase.from('languages').select('iso_code').eq('id', old.language_id).single();
+  const slug = webinar?.slug || webinar?.title?.toLowerCase().replace(/\s+/g, '-') || 'webinar';
 
   // Handle thumbnail upload
-  if (file) {
-    const { data: webinar } = await supabase.from(PARENT_TABLE).select('slug, title').eq('id', old.webinar_id).single();
-    const { data: lang } = await supabase.from('languages').select('iso_code').eq('id', old.language_id).single();
-    const slug = webinar?.slug || webinar?.title?.toLowerCase().replace(/\s+/g, '-') || 'webinar';
+  if (files?.thumbnail?.[0]) {
     const thumbPath = `thumbnails/webinars/${slug}-${lang?.iso_code || 'xx'}-${Date.now()}.webp`;
-    updates.thumbnail = await processAndUploadImage(file.buffer, thumbPath, { width: 640, height: 360, quality: 85 });
+    updates.thumbnail = await processAndUploadImage(files.thumbnail[0].buffer, thumbPath, { width: 640, height: 360, quality: 85 });
+  }
+
+  // Handle OG image upload
+  if (files?.og_image?.[0]) {
+    const ogPath = `og/webinars/${slug}-${lang?.iso_code || 'xx'}-${Date.now()}.webp`;
+    updates.og_image = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
+  }
+
+  // Handle Twitter image upload
+  if (files?.twitter_image?.[0]) {
+    const twPath = `twitter/webinars/${slug}-${lang?.iso_code || 'xx'}-${Date.now()}.webp`;
+    updates.twitter_image = await processAndUploadImage(files.twitter_image[0].buffer, twPath, { width: 1200, height: 628, quality: 85 });
   }
 
   updates.updated_by = req.user!.id;

@@ -14,9 +14,9 @@ r.get('/:id', ctrl.getById);
 
 // Protected routes
 r.use(authMiddleware, attachPermissions());
-r.post('/', requirePermission('webinar_translation', 'create'), upload.single('thumbnail'), ctrl.create);
+r.post('/', requirePermission('webinar_translation', 'create'), upload.fields([{ name: 'thumbnail', maxCount: 1 }, { name: 'og_image', maxCount: 1 }, { name: 'twitter_image', maxCount: 1 }]), ctrl.create);
 r.patch('/:id/restore', requirePermission('webinar_translation', 'restore'), ctrl.restore);
-r.patch('/:id', requirePermission('webinar_translation', 'update'), upload.single('thumbnail'), ctrl.update);
+r.patch('/:id', requirePermission('webinar_translation', 'update'), upload.fields([{ name: 'thumbnail', maxCount: 1 }, { name: 'og_image', maxCount: 1 }, { name: 'twitter_image', maxCount: 1 }]), ctrl.update);
 r.delete('/:id/permanent', requirePermission('webinar_translation', 'delete'), ctrl.remove);
 r.delete('/:id', requirePermission('webinar_translation', 'soft_delete'), ctrl.softDelete);
 
