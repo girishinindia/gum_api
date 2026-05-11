@@ -65,40 +65,67 @@ export async function getById(req: Request, res: Response) {
 }
 
 /**
- * GET /webinar-translations/coverage?webinar_id=X
- * Returns language coverage for a given webinar.
+ * GET /webinar-translations/coverage
+ * Returns X/Y translation coverage for ALL active webinars (or a specific one via ?webinar_id=X).
  */
 export async function coverage(req: Request, res: Response) {
-  const webinarId = parseInt(req.query.webinar_id as string);
-  if (!webinarId) return err(res, 'webinar_id is required', 400);
-
-  // Get all for_material languages
-  const { data: langs } = await supabase
+  // Get all active languages that are for_material
+  const { data: activeLangs, error: langErr } = await supabase
     .from('languages')
-    .select('id, name, iso_code')
+    .select('id, name, iso_code, native_name')
     .eq('is_active', true)
     .eq('for_material', true)
     .order('id');
+  if (langErr) return err(res, langErr.message, 500);
+  const totalLangs = activeLangs?.length || 0;
 
-  if (!langs || langs.length === 0) return ok(res, []);
+  // Get all non-deleted webinars (or a specific one)
+  let webinarQ = supabase
+    .from(PARENT_TABLE)
+    .select('id, title, code')
+    .is('deleted_at', null)
+    .order('id');
+  const webinarId = req.query.webinar_id ? parseInt(req.query.webinar_id as string) : undefined;
+  if (webinarId) webinarQ = webinarQ.eq('id', webinarId);
 
-  // Get existing translations for this webinar
-  const { data: existing } = await supabase
+  const { data: webinars, error: webinarErr } = await webinarQ;
+  if (webinarErr) return err(res, webinarErr.message, 500);
+
+  // Get all non-deleted translations
+  let transQ = supabase
     .from(TABLE)
-    .select('language_id')
-    .eq('webinar_id', webinarId)
+    .select('webinar_id, language_id')
     .is('deleted_at', null);
+  if (webinarId) transQ = transQ.eq('webinar_id', webinarId);
 
-  const existingIds = new Set((existing || []).map(t => t.language_id));
+  const { data: translations, error: transErr } = await transQ;
+  if (transErr) return err(res, transErr.message, 500);
 
-  const result = langs.map(l => ({
-    language_id: l.id,
-    language_name: l.name,
-    language_code: l.iso_code,
-    has_translation: existingIds.has(l.id),
-  }));
+  // Build translation map: webinar_id → Set of language_ids
+  const transMap = new Map<number, Set<number>>();
+  for (const t of (translations || [])) {
+    if (!transMap.has(t.webinar_id)) transMap.set(t.webinar_id, new Set());
+    transMap.get(t.webinar_id)!.add(t.language_id);
+  }
 
-  return ok(res, result);
+  const result = (webinars || []).map(webinar => {
+    const translatedLangIds = transMap.get(webinar.id) || new Set();
+    const missingLangs = (activeLangs || []).filter(l => !translatedLangIds.has(l.id));
+    const translatedLangs = (activeLangs || []).filter(l => translatedLangIds.has(l.id));
+    return {
+      webinar_id: webinar.id,
+      webinar_title: webinar.title,
+      webinar_code: webinar.code,
+      total_languages: totalLangs,
+      translated_count: translatedLangs.length,
+      missing_count: missingLangs.length,
+      is_complete: missingLangs.length === 0,
+      translated_languages: translatedLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code })),
+      missing_languages: missingLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code, native_name: l.native_name })),
+    };
+  });
+
+  return ok(res, result, 'Coverage retrieved');
 }
 
 export async function create(req: Request, res: Response) {

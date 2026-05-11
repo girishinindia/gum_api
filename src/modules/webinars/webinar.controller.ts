@@ -131,6 +131,13 @@ export async function softDelete(req: Request, res: Response) {
     .single();
   if (e) return err(res, e.message, 500);
 
+  // Cascade soft-delete to webinar_translations
+  await supabase
+    .from('webinar_translations')
+    .update({ deleted_at: now, is_active: false })
+    .eq('webinar_id', id)
+    .is('deleted_at', null);
+
   await clearCache(old.course_id);
   logAdmin({ actorId: req.user!.id, action: 'webinar_soft_deleted', targetType: 'webinar', targetId: id, targetName: old.title, ip: getClientIp(req) });
   return ok(res, data, 'Webinar moved to trash');
@@ -149,6 +156,13 @@ export async function restore(req: Request, res: Response) {
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade restore to webinar_translations
+  await supabase
+    .from('webinar_translations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('webinar_id', id)
+    .not('deleted_at', 'is', null);
 
   await clearCache(old.course_id);
   logAdmin({ actorId: req.user!.id, action: 'webinar_restored', targetType: 'webinar', targetId: id, targetName: old.title, ip: getClientIp(req) });

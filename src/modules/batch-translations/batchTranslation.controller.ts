@@ -229,11 +229,10 @@ export async function coverage(req: Request, res: Response) {
   if (langErr) return err(res, langErr.message, 500);
   const totalLangs = activeLangs?.length || 0;
 
-  // Get all active batches (or a specific one)
+  // Get all non-deleted batches (or a specific one)
   let batchQ = supabase
     .from(PARENT_TABLE)
     .select('id, title, code')
-    .eq('is_active', true)
     .is('deleted_at', null)
     .order('id');
   const batchId = req.query.batch_id ? parseInt(req.query.batch_id as string) : undefined;
