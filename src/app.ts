@@ -99,6 +99,9 @@ import capstoneProjectTranslationRoutes from './modules/capstone-project-transla
 import capstoneProjectSolutionRoutes from './modules/capstone-project-solutions/capstoneProjectSolution.routes';
 import webinarRoutes from './modules/webinars/webinar.routes';
 import webinarTranslationRoutes from './modules/webinar-translations/webinarTranslation.routes';
+import referralCodeRoutes from './modules/referral-codes/referralCode.routes';
+import referralUsageRoutes from './modules/referral-usages/referralUsage.routes';
+import referralRewardRoutes from './modules/referral-rewards/referralReward.routes';
 
 const app = express();
 
@@ -219,6 +222,9 @@ app.use(`${api}/assessment-capstone-project-translations`, capstoneProjectTransl
 app.use(`${api}/assessment-capstone-project-solutions`,  capstoneProjectSolutionRoutes);
 app.use(`${api}/webinars`,                              webinarRoutes);
 app.use(`${api}/webinar-translations`,                  webinarTranslationRoutes);
+app.use(`${api}/referral-codes`,                        referralCodeRoutes);
+app.use(`${api}/referral-usages`,                       referralUsageRoutes);
+app.use(`${api}/referral-rewards`,                      referralRewardRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
