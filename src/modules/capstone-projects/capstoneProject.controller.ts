@@ -373,6 +373,7 @@ export async function createFull(req: Request, res: Response) {
     if (cdnPath) {
       const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
       translationData.file_url = cdnUrl;
+      translationData.file_name = files.file[0].originalname;
     }
   }
 

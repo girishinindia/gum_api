@@ -98,6 +98,7 @@ export async function create(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve CDN path (check course hierarchy)', 400);
     const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
     body.file_url = cdnUrl;
+    body.file_name = files.file[0].originalname;
   }
 
   const { data, error: e } = await supabase
@@ -138,6 +139,7 @@ export async function update(req: Request, res: Response) {
     if (!cdnPath) return err(res, 'Could not resolve CDN path (check course hierarchy)', 400);
     const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
     updates.file_url = cdnUrl;
+    updates.file_name = files.file[0].originalname;
   }
 
   updates.updated_by = req.user!.id;
