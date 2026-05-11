@@ -99,6 +99,20 @@ export async function create(req: Request, res: Response) {
     body.thumbnail_url = await processAndUploadImage(files.thumbnail[0].buffer, thumbPath, { width: 800, height: 450, quality: 85 });
   }
 
+  // Handle OG image upload
+  if (files?.og_image?.[0]) {
+    const slug = batch.code || batch.title || 'batch';
+    const ogPath = `og/batches/${slug}/${lang.iso_code}-${Date.now()}.webp`;
+    body.og_image = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
+  }
+
+  // Handle Twitter image upload
+  if (files?.twitter_image?.[0]) {
+    const slug = batch.code || batch.title || 'batch';
+    const twPath = `twitter/batches/${slug}/${lang.iso_code}-${Date.now()}.webp`;
+    body.twitter_image = await processAndUploadImage(files.twitter_image[0].buffer, twPath, { width: 1200, height: 628, quality: 85 });
+  }
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .insert(body)
@@ -134,9 +148,34 @@ export async function update(req: Request, res: Response) {
     updates.thumbnail_url = await processAndUploadImage(files.thumbnail[0].buffer, thumbPath, { width: 800, height: 450, quality: 85 });
   }
 
+  // Handle OG image upload — delete old first
+  if (files?.og_image?.[0]) {
+    if (old.og_image) {
+      try { await deleteImage(extractBunnyPath(old.og_image)); } catch (_) {}
+    }
+    const { data: batch } = await supabase.from(PARENT_TABLE).select('title, code').eq('id', old.batch_id).single();
+    const { data: lang } = await supabase.from('languages').select('iso_code').eq('id', old.language_id).single();
+    const slug = batch?.code || batch?.title || 'batch';
+    const ogPath = `og/batches/${slug}/${lang?.iso_code || 'en'}-${Date.now()}.webp`;
+    updates.og_image = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
+  }
+
+  // Handle Twitter image upload — delete old first
+  if (files?.twitter_image?.[0]) {
+    if (old.twitter_image) {
+      try { await deleteImage(extractBunnyPath(old.twitter_image)); } catch (_) {}
+    }
+    const { data: batch } = await supabase.from(PARENT_TABLE).select('title, code').eq('id', old.batch_id).single();
+    const { data: lang } = await supabase.from('languages').select('iso_code').eq('id', old.language_id).single();
+    const slug = batch?.code || batch?.title || 'batch';
+    const twPath = `twitter/batches/${slug}/${lang?.iso_code || 'en'}-${Date.now()}.webp`;
+    updates.twitter_image = await processAndUploadImage(files.twitter_image[0].buffer, twPath, { width: 1200, height: 628, quality: 85 });
+  }
+
   updates.updated_by = req.user!.id;
 
-  if (Object.keys(updates).filter(k => k !== 'updated_by').length === 0 && !files?.thumbnail?.[0]) {
+  const hasFileUploads = files?.thumbnail?.[0] || files?.og_image?.[0] || files?.twitter_image?.[0];
+  if (Object.keys(updates).filter(k => k !== 'updated_by').length === 0 && !hasFileUploads) {
     return err(res, 'Nothing to update', 400);
   }
 

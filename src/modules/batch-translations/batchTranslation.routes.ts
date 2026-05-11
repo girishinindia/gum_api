@@ -15,9 +15,9 @@ r.get('/:id', ctrl.getById);
 
 // Protected routes
 r.use(authMiddleware, attachPermissions());
-r.post('/', requirePermission('batch_translation', 'create'), upload.fields([{ name: 'thumbnail', maxCount: 1 }]), ctrl.create);
+r.post('/', requirePermission('batch_translation', 'create'), upload.fields([{ name: 'thumbnail', maxCount: 1 }, { name: 'og_image', maxCount: 1 }, { name: 'twitter_image', maxCount: 1 }]), ctrl.create);
 r.patch('/:id/restore', requirePermission('batch_translation', 'restore'), ctrl.restore);
-r.patch('/:id', requirePermission('batch_translation', 'update'), upload.fields([{ name: 'thumbnail', maxCount: 1 }]), ctrl.update);
+r.patch('/:id', requirePermission('batch_translation', 'update'), upload.fields([{ name: 'thumbnail', maxCount: 1 }, { name: 'og_image', maxCount: 1 }, { name: 'twitter_image', maxCount: 1 }]), ctrl.update);
 r.delete('/:id/permanent', requirePermission('batch_translation', 'delete'), ctrl.remove);
 r.delete('/:id', requirePermission('batch_translation', 'soft_delete'), ctrl.softDelete);
 
