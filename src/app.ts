@@ -102,6 +102,11 @@ import webinarTranslationRoutes from './modules/webinar-translations/webinarTran
 import referralCodeRoutes from './modules/referral-codes/referralCode.routes';
 import referralUsageRoutes from './modules/referral-usages/referralUsage.routes';
 import referralRewardRoutes from './modules/referral-rewards/referralReward.routes';
+import couponRoutes from './modules/coupons/coupon.routes';
+import couponCourseRoutes from './modules/coupon-courses/couponCourse.routes';
+import couponBundleRoutes from './modules/coupon-bundles/couponBundle.routes';
+import couponBatchRoutes from './modules/coupon-batches/couponBatch.routes';
+import couponWebinarRoutes from './modules/coupon-webinars/couponWebinar.routes';
 
 const app = express();
 
@@ -225,6 +230,11 @@ app.use(`${api}/webinar-translations`,                  webinarTranslationRoutes
 app.use(`${api}/referral-codes`,                        referralCodeRoutes);
 app.use(`${api}/referral-usages`,                       referralUsageRoutes);
 app.use(`${api}/referral-rewards`,                      referralRewardRoutes);
+app.use(`${api}/coupons`,                               couponRoutes);
+app.use(`${api}/coupon-courses`,                        couponCourseRoutes);
+app.use(`${api}/coupon-bundles`,                        couponBundleRoutes);
+app.use(`${api}/coupon-batches`,                        couponBatchRoutes);
+app.use(`${api}/coupon-webinars`,                       couponWebinarRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));

@@ -11261,24 +11261,32 @@ Return ONLY valid JSON:
 /**
  * Generalized helper: translate an HTML file from CDN to all missing for_material languages.
  * Works for exercises, mini projects, and capstone projects.
+ * Supports optional solution file translation and force re-translation.
  */
 async function translateAssessmentHtml(opts: {
   htmlContent: string;
   cdnPathBuilder: (langIsoCode: string) => string;
-  existingTranslations: Array<{ language_id: number; file_url?: string | null }>;
+  existingTranslations: Array<{ language_id: number; file_url?: string | null; file_solution_url?: string | null }>;
   tableName: string;
   parentIdColumn: string;
   parentId: number;
   parentName: string;
+  parentDescription?: string;
   contextLabel: string;
   provider: AIProvider;
   userId: string | number;
+  /** Optional: solution HTML content to also translate */
+  solutionHtmlContent?: string;
+  /** Optional: CDN path builder for solution files */
+  solutionCdnPathBuilder?: (langIsoCode: string) => string;
+  /** If true, re-translate even if file_url already exists */
+  force?: boolean;
 }): Promise<{
   results: Array<{ language: string; iso_code: string; status: string; file_url?: string; error?: string }>;
   inputTokens: number;
   outputTokens: number;
 }> {
-  const { htmlContent, cdnPathBuilder, existingTranslations, tableName, parentIdColumn, parentId, parentName, contextLabel, provider, userId } = opts;
+  const { htmlContent, cdnPathBuilder, existingTranslations, tableName, parentIdColumn, parentId, parentName, parentDescription, contextLabel, provider, userId, solutionHtmlContent, solutionCdnPathBuilder, force } = opts;
 
   // Get all active material languages
   const { data: allLangs } = await supabase
@@ -11297,8 +11305,11 @@ async function translateAssessmentHtml(opts: {
   const englishLang = allLangs.find(l => l.iso_code === 'en');
   const englishLangId = englishLang?.id || 7;
 
-  // Target languages = all for_material languages EXCEPT English and those already translated
-  const targetLangs = allLangs.filter(l => l.id !== englishLangId && !existingLangIds.has(l.id));
+  // Target languages = all for_material languages EXCEPT English
+  // If force=true, include languages that already have file_url (re-translate them)
+  const targetLangs = force
+    ? allLangs.filter(l => l.id !== englishLangId)
+    : allLangs.filter(l => l.id !== englishLangId && !existingLangIds.has(l.id));
 
   if (targetLangs.length === 0) {
     return { results: [], inputTokens: 0, outputTokens: 0 };
@@ -11308,9 +11319,23 @@ async function translateAssessmentHtml(opts: {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
+  // Helper: clean markdown fences from AI response
+  function cleanAiHtml(text: string): string {
+    let html = text.trim();
+    if (html.startsWith('```html')) {
+      html = html.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
+    } else if (html.startsWith('```')) {
+      html = html.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+    return html;
+  }
+
   // Translate to each target language in parallel
   const translationPromises = targetLangs.map(async (lang) => {
+    let langInputTokens = 0;
+    let langOutputTokens = 0;
     try {
+      // ── 1. Translate main HTML file ──
       const systemPrompt = `You are an expert translator. Translate the following HTML page from English to ${lang.name} (${lang.native_name}).
 
 CRITICAL RULES:
@@ -11330,57 +11355,100 @@ Return ONLY the complete translated HTML document, nothing else.`;
 
       const estimatedTokens = Math.max(16384, Math.ceil(htmlContent.length / 2));
       const aiResult = await callAIRaw(provider, systemPrompt, htmlContent, estimatedTokens);
+      langInputTokens += aiResult.inputTokens;
+      langOutputTokens += aiResult.outputTokens;
 
       // Clean AI response
-      let translatedHtml = aiResult.text.trim();
-      if (translatedHtml.startsWith('```html')) {
-        translatedHtml = translatedHtml.replace(/^```html\s*\n?/, '').replace(/\n?```\s*$/, '');
-      } else if (translatedHtml.startsWith('```')) {
-        translatedHtml = translatedHtml.replace(/^```\s*\n?/, '').replace(/\n?```\s*$/, '');
-      }
+      const translatedHtml = cleanAiHtml(aiResult.text);
 
       if (!translatedHtml || translatedHtml.length < 50) {
-        return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: 'AI returned empty or too short translation', inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+        return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: 'AI returned empty or too short translation', inputTokens: langInputTokens, outputTokens: langOutputTokens };
       }
 
-      // Upload to CDN
+      // Upload main file to CDN
       const cdnPath = cdnPathBuilder(lang.iso_code);
       const fileUrl = await uploadRawFile(Buffer.from(translatedHtml, 'utf-8'), cdnPath);
 
-      // Check if translation record exists (without file)
+      // ── 2. Translate solution file (if provided) ──
+      let solutionFileUrl: string | null = null;
+      if (solutionHtmlContent && solutionCdnPathBuilder && solutionHtmlContent.length >= 50) {
+        try {
+          const solPrompt = systemPrompt.replace('HTML page', 'HTML solution page');
+          const solEstTokens = Math.max(16384, Math.ceil(solutionHtmlContent.length / 2));
+          const solResult = await callAIRaw(provider, solPrompt, solutionHtmlContent, solEstTokens);
+          langInputTokens += solResult.inputTokens;
+          langOutputTokens += solResult.outputTokens;
+
+          const translatedSolution = cleanAiHtml(solResult.text);
+          if (translatedSolution && translatedSolution.length >= 50) {
+            const solCdnPath = solutionCdnPathBuilder(lang.iso_code);
+            solutionFileUrl = await uploadRawFile(Buffer.from(translatedSolution, 'utf-8'), solCdnPath);
+          }
+        } catch (solErr: any) {
+          console.error(`Solution translation failed for ${lang.name}:`, solErr.message);
+          // Continue — main file was translated successfully
+        }
+      }
+
+      // ── 3. AI-translate name and description ──
+      let translatedName = parentName;
+      let translatedDesc: string | null = null;
+      try {
+        const namePrompt = `Translate the following title and description from English to ${lang.name} (${lang.native_name}). Keep ALL technical terms, programming keywords, and brand names in English. Return JSON only: {"name":"...","description":"..."}
+
+Title: ${parentName}
+Description: ${parentDescription || '---'}`;
+        const nameResult = await callAIRaw(provider, 'You are a translator. Return only valid JSON.', namePrompt, 512);
+        langInputTokens += nameResult.inputTokens;
+        langOutputTokens += nameResult.outputTokens;
+        try {
+          let jsonText = nameResult.text.trim();
+          if (jsonText.startsWith('```')) jsonText = jsonText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+          const parsed = JSON.parse(jsonText);
+          if (parsed.name) translatedName = parsed.name;
+          if (parsed.description && parsed.description !== '---') translatedDesc = parsed.description;
+        } catch (_) { /* fallback to English name */ }
+      } catch (_) { /* fallback to English name */ }
+
+      // ── 4. Upsert DB record ──
       const existingRec = existingTranslations.find(t => t.language_id === lang.id);
 
       if (existingRec) {
-        // Update existing record with file_url
+        // Update existing record
+        const updateData: any = { file_url: fileUrl, name: translatedName, updated_by: userId };
+        if (solutionFileUrl) updateData.file_solution_url = solutionFileUrl;
+        if (translatedDesc) updateData.description = translatedDesc;
         const { error: updErr } = await supabase
           .from(tableName)
-          .update({ file_url: fileUrl, updated_by: userId })
+          .update(updateData)
           .eq(parentIdColumn, parentId)
           .eq('language_id', lang.id)
           .is('deleted_at', null);
         if (updErr) {
-          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB update failed: ${updErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB update failed: ${updErr.message}`, inputTokens: langInputTokens, outputTokens: langOutputTokens };
         }
       } else {
         // Insert new translation record
         const insertData: any = {
           [parentIdColumn]: parentId,
           language_id: lang.id,
-          name: parentName,
+          name: translatedName,
           file_url: fileUrl,
           is_active: true,
           created_by: userId,
         };
+        if (solutionFileUrl) insertData.file_solution_url = solutionFileUrl;
+        if (translatedDesc) insertData.description = translatedDesc;
         const { error: insErr } = await supabase.from(tableName).insert(insertData);
         if (insErr) {
-          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB insert failed: ${insErr.message}`, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+          return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: `DB insert failed: ${insErr.message}`, inputTokens: langInputTokens, outputTokens: langOutputTokens };
         }
       }
 
-      return { language: lang.name, iso_code: lang.iso_code, status: 'success' as const, file_url: fileUrl, inputTokens: aiResult.inputTokens, outputTokens: aiResult.outputTokens };
+      return { language: lang.name, iso_code: lang.iso_code, status: 'success' as const, file_url: fileUrl, inputTokens: langInputTokens, outputTokens: langOutputTokens };
     } catch (langErr: any) {
       console.error(`Assessment translation failed for ${lang.name}:`, langErr);
-      return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: langErr.message || 'Translation failed', inputTokens: 0, outputTokens: 0 };
+      return { language: lang.name, iso_code: lang.iso_code, status: 'error' as const, error: langErr.message || 'Translation failed', inputTokens: langInputTokens, outputTokens: langOutputTokens };
     }
   });
 
@@ -11424,10 +11492,10 @@ export async function autoTranslateExercise(req: Request, res: Response) {
     let totalInput = 0, totalOutput = 0;
 
     for (const exerciseId of exerciseIds) {
-      // Get English translation with file_url
+      // Get English translation with file_url and file_solution_url
       const { data: englishTrans } = await supabase
         .from('assesment_exercise_translations')
-        .select('id, file_url, name, language_id')
+        .select('id, file_url, file_solution_url, name, description, language_id')
         .eq('assesment_exercise_id', exerciseId)
         .eq('language_id', 7) // English
         .is('deleted_at', null)
@@ -11438,12 +11506,11 @@ export async function autoTranslateExercise(req: Request, res: Response) {
         continue;
       }
 
-      // Fetch HTML content from CDN
+      // Fetch question HTML content from CDN
       let htmlContent: string;
       try {
         const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
-        const buffer = await downloadBunnyFile(cdnPath);
-        htmlContent = buffer.toString('utf-8');
+        htmlContent = await downloadBunnyFile(cdnPath);
       } catch (fetchErr: any) {
         allResults.push({ exercise_id: exerciseId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
         continue;
@@ -11454,10 +11521,22 @@ export async function autoTranslateExercise(req: Request, res: Response) {
         continue;
       }
 
+      // Fetch solution HTML content from CDN (if exists)
+      let solutionHtmlContent: string | undefined;
+      if (englishTrans.file_solution_url) {
+        try {
+          const solCdnPath = englishTrans.file_solution_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+          solutionHtmlContent = await downloadBunnyFile(solCdnPath);
+          if (!solutionHtmlContent || solutionHtmlContent.length < 20) solutionHtmlContent = undefined;
+        } catch (_) {
+          // Solution file not available — continue without it
+        }
+      }
+
       // Get all existing translations for this exercise
       const { data: existingTrans } = await supabase
         .from('assesment_exercise_translations')
-        .select('language_id, file_url')
+        .select('language_id, file_url, file_solution_url')
         .eq('assesment_exercise_id', exerciseId)
         .is('deleted_at', null);
 
@@ -11476,11 +11555,19 @@ export async function autoTranslateExercise(req: Request, res: Response) {
       const topic = (exercise as any).topics as any;
       const chapter = topic?.chapters;
       const subject = chapter?.subjects;
-      const topicSlug = topic?.slug || '';
+      const exerciseSlug = exercise.slug || '';
 
+      // FIX: Use exercise.slug (not topicSlug) as the filename — matches buildExerciseCdnPath in assessment.controller.ts
       const cdnPathBuilder = (langIso: string) => {
-        return `materials/${subject?.slug}/${chapter?.slug}/${topic?.slug}/topic_exercise/${langIso}/${topicSlug}.html`;
+        return `materials/${subject?.slug}/${chapter?.slug}/${topic?.slug}/topic_exercise/${langIso}/${exerciseSlug}.html`;
       };
+
+      // Solution CDN path builder — same pattern with _solution suffix
+      const solutionCdnPathBuilder = solutionHtmlContent
+        ? (langIso: string) => `materials/${subject?.slug}/${chapter?.slug}/${topic?.slug}/topic_exercise/${langIso}/${exerciseSlug}_solution.html`
+        : undefined;
+
+      const force = !!req.body.force;
 
       const { results, inputTokens, outputTokens } = await translateAssessmentHtml({
         htmlContent,
@@ -11490,9 +11577,13 @@ export async function autoTranslateExercise(req: Request, res: Response) {
         parentIdColumn: 'assesment_exercise_id',
         parentId: exerciseId,
         parentName: englishTrans.name || exercise.slug || 'exercise',
+        parentDescription: englishTrans.description || undefined,
         contextLabel: 'programming exercise',
         provider,
         userId,
+        solutionHtmlContent,
+        solutionCdnPathBuilder,
+        force,
       });
 
       totalInput += inputTokens;
@@ -11557,8 +11648,7 @@ export async function autoTranslateMiniProject(req: Request, res: Response) {
       let htmlContent: string;
       try {
         const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
-        const buffer = await downloadBunnyFile(cdnPath);
-        htmlContent = buffer.toString('utf-8');
+        htmlContent = await downloadBunnyFile(cdnPath);
       } catch (fetchErr: any) {
         allResults.push({ mini_project_id: projectId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
         continue;
@@ -11669,8 +11759,7 @@ export async function autoTranslateCapstone(req: Request, res: Response) {
       let htmlContent: string;
       try {
         const cdnPath = englishTrans.file_url.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
-        const buffer = await downloadBunnyFile(cdnPath);
-        htmlContent = buffer.toString('utf-8');
+        htmlContent = await downloadBunnyFile(cdnPath);
       } catch (fetchErr: any) {
         allResults.push({ capstone_project_id: projectId, status: 'error', error: `Could not fetch English HTML: ${fetchErr.message}` });
         continue;
