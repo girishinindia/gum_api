@@ -155,6 +155,13 @@ export async function softDelete(req: Request, res: Response) {
     .single();
   if (e) return err(res, e.message, 500);
 
+  // Cascade soft-delete to batch_translations
+  await supabase
+    .from('batch_translations')
+    .update({ deleted_at: now, is_active: false })
+    .eq('batch_id', id)
+    .is('deleted_at', null);
+
   await clearCache(old.course_id);
   logAdmin({ actorId: req.user!.id, action: 'course_batch_soft_deleted', targetType: 'course_batch', targetId: id, targetName: old.title || `batch:${id}`, ip: getClientIp(req) });
   return ok(res, data, 'Course batch moved to trash');
@@ -173,6 +180,13 @@ export async function restore(req: Request, res: Response) {
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Cascade restore to batch_translations (restore those deleted at the same time as the batch)
+  await supabase
+    .from('batch_translations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('batch_id', id)
+    .not('deleted_at', 'is', null);
 
   await clearCache(old.course_id);
   logAdmin({ actorId: req.user!.id, action: 'course_batch_restored', targetType: 'course_batch', targetId: id, targetName: old.title || `batch:${id}`, ip: getClientIp(req) });
