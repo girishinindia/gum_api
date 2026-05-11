@@ -214,19 +214,64 @@ export async function remove(req: Request, res: Response) {
   return ok(res, null, 'Batch translation permanently deleted');
 }
 
-// Coverage endpoint — returns which languages have translations for a given batch
+// Coverage endpoint — returns per-batch language coverage stats (X/Y format)
 export async function coverage(req: Request, res: Response) {
+  // Get all active languages that are for_material
+  const { data: activeLangs, error: langErr } = await supabase
+    .from('languages')
+    .select('id, name, iso_code, native_name')
+    .eq('is_active', true)
+    .eq('for_material', true)
+    .order('id');
+  if (langErr) return err(res, langErr.message, 500);
+  const totalLangs = activeLangs?.length || 0;
+
+  // Get all active batches (or a specific one)
+  let batchQ = supabase
+    .from(PARENT_TABLE)
+    .select('id, title, code')
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('id');
   const batchId = req.query.batch_id ? parseInt(req.query.batch_id as string) : undefined;
+  if (batchId) batchQ = batchQ.eq('id', batchId);
 
-  let q = supabase
+  const { data: batches, error: batchErr } = await batchQ;
+  if (batchErr) return err(res, batchErr.message, 500);
+
+  // Get all non-deleted translations
+  let transQ = supabase
     .from(TABLE)
-    .select('id, batch_id, language_id, title, languages(name, iso_code)')
+    .select('batch_id, language_id')
     .is('deleted_at', null);
+  if (batchId) transQ = transQ.eq('batch_id', batchId);
 
-  if (batchId) q = q.eq('batch_id', batchId);
+  const { data: translations, error: transErr } = await transQ;
+  if (transErr) return err(res, transErr.message, 500);
 
-  const { data, error: e } = await q;
-  if (e) return err(res, e.message, 500);
+  // Build translation map: batch_id → Set of language_ids
+  const transMap = new Map<number, Set<number>>();
+  for (const t of (translations || [])) {
+    if (!transMap.has(t.batch_id)) transMap.set(t.batch_id, new Set());
+    transMap.get(t.batch_id)!.add(t.language_id);
+  }
 
-  return ok(res, data || []);
+  const result = (batches || []).map(batch => {
+    const translatedLangIds = transMap.get(batch.id) || new Set();
+    const missingLangs = (activeLangs || []).filter(l => !translatedLangIds.has(l.id));
+    const translatedLangs = (activeLangs || []).filter(l => translatedLangIds.has(l.id));
+    return {
+      batch_id: batch.id,
+      batch_title: batch.title,
+      batch_code: batch.code,
+      total_languages: totalLangs,
+      translated_count: translatedLangs.length,
+      missing_count: missingLangs.length,
+      is_complete: missingLangs.length === 0,
+      translated_languages: translatedLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code })),
+      missing_languages: missingLangs.map(l => ({ id: l.id, name: l.name, iso_code: l.iso_code, native_name: l.native_name })),
+    };
+  });
+
+  return ok(res, result, 'Coverage retrieved');
 }
