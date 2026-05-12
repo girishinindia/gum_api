@@ -56,7 +56,7 @@ export async function sendSms(
   });
 
   const res = await fetch(`https://www.smsgatewayhub.com/api/mt/SendSMS?${params}`);
-  const data = await res.json();
+  const data = await res.json() as { ErrorCode?: string; ErrorMessage?: string };
   if (data.ErrorCode && data.ErrorCode !== '000') {
     throw new Error('SMS failed: ' + (data.ErrorMessage || JSON.stringify(data)));
   }

@@ -169,7 +169,7 @@ export async function orchestratePostPayment(params: PostPaymentParams): Promise
         const col = nameCol[earning.item_type];
         if (tbl && col) {
           const { data: item } = await supabase.from(tbl).select(col).eq('id', earning.item_id).single();
-          if (item) itemName = item[col];
+          if (item) itemName = (item as Record<string, any>)[col];
         }
         await notifyInstructorEarning(earning.instructor_id, earning.earning_amount, itemName, orderId);
       }

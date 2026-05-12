@@ -2,8 +2,8 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config';
 
 export const generateTokens = (userId: number) => ({
-  access_token: jwt.sign({ sub: userId, type: 'access' }, config.jwt.accessSecret, { expiresIn: config.jwt.accessExpiresIn }),
-  refresh_token: jwt.sign({ sub: userId, type: 'refresh' }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpiresIn }),
+  access_token: jwt.sign({ sub: userId, type: 'access' }, config.jwt.accessSecret, { expiresIn: config.jwt.accessExpiresIn as jwt.SignOptions['expiresIn'] }),
+  refresh_token: jwt.sign({ sub: userId, type: 'refresh' }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpiresIn as jwt.SignOptions['expiresIn'] }),
 });
 
 export const verifyAccess = (token: string) => {

@@ -167,7 +167,7 @@ export async function creditWallet(params: WalletCreditParams): Promise<WalletTr
   }
 
   // Update total_credited using raw SQL increment for accuracy
-  await supabase.rpc('increment_wallet_total_credited', { wallet_row_id: wallet.id, inc_amount: amount }).catch(() => {});
+  try { await supabase.rpc('increment_wallet_total_credited', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
 
   await clearWalletCaches(userId);
 
@@ -239,9 +239,9 @@ export async function debitWallet(params: WalletDebitParams): Promise<WalletTran
 
   // Increment debited/withdrawn aggregates
   if (sourceType === 'payout') {
-    await supabase.rpc('increment_wallet_total_withdrawn', { wallet_row_id: wallet.id, inc_amount: amount }).catch(() => {});
+    try { await supabase.rpc('increment_wallet_total_withdrawn', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
   } else {
-    await supabase.rpc('increment_wallet_total_debited', { wallet_row_id: wallet.id, inc_amount: amount }).catch(() => {});
+    try { await supabase.rpc('increment_wallet_total_debited', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
   }
 
   await clearWalletCaches(userId);

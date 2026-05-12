@@ -7,7 +7,10 @@ import cookieParser from 'cookie-parser';
 import hpp from 'hpp';
 import rateLimit from 'express-rate-limit';
 import { config } from './config';
+import { logger } from './utils/logger';
 import { activityLogger } from './middleware/activityLogger';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './config/swagger';
 
 import authRoutes from './modules/auth/auth.routes';
 import userRoutes from './modules/users/user.routes';
@@ -197,6 +200,13 @@ app.use(activityLogger);
 // ── Health Check ──
 app.get('/health', (_req, res) => res.json({ status: 'ok', app: config.appName, version: config.apiVersion, timestamp: new Date().toISOString() }));
 
+// ── API Docs (Swagger UI) ──
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'GrowUpMore API Docs',
+}));
+app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
+
 // ── API Routes ──
 const api = `/api/${config.apiVersion}`;
 app.use(`${api}/auth`,         authRoutes);
@@ -364,10 +374,20 @@ app.use(`${api}/wallet-transactions`,                      walletTransactionRout
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
 
 // ── Global Error Handler ──
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = err.status || 500;
   const message = config.env === 'production' ? 'Internal server error' : err.message;
-  if (status >= 500) console.error('[ERROR]', err);
+  if (status >= 500) {
+    logger.error({
+      err,
+      method: req.method,
+      url: req.originalUrl,
+      status,
+      userId: (req as any).user?.id,
+    }, `Unhandled ${status}: ${err.message}`);
+  } else {
+    logger.warn({ method: req.method, url: req.originalUrl, status }, err.message);
+  }
   res.status(status).json({ success: false, error: message });
 });
 

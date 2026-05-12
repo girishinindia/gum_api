@@ -59,8 +59,8 @@ export async function create(req: Request, res: Response) {
   body.created_by = req.user!.id;
 
   if (req.file) {
-    const uploadResult = await processAndUploadImage(req.file, 'chat/emojis');
-    if (uploadResult?.cdnUrl) body.image_url = uploadResult.cdnUrl;
+    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/emojis');
+    if (cdnUrl) body.image_url = cdnUrl;
   }
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
@@ -80,8 +80,8 @@ export async function update(req: Request, res: Response) {
   const body = parseBody(req);
 
   if (req.file) {
-    const uploadResult = await processAndUploadImage(req.file, 'chat/emojis');
-    if (uploadResult?.cdnUrl) body.image_url = uploadResult.cdnUrl;
+    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/emojis');
+    if (cdnUrl) body.image_url = cdnUrl;
   }
 
   const { data, error: e } = await supabase.from(TABLE).update(body).eq('id', id).select(FK_SELECT).single();

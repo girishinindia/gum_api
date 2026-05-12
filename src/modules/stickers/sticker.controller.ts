@@ -57,8 +57,8 @@ export async function create(req: Request, res: Response) {
 
   // Handle image upload via Bunny CDN
   if (req.file) {
-    const uploadResult = await processAndUploadImage(req.file, 'chat/stickers');
-    if (uploadResult?.cdnUrl) body.image_url = uploadResult.cdnUrl;
+    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/stickers');
+    if (cdnUrl) body.image_url = cdnUrl;
   }
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
@@ -78,8 +78,8 @@ export async function update(req: Request, res: Response) {
   const body = parseBody(req);
 
   if (req.file) {
-    const uploadResult = await processAndUploadImage(req.file, 'chat/stickers');
-    if (uploadResult?.cdnUrl) body.image_url = uploadResult.cdnUrl;
+    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/stickers');
+    if (cdnUrl) body.image_url = cdnUrl;
   }
 
   const { data, error: e } = await supabase.from(TABLE).update(body).eq('id', id).select(FK_SELECT).single();

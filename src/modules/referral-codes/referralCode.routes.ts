@@ -5,12 +5,10 @@ import { attachPermissions, requirePermission } from '../../middleware/rbac';
 
 const r = Router();
 
-// Public routes (read-only)
+r.use(authMiddleware, attachPermissions());
+
 r.get('/', ctrl.list);
 r.get('/:id', ctrl.getById);
-
-// Protected routes
-r.use(authMiddleware, attachPermissions());
 r.post('/', requirePermission('referral_code', 'create'), ctrl.create);
 r.patch('/:id/restore', requirePermission('referral_code', 'restore'), ctrl.restore);
 r.patch('/:id', requirePermission('referral_code', 'update'), ctrl.update);

@@ -95,12 +95,12 @@ export async function create(req: Request, res: Response) {
 
   // Handle file attachment if uploaded
   if (req.file) {
-    const uploadResult = await processAndUploadImage(req.file, `chat/attachments/${body.room_id}`);
-    if (uploadResult?.cdnUrl) {
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/attachments/${body.room_id}`);
+    if (cdnUrl) {
       await supabase.from(ATTACHMENT_TABLE).insert({
         message_id: data.id,
         file_name: req.file.originalname,
-        file_url: uploadResult.cdnUrl,
+        file_url: cdnUrl,
         file_size: req.file.size,
         file_type: req.file.mimetype,
         uploaded_by: req.user!.id,

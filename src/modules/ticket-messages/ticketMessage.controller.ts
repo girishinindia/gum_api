@@ -27,7 +27,7 @@ function parseBody(req: Request): any {
 
 // GET /ticket-messages
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at', order: 'asc' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });
 
   if (!req.query.ticket_id) return err(res, 'ticket_id is required', 400);
 

@@ -183,7 +183,7 @@ export async function acceptInvite(req: Request, res: Response) {
 
   const { data: invite } = await supabase
     .from(TABLE)
-    .select('id, room_id, invite_type, invited_user_id, status, max_uses, use_count, expires_at')
+    .select('id, room_id, invite_type, invited_user_id, status, max_uses, use_count, expires_at, created_by')
     .eq('invite_token', token)
     .single();
 

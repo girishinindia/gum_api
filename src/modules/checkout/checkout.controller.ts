@@ -405,7 +405,7 @@ export async function verifyPayment(req: Request, res: Response) {
 export async function handleWebhook(req: Request, res: Response) {
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || config.razorpay.keySecret;
+    const webhookSecret = config.razorpay.webhookSecret || config.razorpay.keySecret;
 
     // Verify webhook signature
     const rawBody = JSON.stringify(req.body);

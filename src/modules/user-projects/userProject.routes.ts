@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { validate } from '../../middleware/validate';
+import { createUserProjectSchema, updateUserProjectSchema } from './userProject.schema';
 import * as ctrl from './userProject.controller';
 
 const r = Router();
@@ -18,8 +20,8 @@ r.delete('/me/:id/permanent', ctrl.removeMy);
 // Admin
 r.get('/',                                 requirePermission('user_project', 'read'), ctrl.list);
 r.get('/:id',                              requirePermission('user_project', 'read'), ctrl.getById);
-r.post('/',                                requirePermission('user_project', 'create'), ctrl.create);
-r.patch('/:id',                            requirePermission('user_project', 'update'), ctrl.update);
+r.post('/',                                requirePermission('user_project', 'create'), validate(createUserProjectSchema), ctrl.create);
+r.patch('/:id',                            requirePermission('user_project', 'update'), validate(updateUserProjectSchema), ctrl.update);
 r.delete('/:id',                           requirePermission('user_project', 'soft_delete'), ctrl.softDelete);
 r.patch('/:id/restore',                    requirePermission('user_project', 'restore'), ctrl.restore);
 r.delete('/:id/permanent',                 requirePermission('user_project', 'delete'), ctrl.remove);

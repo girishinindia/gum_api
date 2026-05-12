@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { validate } from '../../middleware/validate';
+import { createUserSkillSchema, updateUserSkillSchema } from './userSkill.schema';
 import * as ctrl from './userSkill.controller';
 
 const r = Router();
@@ -18,8 +20,8 @@ r.delete('/me/:id/permanent', ctrl.removeMy);
 // Admin
 r.get('/',                                 requirePermission('user_skill', 'read'), ctrl.list);
 r.get('/:id',                              requirePermission('user_skill', 'read'), ctrl.getById);
-r.post('/',                                requirePermission('user_skill', 'create'), ctrl.create);
-r.patch('/:id',                            requirePermission('user_skill', 'update'), ctrl.update);
+r.post('/',                                requirePermission('user_skill', 'create'), validate(createUserSkillSchema), ctrl.create);
+r.patch('/:id',                            requirePermission('user_skill', 'update'), validate(updateUserSkillSchema), ctrl.update);
 r.delete('/:id',                           requirePermission('user_skill', 'soft_delete'), ctrl.softDelete);
 r.patch('/:id/restore',                    requirePermission('user_skill', 'restore'), ctrl.restore);
 r.delete('/:id/permanent',                 requirePermission('user_skill', 'delete'), ctrl.remove);

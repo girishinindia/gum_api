@@ -5,11 +5,11 @@ import { attachPermissions, requirePermission } from '../../middleware/rbac';
 
 const r = Router();
 
+r.use(authMiddleware, attachPermissions());
+
 r.get('/', ctrl.list);
 r.get('/user/:userId', ctrl.getByUser);
 r.get('/:id', ctrl.getById);
-
-r.use(authMiddleware, attachPermissions());
 r.post('/', requirePermission('cart_item', 'create'), ctrl.create);
 r.patch('/:id/restore', requirePermission('cart_item', 'restore'), ctrl.restore);
 r.patch('/:id', requirePermission('cart_item', 'update'), ctrl.update);

@@ -30,7 +30,7 @@ export const config = {
 
   upload: { maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '50') },
 
-  razorpay: { keyId: process.env.RAZORPAY_KEY_ID!, keySecret: process.env.RAZORPAY_KEY_SECRET!, currency: process.env.RAZORPAY_CURRENCY || 'INR' },
+  razorpay: { keyId: process.env.RAZORPAY_KEY_ID!, keySecret: process.env.RAZORPAY_KEY_SECRET!, webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '', currency: process.env.RAZORPAY_CURRENCY || 'INR' },
 
   socket: { pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL || '25000'), pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT || '20000') },
 

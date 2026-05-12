@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { validate } from '../../middleware/validate';
+import { createSpecializationSchema, updateSpecializationSchema } from './specialization.schema';
 import * as ctrl from './specialization.controller';
 
 const r = Router();
@@ -10,9 +12,9 @@ r.get('/:id',  ctrl.getById);
 
 // Protected — specific routes MUST come before generic /:id
 r.use(authMiddleware, attachPermissions());
-r.post('/',                requirePermission('specialization', 'create'),      ctrl.create);
+r.post('/',                requirePermission('specialization', 'create'),      validate(createSpecializationSchema), ctrl.create);
 r.patch('/:id/restore',   requirePermission('specialization', 'restore'),     ctrl.restore);
-r.patch('/:id',           requirePermission('specialization', 'update'),      ctrl.update);
+r.patch('/:id',           requirePermission('specialization', 'update'),      validate(updateSpecializationSchema), ctrl.update);
 r.delete('/:id/permanent', requirePermission('specialization', 'delete'),     ctrl.remove);
 r.delete('/:id',          requirePermission('specialization', 'soft_delete'), ctrl.softDelete);
 

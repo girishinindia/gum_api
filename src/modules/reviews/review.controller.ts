@@ -40,7 +40,7 @@ async function getItemName(itemType: string, itemId: number): Promise<string | n
   }
 
   const { data } = await supabase.from(cfg.table).select(`id, ${cfg.nameCol}`).eq('id', itemId).single();
-  return data ? data[cfg.nameCol] : null;
+  return data ? (data as Record<string, any>)[cfg.nameCol] : null;
 }
 
 // ── RECALCULATE RATINGS ──

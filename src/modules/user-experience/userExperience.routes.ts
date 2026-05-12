@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { validate } from '../../middleware/validate';
+import { createUserExperienceSchema, updateUserExperienceSchema } from './userExperience.schema';
 import * as ctrl from './userExperience.controller';
 
 const r = Router();
@@ -18,8 +20,8 @@ r.delete('/me/:id/permanent', ctrl.removeMy);
 // Admin — manage any user's experience
 r.get('/',                                 requirePermission('user_experience', 'read'), ctrl.list);
 r.get('/:id',                              requirePermission('user_experience', 'read'), ctrl.getById);
-r.post('/',                                requirePermission('user_experience', 'create'), ctrl.create);
-r.patch('/:id',                            requirePermission('user_experience', 'update'), ctrl.update);
+r.post('/',                                requirePermission('user_experience', 'create'), validate(createUserExperienceSchema), ctrl.create);
+r.patch('/:id',                            requirePermission('user_experience', 'update'), validate(updateUserExperienceSchema), ctrl.update);
 r.delete('/:id',                           requirePermission('user_experience', 'soft_delete'), ctrl.softDelete);
 r.patch('/:id/restore',                    requirePermission('user_experience', 'restore'), ctrl.restore);
 r.delete('/:id/permanent',                 requirePermission('user_experience', 'delete'), ctrl.remove);

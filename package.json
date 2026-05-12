@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "postinstall": "node scripts/patch-types.js"
   },
   "engines": {
     "node": ">=20"
