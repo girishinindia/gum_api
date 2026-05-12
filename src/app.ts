@@ -107,6 +107,8 @@ import couponCourseRoutes from './modules/coupon-courses/couponCourse.routes';
 import couponBundleRoutes from './modules/coupon-bundles/couponBundle.routes';
 import couponBatchRoutes from './modules/coupon-batches/couponBatch.routes';
 import couponWebinarRoutes from './modules/coupon-webinars/couponWebinar.routes';
+import instructorPromotionRoutes from './modules/instructor-promotions/instructorPromotion.routes';
+import instructorPromotionCourseRoutes from './modules/instructor-promotion-courses/instructorPromotionCourse.routes';
 
 const app = express();
 
@@ -235,6 +237,8 @@ app.use(`${api}/coupon-courses`,                        couponCourseRoutes);
 app.use(`${api}/coupon-bundles`,                        couponBundleRoutes);
 app.use(`${api}/coupon-batches`,                        couponBatchRoutes);
 app.use(`${api}/coupon-webinars`,                       couponWebinarRoutes);
+app.use(`${api}/instructor-promotions`,                  instructorPromotionRoutes);
+app.use(`${api}/instructor-promotion-courses`,           instructorPromotionCourseRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
