@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'reviews:all';
 const clearCache = async () => { await redis.del(CACHE_KEY); };
@@ -128,7 +129,7 @@ export async function list(req: Request, res: Response) {
 
   // Search across title and review_text
   if (search) {
-    q = q.or(`title.ilike.%${search}%,review_text.ilike.%${search}%`);
+    q = applySearch(q, search, { ilike: ['title', 'review_text'] });
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

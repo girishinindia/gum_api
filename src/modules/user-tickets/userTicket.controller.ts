@@ -3,6 +3,7 @@ import { supabase } from '../../config/supabase';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { sendNotification } from '../../services/notification.service';
+import { applySearch } from '../../utils/search';
 
 const TICKET_TABLE = 'support_tickets';
 const MESSAGE_TABLE = 'ticket_messages';
@@ -95,7 +96,7 @@ export async function listMyTickets(req: Request, res: Response) {
   // Ownership scope — user can only see their own tickets
   q = q.eq('user_id', userId).is('deleted_at', null);
 
-  if (search) q = q.or(`subject.ilike.%${search}%,ticket_number.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['subject', 'ticket_number', 'description'] });
 
   if (req.query.ticket_status) q = q.eq('ticket_status', req.query.ticket_status as string);
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));

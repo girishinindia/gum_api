@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generatePendingId } from '../../utils/helpers';
 import { config } from '../../config';
 import { sendNotification } from '../../services/notification.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'chat_invites';
 const ROOM_TABLE = 'chat_rooms';
@@ -38,7 +39,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.or(`invite_token.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['invite_token'] });
   if (req.query.room_id) q = q.eq('room_id', parseInt(req.query.room_id as string));
   if (req.query.status) q = q.eq('status', req.query.status as string);
   if (req.query.invite_type) q = q.eq('invite_type', req.query.invite_type as string);

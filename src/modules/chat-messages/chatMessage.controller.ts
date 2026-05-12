@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage } from '../../services/storage.service';
 import { emitNewMessage, emitMessageEdited, emitMessageDeleted, emitMessagePinToggled } from '../../socket/emitter';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'chat_messages';
 const ATTACHMENT_TABLE = 'chat_attachments';
@@ -44,7 +45,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.ilike('content', `%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.chat_messages);
   if (req.query.room_id) q = q.eq('room_id', parseInt(req.query.room_id as string));
   if (req.query.sender_id) q = q.eq('sender_id', parseInt(req.query.sender_id as string));
   if (req.query.message_type) q = q.eq('message_type', req.query.message_type as string);

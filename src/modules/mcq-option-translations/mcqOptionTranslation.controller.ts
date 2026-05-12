@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'mcq_option_translations:all';
 const clearCache = async (optionId?: number) => {
@@ -34,7 +35,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('mcq_option_translations').select('*, mcq_options(mcq_question_id, is_correct, display_order), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.ilike('option_text', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['option_text'] });
   if (req.query.mcq_option_id) q = q.eq('mcq_option_id', parseInt(req.query.mcq_option_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

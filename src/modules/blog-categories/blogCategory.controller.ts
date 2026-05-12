@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'blog_categories';
 const CACHE_KEY = 'blog_categories:all';
@@ -29,7 +30,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select('*', { count: 'exact' });
 
-  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'description'] });
   if (req.query.parent_id) q = q.eq('parent_id', parseInt(req.query.parent_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);

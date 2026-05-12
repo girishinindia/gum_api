@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'cart_items';
 const CACHE_KEY = 'cart_items:all';
@@ -32,7 +33,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.ilike('notes', `%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['notes'] });
     if (req.query.user_id) q = q.eq('user_id', req.query.user_id as string);
     if (req.query.item_type) q = q.eq('item_type', req.query.item_type as string);
 

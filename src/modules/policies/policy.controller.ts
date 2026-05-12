@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'policies';
 const CACHE_KEY = 'policies:all';
@@ -32,7 +33,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%,slug.ilike.%${search}%,version.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['title', 'slug', 'version'] });
   if (req.query.policy_type_id) q = q.eq('policy_type_id', parseInt(req.query.policy_type_id as string));
   if (req.query.policy_status) q = q.eq('policy_status', req.query.policy_status as string);
   if (req.query.is_current === 'true') q = q.eq('is_current', true);

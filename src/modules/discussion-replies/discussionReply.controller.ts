@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'discussion_replies';
 const CACHE_KEY = 'discussion_replies:all';
@@ -36,7 +37,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.ilike('body', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['body'] });
   if (req.query.thread_id) q = q.eq('thread_id', parseInt(req.query.thread_id as string));
   if (req.query.parent_reply_id) q = q.eq('parent_reply_id', parseInt(req.query.parent_reply_id as string));
   if (req.query.author_id) q = q.eq('author_id', parseInt(req.query.author_id as string));

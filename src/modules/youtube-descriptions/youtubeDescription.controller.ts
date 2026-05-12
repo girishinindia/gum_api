@@ -4,6 +4,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 /**
  * List youtube descriptions with optional filters.
@@ -37,7 +38,7 @@ export async function list(req: Request, res: Response) {
   }
 
   if (search) {
-    q = q.or(`video_title.ilike.%${search}%,description.ilike.%${search}%`);
+    q = applySearch(q, search, { ilike: ['video_title', 'description'] });
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

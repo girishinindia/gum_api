@@ -8,6 +8,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { config } from '../../config';
 import { deleteImage } from '../../services/storage.service';
+import { applySearch } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -39,7 +40,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('one_word_questions').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

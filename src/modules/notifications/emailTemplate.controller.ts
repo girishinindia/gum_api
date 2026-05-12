@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'email_templates';
 const CACHE_KEY = 'email_templates:all';
@@ -34,7 +35,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select('*', { count: 'exact' });
 
-    if (search) q = q.or(`template_key.ilike.%${search}%,template_name.ilike.%${search}%,subject.ilike.%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['template_key', 'template_name', 'subject'] });
     if (req.query.notification_type) q = q.eq('notification_type', String(req.query.notification_type));
     if (req.query.is_active === 'true') q = q.eq('is_active', true);
     if (req.query.is_active === 'false') q = q.eq('is_active', false);

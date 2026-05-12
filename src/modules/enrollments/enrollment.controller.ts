@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'enrollments';
 const CACHE_KEY = 'enrollments:all';
@@ -34,7 +35,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.ilike('notes', `%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.enrollments);
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.item_type) q = q.eq('item_type', req.query.item_type as string);
   if (req.query.enrollment_status) q = q.eq('enrollment_status', req.query.enrollment_status as string);

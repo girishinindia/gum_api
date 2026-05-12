@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'quick_replies';
 const CACHE_KEY = 'quick_replies:all';
@@ -29,7 +30,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.or(`title.ilike.%${search}%,shortcut.ilike.%${search}%,content.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['title', 'shortcut', 'content'] });
   if (req.query.scope) q = q.eq('scope', req.query.scope as string);
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
 

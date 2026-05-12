@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { createUserDocumentSchema, updateUserDocumentSchema } from './userDocument.schema';
+import { applySearch } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -31,7 +32,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.document_type_id) q = q.eq('document_type_id', Number(req.query.document_type_id));
   if (req.query.document_id) q = q.eq('document_id', Number(req.query.document_id));
   if (req.query.verification_status) q = q.eq('verification_status', req.query.verification_status);
-  if (search) q = q.or(`document_number.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['document_number'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
@@ -137,7 +138,7 @@ export async function listMy(req: Request, res: Response) {
   else q = q.is('deleted_at', null);
   if (req.query.document_type_id) q = q.eq('document_type_id', Number(req.query.document_type_id));
   if (req.query.document_id) q = q.eq('document_id', Number(req.query.document_id));
-  if (search) q = q.or(`document_number.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['document_number'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);

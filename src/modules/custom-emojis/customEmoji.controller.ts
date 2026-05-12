@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage } from '../../services/storage.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'custom_emojis';
 const CACHE_KEY = 'custom_emojis:all';
@@ -31,7 +32,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.or(`name.ilike.%${search}%,shortcode.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'shortcode'] });
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
   if (req.query.is_animated !== undefined) q = q.eq('is_animated', req.query.is_animated === 'true');
 

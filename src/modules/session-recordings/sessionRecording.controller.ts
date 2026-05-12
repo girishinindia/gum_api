@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'session_recordings';
 const CACHE_KEY = 'session_recordings:all';
@@ -35,7 +36,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['title'] });
   if (req.query.session_id) q = q.eq('session_id', parseInt(req.query.session_id as string));
   if (req.query.recording_status) q = q.eq('recording_status', req.query.recording_status as string);
   if (req.query.bunny_video_id) q = q.eq('bunny_video_id', req.query.bunny_video_id as string);

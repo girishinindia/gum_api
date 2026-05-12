@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { reverseTransaction } from '../../services/wallet.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'wallet_transactions';
 const CACHE_KEY = 'wallet_transactions:all';
@@ -24,7 +25,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.ilike('description', `%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['description'] });
     if (req.query.wallet_id) q = q.eq('wallet_id', parseInt(req.query.wallet_id as string));
     if (req.query.transaction_type) q = q.eq('transaction_type', req.query.transaction_type as string);
     if (req.query.source_type) q = q.eq('source_type', req.query.source_type as string);

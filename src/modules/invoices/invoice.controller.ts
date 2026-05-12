@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'invoices';
 const CACHE_KEY = 'invoices:all';
@@ -39,7 +40,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`invoice_number.ilike.%${search}%,billing_name.ilike.%${search}%,billing_email.ilike.%${search}%,notes.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.invoices);
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.order_id) q = q.eq('order_id', parseInt(req.query.order_id as string));
   if (req.query.invoice_status) q = q.eq('invoice_status', req.query.invoice_status as string);

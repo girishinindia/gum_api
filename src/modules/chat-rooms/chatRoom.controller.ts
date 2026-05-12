@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generatePendingId } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'chat_rooms';
 const MEMBER_TABLE = 'chat_room_members';
@@ -50,7 +51,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%,invite_code.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.chat_rooms);
   if (req.query.room_type) q = q.eq('room_type', req.query.room_type as string);
   if (req.query.is_active !== undefined) q = q.eq('is_active', req.query.is_active === 'true');
   if (req.query.batch_id) q = q.eq('batch_id', parseInt(req.query.batch_id as string));

@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'ow_synonym_translations:all';
 const clearCache = async (synonymId?: number) => {
@@ -28,7 +29,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('one_word_synonym_translations').select('*, one_word_synonyms(one_word_question_id, display_order), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.ilike('synonym_text', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['synonym_text'] });
   if (req.query.one_word_synonym_id) q = q.eq('one_word_synonym_id', parseInt(req.query.one_word_synonym_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

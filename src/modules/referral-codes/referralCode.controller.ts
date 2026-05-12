@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'referral_codes';
 const CACHE_KEY = 'referral_codes:all';
@@ -44,7 +45,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`referral_code.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['referral_code'] });
   if (req.query.student_id) q = q.eq('student_id', parseInt(req.query.student_id as string));
   if (req.query.referrer_reward_type) q = q.eq('referrer_reward_type', req.query.referrer_reward_type as string);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

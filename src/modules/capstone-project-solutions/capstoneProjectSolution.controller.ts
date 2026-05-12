@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { config } from '../../config';
 import { uploadVideoToStream, findOrCreateCollection, deleteVideoFromStream } from '../../services/video.service';
 import { processAndUploadImage } from '../../services/storage.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'assesment_capstone_projects_solution';
 const PARENT_TABLE = 'assesment_capstone_projects';
@@ -49,7 +50,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.ilike('video_title', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['video_title'] });
   if (req.query.capstone_project_id) q = q.eq('capstone_project_id', parseInt(req.query.capstone_project_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);

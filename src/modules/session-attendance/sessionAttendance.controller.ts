@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'session_attendance';
 const CACHE_KEY = 'session_attendance:all';
@@ -33,7 +34,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`feedback.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['feedback'] });
   if (req.query.session_id) q = q.eq('session_id', parseInt(req.query.session_id as string));
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.attendance_status) q = q.eq('attendance_status', req.query.attendance_status as string);

@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'instructor_promotions:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -37,7 +38,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('instructor_promotions').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`promotion_name.ilike.%${search}%,promo_code.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['promotion_name', 'promo_code', 'description'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

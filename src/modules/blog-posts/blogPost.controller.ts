@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage } from '../../services/storage.service';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'blog_posts';
 const CACHE_KEY = 'blog_posts:all';
@@ -40,7 +41,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%,excerpt.ilike.%${search}%,content.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.blog_posts);
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
   if (req.query.author_id) q = q.eq('author_id', parseInt(req.query.author_id as string));
   if (req.query.author_type) q = q.eq('author_type', req.query.author_type as string);

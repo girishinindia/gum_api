@@ -8,6 +8,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { deleteFromBunny, uploadToBunny, purgeBunnyCdn } from '../../config/bunny';
 import { config } from '../../config';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'assesment_exercise';
 const TRANS_TABLE = 'assesment_exercise_translations';
@@ -37,7 +38,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
   // Search by translation name
-  if (search) q = q.ilike('slug', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['slug'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true' || req.query.status === 'deleted') {

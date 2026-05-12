@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'webinars';
 const CACHE_KEY = 'webinars:all';
@@ -37,7 +38,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['title', 'code'] });
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
   if (req.query.webinar_status) q = q.eq('webinar_status', req.query.webinar_status as string);

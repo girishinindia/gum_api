@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'ticket_categories';
 const CACHE_KEY = 'ticket_categories:all';
@@ -25,7 +26,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select('*', { count: 'exact' });
 
-  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'description'] });
 
   if (req.query.show_deleted === 'true') {
     q = q.not('deleted_at', 'is', null);

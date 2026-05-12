@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'branches:all';
 const clearCache = async (countryId?: number) => {
@@ -32,7 +33,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('branches').select('*, countries(name, iso2), states(name, state_code), cities(name), users!branches_branch_manager_id_fkey(full_name, email)', { count: 'exact' });
 
   // Search
-  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,email.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'code', 'email'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

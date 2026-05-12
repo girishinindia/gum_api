@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'skills:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -31,7 +32,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('skills').select('*', { count: 'exact' });
 
   // Search
-  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'description'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

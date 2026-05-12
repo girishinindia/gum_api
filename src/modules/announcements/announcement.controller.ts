@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { dispatchAnnouncement, getReadStats } from '../../services/announcement.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'announcements';
 const CACHE_KEY = 'announcements:all';
@@ -40,7 +41,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['title', 'content'] });
     if (req.query.status) q = q.eq('status', req.query.status as string);
     if (req.query.announcement_type) q = q.eq('announcement_type', req.query.announcement_type as string);
     if (req.query.target_scope) q = q.eq('target_scope', req.query.target_scope as string);

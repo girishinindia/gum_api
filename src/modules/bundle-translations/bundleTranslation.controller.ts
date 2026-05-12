@@ -45,7 +45,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('bundle_translations').select('*, bundles(code, slug, name), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%,short_description.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = q.textSearch('search_vector', search, { type: 'plain', config: 'simple' });
   if (req.query.bundle_id) q = q.eq('bundle_id', parseInt(req.query.bundle_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

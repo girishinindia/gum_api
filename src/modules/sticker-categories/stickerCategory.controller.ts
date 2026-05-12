@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'sticker_categories';
 const CACHE_KEY = 'sticker_categories:all';
@@ -27,7 +28,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
 
-  if (search) q = q.or(`name.ilike.%${search}%,slug.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'slug'] });
   if (req.query.is_active !== undefined) q = q.eq('is_active', req.query.is_active === 'true');
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

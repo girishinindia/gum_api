@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'blog_reviews';
 const CACHE_KEY = 'blog_reviews:all';
@@ -67,7 +68,7 @@ export async function list(req: Request, res: Response) {
   }
 
   if (search) {
-    q = q.or(`title.ilike.%${search}%,review_text.ilike.%${search}%`);
+    q = applySearch(q, search, { ilike: ['title', 'review_text'] });
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

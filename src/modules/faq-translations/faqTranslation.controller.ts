@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'faq_translations';
 const PARENT_TABLE = 'faqs';
@@ -33,7 +34,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`question.ilike.%${search}%,answer.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['question', 'answer'] });
   if (req.query.faq_id) q = q.eq('faq_id', parseInt(req.query.faq_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const CACHE_KEY = 'countries:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -38,7 +39,7 @@ export async function list(req: Request, res: Response) {
   }
 
   // Search
-  if (search) q = q.or(`name.ilike.%${search}%,iso2.ilike.%${search}%,iso3.ilike.%${search}%,nationality.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.countries);
 
   // Filter by status
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

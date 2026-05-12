@@ -8,6 +8,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -40,7 +41,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('courses').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%,name.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.courses);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

@@ -10,6 +10,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
 import { archiveYoutubeUrls, deleteArchiveForSubTopic } from '../../services/youtubeArchive.service';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -39,7 +40,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('sub_topics').select('*, topics(slug, chapter_id, chapters(subject_id))', { count: 'exact' });
 
   // Search
-  if (search) q = q.ilike('slug', `%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.sub_topics);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

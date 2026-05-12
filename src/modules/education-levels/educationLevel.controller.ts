@@ -7,6 +7,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'education_levels:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -27,7 +28,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('education_levels').select('*', { count: 'exact' });
 
   // Search
-  if (search) q = q.or(`name.ilike.%${search}%,abbreviation.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'abbreviation'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

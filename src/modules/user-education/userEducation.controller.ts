@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { createUserEducationSchema, updateUserEducationSchema } from './userEducation.schema';
+import { applySearch } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -39,7 +40,7 @@ export async function list(req: Request, res: Response) {
 
   // Search
   if (search) {
-    q = q.or(`institution_name.ilike.%${search}%,field_of_study.ilike.%${search}%,board_or_university.ilike.%${search}%,specialization.ilike.%${search}%`);
+    q = applySearch(q, search, { ilike: ['institution_name', 'field_of_study', 'board_or_university', 'specialization'] });
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -205,7 +206,7 @@ export async function listMyEducation(req: Request, res: Response) {
   }
   if (req.query.education_level_id) q = q.eq('education_level_id', Number(req.query.education_level_id));
   if (search) {
-    q = q.or(`institution_name.ilike.%${search}%,field_of_study.ilike.%${search}%,board_or_university.ilike.%${search}%,specialization.ilike.%${search}%`);
+    q = applySearch(q, search, { ilike: ['institution_name', 'field_of_study', 'board_or_university', 'specialization'] });
   }
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 

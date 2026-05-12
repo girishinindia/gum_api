@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const CACHE_KEY = 'departments:all';
 const clearCache = async () => {
@@ -33,7 +34,7 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('departments').select(selectFields, { count: 'exact' });
 
   // Search
-  if (search) q = q.or(`name.ilike.%${search}%,code.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.departments);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

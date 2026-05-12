@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'topic_translations:all';
 const clearCache = async (topicId?: number) => {
@@ -34,7 +35,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('topic_translations').select('*, topics(slug, chapter_id, chapters(slug, subject_id)), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.or(`name.ilike.%${search}%,short_intro.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'short_intro'] });
   if (req.query.topic_id) q = q.eq('topic_id', parseInt(req.query.topic_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

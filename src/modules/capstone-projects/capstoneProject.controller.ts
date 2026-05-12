@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { config } from '../../config';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'assesment_capstone_projects';
 const TRANS_TABLE = 'assesment_capstone_projects_translations';
@@ -68,7 +69,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.ilike('slug', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['slug'] });
 
   if (req.query.show_deleted === 'true' || req.query.status === 'deleted') {
     q = q.not('deleted_at', 'is', null);

@@ -9,6 +9,7 @@ import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
 import { buildCourseFolderName } from '../../utils/courseParser';
 import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'subjects:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -29,7 +30,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('subjects').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`code.ilike.%${search}%,slug.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

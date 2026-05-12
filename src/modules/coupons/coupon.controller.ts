@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const TABLE = 'coupons';
 const CACHE_KEY = 'coupons:all';
@@ -39,7 +40,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`coupon_code.ilike.%${search}%,title.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['coupon_code', 'title'] });
   if (req.query.discount_type) q = q.eq('discount_type', req.query.discount_type as string);
   if (req.query.applicable_to) q = q.eq('applicable_to', req.query.applicable_to as string);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

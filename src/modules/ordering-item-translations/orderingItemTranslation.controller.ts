@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'ordering_item_translations:all';
 const clearCache = async (itemId?: number) => {
@@ -28,7 +29,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('ordering_item_translations').select('*, ordering_items(correct_position, ordering_question_id), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.ilike('item_text', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['item_text'] });
   if (req.query.ordering_item_id) q = q.eq('ordering_item_id', parseInt(req.query.ordering_item_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

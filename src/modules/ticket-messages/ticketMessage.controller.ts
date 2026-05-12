@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'ticket_messages';
 const CACHE_KEY = 'ticket_messages:all';
@@ -34,7 +35,7 @@ export async function list(req: Request, res: Response) {
 
   q = q.eq('ticket_id', parseInt(req.query.ticket_id as string));
 
-  if (search) q = q.ilike('message', `%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['message'] });
 
   if (req.query.sender_type) q = q.eq('sender_type', req.query.sender_type as string);
   if (req.query.is_internal === 'true') q = q.eq('is_internal', true);

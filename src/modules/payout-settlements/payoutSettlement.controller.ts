@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { markEarningsAsPaid } from '../../services/instructorEarning.service';
 import { notifyPayoutCompleted } from '../../services/notification.service';
 import { debitWallet } from '../../services/wallet.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'payout_settlements';
 const CACHE_KEY = 'payout_settlements:all';
@@ -46,7 +47,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.or(`settlement_number.ilike.%${search}%,transaction_reference.ilike.%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['settlement_number', 'transaction_reference'] });
     if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
     if (req.query.payout_request_id) q = q.eq('payout_request_id', parseInt(req.query.payout_request_id as string));
     if (req.query.settlement_status) q = q.eq('settlement_status', req.query.settlement_status as string);

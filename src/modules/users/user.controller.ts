@@ -9,6 +9,7 @@ import { logAdmin, logAuth, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -30,7 +31,7 @@ export async function list(req: Request, res: Response) {
   }
 
   // Search
-  if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%,mobile.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, SEARCH_CONFIGS.users);
 
   // Filters
   if (req.query.status) q = q.eq('status', req.query.status as string);

@@ -7,6 +7,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const CACHE_KEY = 'issued_certificates:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -59,7 +60,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('issued_certificates').select('*', { count: 'exact' });
 
-  if (search) q = q.or(`certificate_number.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['certificate_number'] });
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

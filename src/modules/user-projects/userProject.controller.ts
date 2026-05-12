@@ -5,6 +5,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { createUserProjectSchema, updateUserProjectSchema } from './userProject.schema';
+import { applySearch } from '../../utils/search';
 
 const SELECT_WITH_JOINS = `
   *,
@@ -21,7 +22,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.user_id) q = q.eq('user_id', Number(req.query.user_id));
   if (req.query.project_type) q = q.eq('project_type', req.query.project_type);
   if (req.query.project_status) q = q.eq('project_status', req.query.project_status);
-  if (search) q = q.or(`project_title.ilike.%${search}%,project_code.ilike.%${search}%,organization_name.ilike.%${search}%,technologies_used.ilike.%${search}%,role_in_project.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['project_title', 'project_code', 'organization_name', 'technologies_used', 'role_in_project'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
@@ -99,7 +100,7 @@ export async function listMy(req: Request, res: Response) {
   else q = q.is('deleted_at', null);
   if (req.query.project_type) q = q.eq('project_type', req.query.project_type);
   if (req.query.project_status) q = q.eq('project_status', req.query.project_status);
-  if (search) q = q.or(`project_title.ilike.%${search}%,project_code.ilike.%${search}%,organization_name.ilike.%${search}%,technologies_used.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['project_title', 'project_code', 'organization_name', 'technologies_used'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);

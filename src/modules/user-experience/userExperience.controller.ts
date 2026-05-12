@@ -5,6 +5,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { createUserExperienceSchema, updateUserExperienceSchema } from './userExperience.schema';
+import { applySearch } from '../../utils/search';
 
 const SELECT_WITH_JOINS = `
   *,
@@ -22,7 +23,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.user_id) q = q.eq('user_id', Number(req.query.user_id));
   if (req.query.employment_type) q = q.eq('employment_type', req.query.employment_type);
   if (req.query.work_mode) q = q.eq('work_mode', req.query.work_mode);
-  if (search) q = q.or(`company_name.ilike.%${search}%,job_title.ilike.%${search}%,department.ilike.%${search}%,location.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['company_name', 'job_title', 'department', 'location'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
@@ -98,7 +99,7 @@ export async function listMy(req: Request, res: Response) {
   let q = supabase.from('user_experience').select(SELECT_WITH_JOINS, { count: 'exact' }).eq('user_id', userId);
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
-  if (search) q = q.or(`company_name.ilike.%${search}%,job_title.ilike.%${search}%,department.ilike.%${search}%,location.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['company_name', 'job_title', 'department', 'location'] });
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);

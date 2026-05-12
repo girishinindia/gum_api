@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'course_batches';
 const CACHE_KEY = 'course_batches:all';
@@ -42,7 +43,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`title.ilike.%${search}%,code.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['title', 'code'] });
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
   if (req.query.batch_owner) q = q.eq('batch_owner', req.query.batch_owner as string);

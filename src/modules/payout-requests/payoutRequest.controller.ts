@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { notifyPayoutApproved, notifyPayoutRejected } from '../../services/notification.service';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'payout_requests';
 const CACHE_KEY = 'payout_requests:all';
@@ -44,7 +45,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.or(`request_number.ilike.%${search}%,review_notes.ilike.%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['request_number', 'review_notes'] });
     if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
     if (req.query.request_status) q = q.eq('request_status', req.query.request_status as string);
     if (req.query.payment_method) q = q.eq('payment_method', req.query.payment_method as string);

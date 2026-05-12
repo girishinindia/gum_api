@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'notifications';
 const CACHE_KEY = 'notifications:all';
@@ -37,7 +38,7 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.or(`title.ilike.%${search}%,message.ilike.%${search}%`);
+    if (search) q = applySearch(q, search, { ilike: ['title', 'message'] });
     if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
     if (req.query.notification_type) q = q.eq('notification_type', req.query.notification_type as string);
     if (req.query.channel) q = q.eq('channel', req.query.channel as string);

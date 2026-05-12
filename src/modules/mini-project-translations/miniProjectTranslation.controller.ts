@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { config } from '../../config';
+import { applySearch } from '../../utils/search';
 
 const TABLE = 'assesment_mini_projects_translations';
 const PARENT_TABLE = 'assesment_mini_projects';
@@ -56,7 +57,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+  if (search) q = applySearch(q, search, { ilike: ['name', 'description'] });
   if (req.query.mini_project_id) q = q.eq('mini_project_id', parseInt(req.query.mini_project_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
