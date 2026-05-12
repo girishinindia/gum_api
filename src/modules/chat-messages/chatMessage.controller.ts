@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage } from '../../services/storage.service';
+import { emitNewMessage, emitMessageEdited, emitMessageDeleted, emitMessagePinToggled } from '../../socket/emitter';
 
 const TABLE = 'chat_messages';
 const ATTACHMENT_TABLE = 'chat_attachments';
@@ -107,6 +108,7 @@ export async function create(req: Request, res: Response) {
   }
 
   clearCache();
+  emitNewMessage(body.room_id, data);
   return ok(res, data, 'Message sent', 201);
 }
 
@@ -124,6 +126,7 @@ export async function update(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   clearCache();
+  emitMessageEdited(data.room_id, data);
   return ok(res, data, 'Message updated');
 }
 
@@ -138,6 +141,7 @@ export async function togglePin(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   clearCache();
+  emitMessagePinToggled(msg.room_id, id, newPinned);
   logAdmin({ actorId: req.user!.id, action: newPinned ? 'chat_message_pinned' : 'chat_message_unpinned', targetType: 'chat_message', targetId: id, targetName: (msg.content || '').substring(0, 50), ip: getClientIp(req) });
   return ok(res, data, newPinned ? 'Message pinned' : 'Message unpinned');
 }
@@ -145,7 +149,7 @@ export async function togglePin(req: Request, res: Response) {
 // ── DELETE /chat-messages/:id (soft) ──
 export async function softDelete(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('id, content, deleted_at').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('id, room_id, content, deleted_at').eq('id', id).single();
   if (!old) return err(res, 'Message not found', 404);
   if (old.deleted_at) return err(res, 'Already deleted', 400);
 
@@ -153,6 +157,7 @@ export async function softDelete(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
 
   clearCache();
+  emitMessageDeleted(old.room_id, id);
   logAdmin({ actorId: req.user!.id, action: 'chat_message_soft_deleted', targetType: 'chat_message', targetId: id, targetName: (old.content || '').substring(0, 50), ip: getClientIp(req) });
   return ok(res, data, 'Message deleted');
 }

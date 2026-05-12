@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
+import { emitReadReceiptUpdated } from '../../socket/emitter';
 
 const TABLE = 'chat_read_receipts';
 
@@ -41,6 +42,7 @@ export async function markRead(req: Request, res: Response) {
     .single();
 
   if (e) return err(res, e.message, 500);
+  emitReadReceiptUpdated(parseInt(room_id), userId, parseInt(last_read_message_id), data.read_at);
   return ok(res, data, 'Read receipt updated');
 }
 

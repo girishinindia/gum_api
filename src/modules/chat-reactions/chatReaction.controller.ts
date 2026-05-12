@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
+import { emitReactionAdded, emitReactionRemoved } from '../../socket/emitter';
 
 const TABLE = 'chat_message_reactions';
 const FK_SELECT = '*, users!chat_message_reactions_user_id_fkey(id, first_name, last_name, email)';
@@ -26,6 +27,13 @@ export async function toggleReaction(req: Request, res: Response) {
   if (!message_id) return err(res, 'Message ID is required', 400);
   if (!emoji?.trim()) return err(res, 'Emoji is required', 400);
 
+  // Look up room_id for socket emission
+  const { data: msg } = await supabase
+    .from('chat_messages')
+    .select('room_id')
+    .eq('id', parseInt(message_id))
+    .single();
+
   // Check if reaction already exists
   const { data: existing } = await supabase
     .from(TABLE)
@@ -38,6 +46,7 @@ export async function toggleReaction(req: Request, res: Response) {
   if (existing) {
     // Remove existing reaction (toggle off)
     await supabase.from(TABLE).delete().eq('id', existing.id);
+    if (msg) emitReactionRemoved(msg.room_id, parseInt(message_id), userId, emoji.trim());
     return ok(res, null, 'Reaction removed');
   }
 
@@ -49,6 +58,7 @@ export async function toggleReaction(req: Request, res: Response) {
     .single();
 
   if (e) return err(res, e.message, 500);
+  if (msg) emitReactionAdded(msg.room_id, parseInt(message_id), userId, emoji.trim(), data);
   return ok(res, data, 'Reaction added', 201);
 }
 

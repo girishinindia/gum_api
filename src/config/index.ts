@@ -32,5 +32,7 @@ export const config = {
 
   razorpay: { keyId: process.env.RAZORPAY_KEY_ID!, keySecret: process.env.RAZORPAY_KEY_SECRET!, currency: process.env.RAZORPAY_CURRENCY || 'INR' },
 
+  socket: { pingInterval: parseInt(process.env.SOCKET_PING_INTERVAL || '25000'), pingTimeout: parseInt(process.env.SOCKET_PING_TIMEOUT || '20000') },
+
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 } as const;

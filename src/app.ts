@@ -129,6 +129,7 @@ import reviewHelpfulnessRoutes from './modules/review-helpfulness/reviewHelpfuln
 import notificationRoutes from './modules/notifications/notification.routes';
 import emailTemplateRoutes from './modules/notifications/emailTemplate.routes';
 import notificationPreferenceRoutes from './modules/notifications/notificationPreference.routes';
+import cronRoutes from './cron/cronRoutes';
 import instructorEarningRoutes from './modules/instructor-earnings/instructorEarning.routes';
 import payoutRequestRoutes from './modules/payout-requests/payoutRequest.routes';
 import payoutSettlementRoutes from './modules/payout-settlements/payoutSettlement.routes';
@@ -318,6 +319,7 @@ app.use(`${api}/review-helpfulness`,                       reviewHelpfulnessRout
 app.use(`${api}/notifications`,                            notificationRoutes);
 app.use(`${api}/email-templates`,                          emailTemplateRoutes);
 app.use(`${api}/notification-preferences`,                 notificationPreferenceRoutes);
+app.use(`${api}/cron`,                                     cronRoutes);
 app.use(`${api}/instructor-earnings`,                      instructorEarningRoutes);
 app.use(`${api}/payout-requests`,                          payoutRequestRoutes);
 app.use(`${api}/payout-settlements`,                       payoutSettlementRoutes);
