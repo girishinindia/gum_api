@@ -29,4 +29,8 @@ export const config = {
   cors: { origins: (process.env.CORS_ORIGINS || '*').split(',').map((s: string) => s.trim()) },
 
   upload: { maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '50') },
+
+  razorpay: { keyId: process.env.RAZORPAY_KEY_ID!, keySecret: process.env.RAZORPAY_KEY_SECRET!, currency: process.env.RAZORPAY_CURRENCY || 'INR' },
+
+  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 } as const;

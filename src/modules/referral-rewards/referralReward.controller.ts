@@ -5,6 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { creditWallet } from '../../services/wallet.service';
 
 const TABLE = 'referral_rewards';
 const CACHE_KEY = 'referral_rewards:all';
@@ -86,6 +87,19 @@ export async function update(req: Request, res: Response) {
     const { data: codeData } = await supabase.from('referral_codes').select('total_earnings').eq('id', old.referral_code_id).single();
     if (codeData) {
       await supabase.from('referral_codes').update({ total_earnings: (parseFloat(codeData.total_earnings) || 0) + rewardAmount }).eq('id', old.referral_code_id);
+    }
+    // Credit the referrer's wallet
+    const { data: refCode } = await supabase.from('referral_codes').select('user_id').eq('id', old.referral_code_id).single();
+    if (refCode?.user_id && rewardAmount > 0) {
+      await creditWallet({
+        userId: refCode.user_id,
+        amount: rewardAmount,
+        sourceType: 'referral',
+        sourceId: id,
+        description: `Referral reward #${id} credited`,
+        metadata: { referral_code_id: old.referral_code_id },
+        createdBy: req.user!.id,
+      }).catch(e => console.error('[REFERRAL] Wallet credit failed:', e));
     }
   }
 

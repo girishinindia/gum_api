@@ -798,6 +798,20 @@ const MATERIAL_FIELDS_WEBINAR = [
 ];
 const WEBINAR_JSONB_FIELDS = ['tags'];
 
+const MATERIAL_FIELDS_FAQ_CATEGORY = [
+  'name', 'description',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description',
+  'focus_keyword',
+];
+
+const MATERIAL_FIELDS_FAQ = [
+  'question', 'answer',
+  'meta_title', 'meta_description', 'meta_keywords',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'focus_keyword',
+];
+
 const MATERIAL_FIELDS_BUNDLE = [
   'title', 'short_description', 'description',
   'highlights', 'tags',
@@ -806,6 +820,13 @@ const MATERIAL_FIELDS_BUNDLE = [
   'focus_keyword',
 ];
 const BUNDLE_JSONB_FIELDS = ['highlights', 'tags'];
+
+const MATERIAL_FIELDS_POLICY_TYPE = ['name', 'description'];
+
+const MATERIAL_FIELDS_POLICY = [
+  'title', 'content',
+  'meta_title', 'meta_description',
+];
 
 function buildMaterialJsonSpec(fields: string[]): string {
   return '{' + fields.map(f => `"${f}":"..."`).join(', ') + '}';
@@ -834,7 +855,7 @@ function applyJsonbConversion(fields: Record<string, any>, jsonbFields?: string[
 }
 
 // ─── Reusable helper: generate AI translations for all for_material languages ───
-type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'course' | 'course_module' | 'bundle' | 'course_batch' | 'webinar';
+type MaterialEntityType = 'subject' | 'chapter' | 'topic' | 'sub_topic' | 'course' | 'course_module' | 'bundle' | 'course_batch' | 'webinar' | 'faq_category' | 'faq' | 'policy_type' | 'policy';
 
 const ENTITY_CONFIG: Record<MaterialEntityType, {
   table: string;
@@ -854,6 +875,10 @@ const ENTITY_CONFIG: Record<MaterialEntityType, {
   bundle: { table: 'bundles', translationTable: 'bundle_translations', idField: 'bundle_id', fields: MATERIAL_FIELDS_BUNDLE, entityLabel: 'bundle', jsonbFields: BUNDLE_JSONB_FIELDS, nameField: 'title' },
   course_batch: { table: 'course_batches', translationTable: 'batch_translations', idField: 'batch_id', fields: MATERIAL_FIELDS_COURSE_BATCH, entityLabel: 'course batch', jsonbFields: COURSE_BATCH_JSONB_FIELDS, nameField: 'title' },
   webinar: { table: 'webinars', translationTable: 'webinar_translations', idField: 'webinar_id', fields: MATERIAL_FIELDS_WEBINAR, entityLabel: 'webinar', jsonbFields: WEBINAR_JSONB_FIELDS, nameField: 'title' },
+  faq_category: { table: 'faq_categories', translationTable: 'faq_category_translations', idField: 'faq_category_id', fields: MATERIAL_FIELDS_FAQ_CATEGORY, entityLabel: 'faq category' },
+  faq: { table: 'faqs', translationTable: 'faq_translations', idField: 'faq_id', fields: MATERIAL_FIELDS_FAQ, entityLabel: 'FAQ', nameField: 'question' },
+  policy_type: { table: 'policy_types', translationTable: 'policy_type_translations', idField: 'policy_type_id', fields: MATERIAL_FIELDS_POLICY_TYPE, entityLabel: 'policy type' },
+  policy: { table: 'policies', translationTable: 'policy_translations', idField: 'policy_id', fields: MATERIAL_FIELDS_POLICY, entityLabel: 'policy', nameField: 'title' },
 };
 
 const DEFAULT_TRANSLATION_PROMPT = 'Create content in English language with human way writing style and convert exact English content with same meaning for other languages which are listed for translations. Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated. Most Important: don\'t write everything in pure regional language — use some common and technical English words in all outputs as it is. Keep technical or brand words in English that sound strange or unnatural or weird when translated. Write technical words like HTML5, CSS, JavaScript, Programming, Web Development, Database, Algorithm, Framework etc. in English script only, NOT in regional script.';
@@ -1061,6 +1086,14 @@ async function generateAllTranslationsForEntity(
     ? `title = full batch title; short_description = 1-2 sentences; description = 3-5 sentence batch description; requirements = comma-separated prerequisites or what learners need before joining; what_you_learn = comma-separated key learning outcomes and skills gained; tags = comma-separated relevant tags; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
     : entityType === 'webinar'
     ? `title = full webinar title; short_description = 1-2 sentences; description = 3-5 sentence webinar description; tags = comma-separated relevant tags; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
+    : entityType === 'faq_category'
+    ? `name = full FAQ category name; description = 2-3 sentence category description; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); focus_keyword = primary SEO keyword.`
+    : entityType === 'faq'
+    ? `question = the FAQ question in natural language; answer = comprehensive answer (3-5 sentences, clear and helpful); meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`
+    : entityType === 'policy_type'
+    ? `name = full policy type name; description = 2-3 sentence description of what this policy type covers.`
+    : entityType === 'policy'
+    ? `title = full policy title; content = comprehensive policy content in HTML format (use <h2>, <h3>, <p>, <ul>, <li> tags for structure — write thorough legal/informational content, at least 3-5 paragraphs); meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars).`
     : `name = full ${cfg.entityLabel} name; short_intro = 1-2 sentences; long_intro = 3-5 sentences; tags = comma-separated relevant tags; video_title = concise video title; video_description = 2-3 sentence video description; meta_title = SEO page title (50-60 chars); meta_description = SEO description (150-160 chars); meta_keywords = comma-separated SEO keywords; og_title = Open Graph title; og_description = Open Graph description (1-2 sentences); twitter_title = Twitter card title; twitter_description = Twitter card description (1-2 sentences); focus_keyword = primary SEO keyword.`;
 
   // ─── Step A: If English exists but is empty, generate English content first ───
@@ -6601,7 +6634,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
     const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider, force_regenerate } = req.body;
 
     // Validate entity_type
-    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar'];
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar', 'faq_category', 'faq', 'policy_type', 'policy'];
     if (!entity_type || !validTypes.includes(entity_type)) {
       return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
     }
@@ -11840,7 +11873,7 @@ export async function generateAllTranslations(req: Request, res: Response) {
     const { entity_type, entity_id, provider: reqProvider, prompt, force_regenerate } = req.body;
     if (!entity_type || !entity_id) return err(res, 'entity_type and entity_id are required', 400);
 
-    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar'];
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar', 'faq_category', 'faq', 'policy_type', 'policy'];
     if (!validTypes.includes(entity_type)) return err(res, `Invalid entity_type. Must be one of: ${validTypes.join(', ')}`, 400);
 
     const aiProvider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
