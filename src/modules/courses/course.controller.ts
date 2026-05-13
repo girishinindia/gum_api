@@ -3,7 +3,7 @@ import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
-import { deleteImage } from '../../services/storage.service';
+import { deleteImage, processAndUploadImage, uploadRawFile } from '../../services/storage.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -12,6 +12,42 @@ import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+}
+
+/**
+ * Phase 15.4 — Handle the two media-tab uploads (trailer thumbnail image +
+ * brochure PDF) coming in via multer.fields(). Returns the columns to merge
+ * into the row. When updating, pass `old` so the previous CDN files are
+ * purged before the new ones replace them.
+ */
+async function handleCourseMediaUploads(
+  req: Request,
+  slugHint: string,
+  old?: { trailer_thumbnail_url?: string | null; brochure_url?: string | null },
+): Promise<Partial<{ trailer_thumbnail_url: string; brochure_url: string }>> {
+  const files = (req.files as { [field: string]: Express.Multer.File[] } | undefined) ?? {};
+  const out: any = {};
+
+  const thumb = files.trailer_thumbnail?.[0];
+  if (thumb) {
+    if (old?.trailer_thumbnail_url) {
+      try { await deleteImage(extractBunnyPath(old.trailer_thumbnail_url), old.trailer_thumbnail_url); } catch {}
+    }
+    const path = `courses/${slugHint}/trailer-thumb-${Date.now()}.webp`;
+    out.trailer_thumbnail_url = await processAndUploadImage(thumb.buffer, path, { width: 1280, height: 720, quality: 85 });
+  }
+
+  const brochure = files.brochure?.[0];
+  if (brochure) {
+    if (old?.brochure_url) {
+      try { await deleteImage(extractBunnyPath(old.brochure_url), old.brochure_url); } catch {}
+    }
+    const ext = (brochure.originalname.match(/\.[^.]+$/)?.[0] ?? '.pdf').toLowerCase();
+    const path = `courses/${slugHint}/brochure-${Date.now()}${ext}`;
+    out.brochure_url = await uploadRawFile(brochure.buffer, path);
+  }
+
+  return out;
 }
 
 const CACHE_KEY = 'courses:all';
@@ -132,6 +168,10 @@ export async function create(req: Request, res: Response) {
     body.slug = await generateUniqueSlug(supabase, 'courses', body.slug);
   }
 
+  // Phase 15.4 — Media-tab uploads (thumbnail image + brochure PDF).
+  const mediaUploads = await handleCourseMediaUploads(req, body.slug || body.code || 'course');
+  Object.assign(body, mediaUploads);
+
   const { data, error: e } = await supabase.from('courses').insert(body).select().single();
   if (e) {
     if (e.code === '23505') return err(res, 'Course code or slug already exists', 409);
@@ -168,7 +208,19 @@ export async function update(req: Request, res: Response) {
   }
 
   updates.updated_by = req.user!.id;
-  if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+
+  // Phase 15.4 — Media-tab uploads (delete-on-replace handled inside helper).
+  const mediaUploads = await handleCourseMediaUploads(
+    req,
+    updates.slug || old.slug || old.code || `course-${id}`,
+    { trailer_thumbnail_url: old.trailer_thumbnail_url, brochure_url: old.brochure_url },
+  );
+  Object.assign(updates, mediaUploads);
+
+  const hasFiles = Object.keys(mediaUploads).length > 0;
+  if (Object.keys(updates).filter((k) => k !== 'updated_by').length === 0 && !hasFiles) {
+    return err(res, 'Nothing to update', 400);
+  }
 
   const { data, error: e } = await supabase.from('courses').update(updates).eq('id', id).select().single();
   if (e) {
@@ -279,8 +331,16 @@ export async function restore(req: Request, res: Response) {
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   try {
-    const { data: old } = await supabase.from('courses').select('code, slug').eq('id', id).single();
+    const { data: old } = await supabase.from('courses').select('code, slug, trailer_thumbnail_url, brochure_url').eq('id', id).single();
     if (!old) return err(res, 'Course not found', 404);
+
+    // Phase 15.4 — clean up the course-level CDN files (thumbnail + brochure).
+    if (old.trailer_thumbnail_url) {
+      try { await deleteImage(extractBunnyPath(old.trailer_thumbnail_url), old.trailer_thumbnail_url); } catch {}
+    }
+    if (old.brochure_url) {
+      try { await deleteImage(extractBunnyPath(old.brochure_url), old.brochure_url); } catch {}
+    }
 
     // Cascade permanent delete: bottom-up to satisfy FK constraints
     // 1. Delete course_chapter_topics (leaf)
