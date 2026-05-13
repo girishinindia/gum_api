@@ -5,14 +5,19 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { processAndUploadImage } from '../../services/storage.service';
+import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch } from '../../utils/search';
+import { config } from '../../config';
 
 const TABLE = 'stickers';
 const CACHE_KEY = 'stickers:all';
 const FK_SELECT = '*, sticker_categories(id, name, slug)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
+
+function extractBunnyPath(cdnUrl: string): string {
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+}
 
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
@@ -57,7 +62,7 @@ export async function create(req: Request, res: Response) {
 
   // Handle image upload via Bunny CDN
   if (req.file) {
-    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/stickers');
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/stickers/${Date.now()}.webp`);
     if (cdnUrl) body.image_url = cdnUrl;
   }
 
@@ -72,13 +77,17 @@ export async function create(req: Request, res: Response) {
 // ── PATCH /stickers/:id ──
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, image_url').eq('id', id).single();
   if (!old) return err(res, 'Sticker not found', 404);
 
   const body = parseBody(req);
 
   if (req.file) {
-    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/stickers');
+    // Phase 15.1 — delete old image first, then upload new one.
+    if (old.image_url) {
+      try { await deleteImage(extractBunnyPath(old.image_url), old.image_url); } catch {}
+    }
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/stickers/${Date.now()}.webp`);
     if (cdnUrl) body.image_url = cdnUrl;
   }
 
@@ -123,8 +132,13 @@ export async function restore(req: Request, res: Response) {
 // ── DELETE /stickers/:id/permanent ──
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, image_url').eq('id', id).single();
   if (!old) return err(res, 'Sticker not found', 404);
+
+  // Phase 15.1 — also remove the CDN file on permanent delete.
+  if (old.image_url) {
+    try { await deleteImage(extractBunnyPath(old.image_url), old.image_url); } catch {}
+  }
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);

@@ -6,11 +6,17 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { processAndUploadImage, deleteImage } from '../../services/storage.service';
+import { config } from '../../config';
 
 const TABLE = 'sticker_categories';
 const CACHE_KEY = 'sticker_categories:all';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
+
+function extractBunnyPath(cdnUrl: string): string {
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+}
 
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
@@ -50,6 +56,12 @@ export async function create(req: Request, res: Response) {
   if (!body.name?.trim()) return err(res, 'Name is required', 400);
   if (!body.slug?.trim()) return err(res, 'Slug is required', 400);
 
+  // Phase 15.1 — handle thumbnail upload.
+  if (req.file) {
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/sticker-categories/${Date.now()}.webp`, { width: 512, height: 512, quality: 85 });
+    if (cdnUrl) body.thumbnail_url = cdnUrl;
+  }
+
   const { data, error: e } = await supabase.from(TABLE).insert(body).select('*').single();
   if (e) return err(res, e.message, 500);
 
@@ -61,10 +73,20 @@ export async function create(req: Request, res: Response) {
 // ── PATCH /sticker-categories/:id ──
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, thumbnail_url').eq('id', id).single();
   if (!old) return err(res, 'Sticker category not found', 404);
 
   const body = parseBody(req);
+
+  if (req.file) {
+    // Phase 15.1 — delete old thumbnail first, then upload new.
+    if (old.thumbnail_url) {
+      try { await deleteImage(extractBunnyPath(old.thumbnail_url), old.thumbnail_url); } catch {}
+    }
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/sticker-categories/${Date.now()}.webp`, { width: 512, height: 512, quality: 85 });
+    if (cdnUrl) body.thumbnail_url = cdnUrl;
+  }
+
   const { data, error: e } = await supabase.from(TABLE).update(body).eq('id', id).select('*').single();
   if (e) return err(res, e.message, 500);
 
@@ -106,8 +128,13 @@ export async function restore(req: Request, res: Response) {
 // ── DELETE /sticker-categories/:id/permanent ──
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, thumbnail_url').eq('id', id).single();
   if (!old) return err(res, 'Sticker category not found', 404);
+
+  // Phase 15.1 — clean up CDN file too.
+  if (old.thumbnail_url) {
+    try { await deleteImage(extractBunnyPath(old.thumbnail_url), old.thumbnail_url); } catch {}
+  }
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);

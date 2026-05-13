@@ -89,8 +89,8 @@ export async function create(req: Request, res: Response) {
   // Set audit field
   body.created_by = req.user!.id;
 
-  // Handle image uploads (2 image fields)
-  const imageFields = ['thumbnail_url', 'banner_url'] as const;
+  // Phase 15.1 — extended to cover og_image + twitter_image too.
+  const imageFields = ['thumbnail_url', 'banner_url', 'og_image', 'twitter_image'] as const;
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
   const uploadedImages: Record<string, string> = {};
 
@@ -152,8 +152,8 @@ export async function update(req: Request, res: Response) {
   // Set audit field
   updates.updated_by = req.user!.id;
 
-  // Handle image uploads (2 image fields)
-  const imageFields = ['thumbnail_url', 'banner_url'] as const;
+  // Phase 15.1 — extended to cover og_image + twitter_image too.
+  const imageFields = ['thumbnail_url', 'banner_url', 'og_image', 'twitter_image'] as const;
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
 
   for (const field of imageFields) {

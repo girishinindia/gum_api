@@ -5,8 +5,9 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { processAndUploadImage } from '../../services/storage.service';
+import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { config } from '../../config';
 
 const TABLE = 'blog_posts';
 const CACHE_KEY = 'blog_posts:all';
@@ -14,6 +15,10 @@ const CACHE_KEY = 'blog_posts:all';
 const clearCache = async () => {
   await redis.del(CACHE_KEY);
 };
+
+function extractBunnyPath(cdnUrl: string): string {
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+}
 
 const FK_SELECT = '*, blog_categories!blog_posts_category_id_fkey(id, name), users!blog_posts_author_id_fkey(id, first_name, last_name, email)';
 
@@ -75,17 +80,23 @@ export async function getById(req: Request, res: Response) {
 // ── CREATE ──
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const files = (req as any).files as { [field: string]: Express.Multer.File[] } | undefined;
 
   if (!body.title || !body.content) {
     return err(res, 'title and content are required', 400);
   }
 
-  // Handle featured image upload
-  if (file) {
-    const slug = body.slug || body.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
-    const imgPath = `blog/${slug}-${Date.now()}.webp`;
-    body.featured_image_url = await processAndUploadImage(file.buffer, imgPath, { width: 1200, height: 630, quality: 85 });
+  const slug = body.slug || body.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
+
+  // Phase 15.1 — featured image (1200×630)
+  if (files?.featured_image?.[0]) {
+    const imgPath = `blog/featured/${slug}-${Date.now()}.webp`;
+    body.featured_image_url = await processAndUploadImage(files.featured_image[0].buffer, imgPath, { width: 1200, height: 630, quality: 85 });
+  }
+  // Phase 15.1 — Open Graph image (1200×630)
+  if (files?.og_image?.[0]) {
+    const ogPath = `blog/og/${slug}-${Date.now()}.webp`;
+    body.og_image_url = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
   }
 
   body.created_by = req.user!.id;
@@ -105,13 +116,24 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Blog post not found', 404);
 
   const updates = parseBody(req);
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const files = (req as any).files as { [field: string]: Express.Multer.File[] } | undefined;
+  const slug = updates.slug || old.slug || old.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
 
-  // Handle featured image upload
-  if (file) {
-    const slug = updates.slug || old.slug || old.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
-    const imgPath = `blog/${slug}-${Date.now()}.webp`;
-    updates.featured_image_url = await processAndUploadImage(file.buffer, imgPath, { width: 1200, height: 630, quality: 85 });
+  // Phase 15.1 — featured image: delete old first, then upload new.
+  if (files?.featured_image?.[0]) {
+    if (old.featured_image_url) {
+      try { await deleteImage(extractBunnyPath(old.featured_image_url), old.featured_image_url); } catch {}
+    }
+    const imgPath = `blog/featured/${slug}-${Date.now()}.webp`;
+    updates.featured_image_url = await processAndUploadImage(files.featured_image[0].buffer, imgPath, { width: 1200, height: 630, quality: 85 });
+  }
+  // Phase 15.1 — Open Graph image: delete old first, then upload new.
+  if (files?.og_image?.[0]) {
+    if (old.og_image_url) {
+      try { await deleteImage(extractBunnyPath(old.og_image_url), old.og_image_url); } catch {}
+    }
+    const ogPath = `blog/og/${slug}-${Date.now()}.webp`;
+    updates.og_image_url = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
   }
 
   updates.updated_by = req.user!.id;
@@ -207,8 +229,16 @@ export async function restore(req: Request, res: Response) {
 // ── PERMANENT DELETE ──
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('title').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('title, featured_image_url, og_image_url').eq('id', id).single();
   if (!old) return err(res, 'Blog post not found', 404);
+
+  // Phase 15.1 — clean up both CDN images.
+  if (old.featured_image_url) {
+    try { await deleteImage(extractBunnyPath(old.featured_image_url), old.featured_image_url); } catch {}
+  }
+  if (old.og_image_url) {
+    try { await deleteImage(extractBunnyPath(old.og_image_url), old.og_image_url); } catch {}
+  }
 
   // blog_reviews CASCADE delete automatically
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);

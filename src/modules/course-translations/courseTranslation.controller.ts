@@ -90,7 +90,8 @@ export async function create(req: Request, res: Response) {
   body.created_by = req.user!.id;
 
   // Handle image uploads (5 image fields)
-  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail'] as const;
+  // Phase 15.1 — added og_image + twitter_image
+  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail', 'og_image', 'twitter_image'] as const;
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
   const uploadedImages: Record<string, string> = {};
 
@@ -153,7 +154,8 @@ export async function update(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
 
   // Handle image uploads (5 image fields)
-  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail'] as const;
+  // Phase 15.1 — added og_image + twitter_image
+  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail', 'og_image', 'twitter_image'] as const;
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
 
   for (const field of imageFields) {
@@ -293,11 +295,12 @@ export async function coverage(req: Request, res: Response) {
 // DELETE /course-translations/:id/permanent
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from('course_translations').select('title, web_thumbnail, web_banner, app_thumbnail, app_banner, video_thumbnail, course_id').eq('id', id).single();
+  const { data: old } = await supabase.from('course_translations').select('title, web_thumbnail, web_banner, app_thumbnail, app_banner, video_thumbnail, og_image, twitter_image, course_id').eq('id', id).single();
   if (!old) return err(res, 'Course translation not found', 404);
 
   // Clean up CDN images
-  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail'] as const;
+  // Phase 15.1 — added og_image + twitter_image
+  const imageFields = ['web_thumbnail', 'web_banner', 'app_thumbnail', 'app_banner', 'video_thumbnail', 'og_image', 'twitter_image'] as const;
   for (const field of imageFields) {
     const url = (old as any)[field];
     if (url) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }

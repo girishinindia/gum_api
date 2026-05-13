@@ -12,10 +12,14 @@ r.get('/:id',       ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());
 r.post('/',              requirePermission('course_module_translation', 'create'), upload.fields([
-  { name: 'image_file', maxCount: 1 },
+  { name: 'image_file',         maxCount: 1 },
+  { name: 'og_image_file',      maxCount: 1 },   // Phase 15.1
+  { name: 'twitter_image_file', maxCount: 1 },   // Phase 15.1
 ]), ctrl.create);
 r.patch('/:id',          requirePermission('course_module_translation', 'update'), upload.fields([
-  { name: 'image_file', maxCount: 1 },
+  { name: 'image_file',         maxCount: 1 },
+  { name: 'og_image_file',      maxCount: 1 },   // Phase 15.1
+  { name: 'twitter_image_file', maxCount: 1 },   // Phase 15.1
 ]), ctrl.update);
 r.delete('/:id',         requirePermission('course_module_translation', 'delete'), ctrl.softDelete);
 r.patch('/:id/restore',  requirePermission('course_module_translation', 'delete'), ctrl.restore);

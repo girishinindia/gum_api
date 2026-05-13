@@ -88,24 +88,32 @@ export async function create(req: Request, res: Response) {
 
   body.created_by = req.user!.id;
 
-  // Handle image upload (1 image field)
+  // Phase 15.1 — handle 3 image fields (image + og_image + twitter_image)
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
-  let uploadedImageUrl: string | null = null;
-
-  const fileArr = files['image_file'];
-  if (fileArr && fileArr[0]) {
-    const slug = (body.name || 'module-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `course-module-translations/${slug}-image-${Date.now()}.webp`;
-    const url = await processAndUploadImage(fileArr[0].buffer, path, { width: 800, height: 800, quality: 85 });
-    body.image = url;
-    uploadedImageUrl = url;
+  const uploadedImageUrls: string[] = [];
+  const imgFields = [
+    { key: 'image_file',          col: 'image' },
+    { key: 'og_image_file',       col: 'og_image' },
+    { key: 'twitter_image_file',  col: 'twitter_image' },
+  ];
+  for (const { key, col } of imgFields) {
+    const arr = files[key];
+    if (arr && arr[0]) {
+      const slug = (body.name || 'module-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+      const path = `course-module-translations/${slug}-${col}-${Date.now()}.webp`;
+      const url = await processAndUploadImage(arr[0].buffer, path, { width: 1200, height: 1200, quality: 85 });
+      (body as any)[col] = url;
+      uploadedImageUrls.push(url);
+    }
   }
+  // back-compat for the success/failure code paths below
+  const uploadedImageUrl = uploadedImageUrls[0] ?? null;
 
   const { data, error: e } = await supabase.from('course_module_translations').insert(body).select('*, course_modules(slug, name, course_id, courses(code, slug, name)), languages(name, native_name, iso_code)').single();
   if (e) {
-    // Clean up uploaded image on failure
-    if (uploadedImageUrl) {
-      try { await deleteImage(extractBunnyPath(uploadedImageUrl), uploadedImageUrl); } catch {}
+    // Clean up uploaded images on failure
+    for (const u of uploadedImageUrls) {
+      try { await deleteImage(extractBunnyPath(u), u); } catch {}
     }
     if (e.code === '23505') return err(res, 'Translation for this module and language already exists', 409);
     return err(res, e.message, 500);
@@ -146,14 +154,21 @@ export async function update(req: Request, res: Response) {
 
   updates.updated_by = req.user!.id;
 
-  // Handle image upload
+  // Phase 15.1 — 3 image fields with delete-on-replace
   const files = (req.files as { [field: string]: Express.Multer.File[] }) || {};
-  const fileArr = files['image_file'];
-  if (fileArr && fileArr[0]) {
-    const slug = (updates.name || old.name || 'module-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-    const path = `course-module-translations/${slug}-image-${Date.now()}.webp`;
-    updates.image = await processAndUploadImage(fileArr[0].buffer, path, { width: 800, height: 800, quality: 85 });
-    if (old.image) { try { await deleteImage(extractBunnyPath(old.image), old.image); } catch {} }
+  const updateImgFields = [
+    { key: 'image_file',         col: 'image' },
+    { key: 'og_image_file',      col: 'og_image' },
+    { key: 'twitter_image_file', col: 'twitter_image' },
+  ];
+  for (const { key, col } of updateImgFields) {
+    const arr = files[key];
+    if (arr && arr[0]) {
+      const slug = (updates.name || old.name || 'module-trans').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+      const path = `course-module-translations/${slug}-${col}-${Date.now()}.webp`;
+      updates[col] = await processAndUploadImage(arr[0].buffer, path, { width: 1200, height: 1200, quality: 85 });
+      if ((old as any)[col]) { try { await deleteImage(extractBunnyPath((old as any)[col]), (old as any)[col]); } catch {} }
+    }
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

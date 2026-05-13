@@ -5,14 +5,19 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { processAndUploadImage } from '../../services/storage.service';
+import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch } from '../../utils/search';
+import { config } from '../../config';
 
 const TABLE = 'custom_emojis';
 const CACHE_KEY = 'custom_emojis:all';
 const FK_SELECT = '*, emoji_categories(id, name, slug), users!custom_emojis_created_by_fkey(id, first_name, last_name, email)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
+
+function extractBunnyPath(cdnUrl: string): string {
+  return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
+}
 
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
@@ -59,7 +64,7 @@ export async function create(req: Request, res: Response) {
   body.created_by = req.user!.id;
 
   if (req.file) {
-    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/emojis');
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/emojis/${Date.now()}.webp`);
     if (cdnUrl) body.image_url = cdnUrl;
   }
 
@@ -74,13 +79,17 @@ export async function create(req: Request, res: Response) {
 // ── PATCH /custom-emojis/:id ──
 export async function update(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, image_url').eq('id', id).single();
   if (!old) return err(res, 'Custom emoji not found', 404);
 
   const body = parseBody(req);
 
   if (req.file) {
-    const cdnUrl = await processAndUploadImage(req.file.buffer, 'chat/emojis');
+    // Phase 15.1 — delete old image first, then upload new one.
+    if (old.image_url) {
+      try { await deleteImage(extractBunnyPath(old.image_url), old.image_url); } catch {}
+    }
+    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/emojis/${Date.now()}.webp`);
     if (cdnUrl) body.image_url = cdnUrl;
   }
 
@@ -125,8 +134,13 @@ export async function restore(req: Request, res: Response) {
 // ── DELETE /custom-emojis/:id/permanent ──
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('name, image_url').eq('id', id).single();
   if (!old) return err(res, 'Custom emoji not found', 404);
+
+  // Phase 15.1 — clean up the CDN file too.
+  if (old.image_url) {
+    try { await deleteImage(extractBunnyPath(old.image_url), old.image_url); } catch {}
+  }
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);

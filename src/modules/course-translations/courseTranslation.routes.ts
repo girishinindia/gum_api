@@ -12,18 +12,22 @@ r.get('/:id',       ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());
 r.post('/',              requirePermission('course_translation', 'create'), upload.fields([
-  { name: 'web_thumbnail_file', maxCount: 1 },
-  { name: 'web_banner_file', maxCount: 1 },
-  { name: 'app_thumbnail_file', maxCount: 1 },
-  { name: 'app_banner_file', maxCount: 1 },
+  { name: 'web_thumbnail_file',   maxCount: 1 },
+  { name: 'web_banner_file',      maxCount: 1 },
+  { name: 'app_thumbnail_file',   maxCount: 1 },
+  { name: 'app_banner_file',      maxCount: 1 },
   { name: 'video_thumbnail_file', maxCount: 1 },
+  { name: 'og_image_file',        maxCount: 1 },   // Phase 15.1
+  { name: 'twitter_image_file',   maxCount: 1 },   // Phase 15.1
 ]), ctrl.create);
 r.patch('/:id',          requirePermission('course_translation', 'update'), upload.fields([
-  { name: 'web_thumbnail_file', maxCount: 1 },
-  { name: 'web_banner_file', maxCount: 1 },
-  { name: 'app_thumbnail_file', maxCount: 1 },
-  { name: 'app_banner_file', maxCount: 1 },
+  { name: 'web_thumbnail_file',   maxCount: 1 },
+  { name: 'web_banner_file',      maxCount: 1 },
+  { name: 'app_thumbnail_file',   maxCount: 1 },
+  { name: 'app_banner_file',      maxCount: 1 },
   { name: 'video_thumbnail_file', maxCount: 1 },
+  { name: 'og_image_file',        maxCount: 1 },   // Phase 15.1
+  { name: 'twitter_image_file',   maxCount: 1 },   // Phase 15.1
 ]), ctrl.update);
 r.delete('/:id',         requirePermission('course_translation', 'delete'), ctrl.softDelete);
 r.patch('/:id/restore',  requirePermission('course_translation', 'delete'), ctrl.restore);

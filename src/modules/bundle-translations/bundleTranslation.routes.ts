@@ -13,11 +13,15 @@ r.get('/:id',       ctrl.getById);
 r.use(authMiddleware, attachPermissions());
 r.post('/',              requirePermission('bundle_translation', 'create'), upload.fields([
   { name: 'thumbnail_url_file', maxCount: 1 },
-  { name: 'banner_url_file', maxCount: 1 },
+  { name: 'banner_url_file',    maxCount: 1 },
+  { name: 'og_image_file',      maxCount: 1 },  // Phase 15.1
+  { name: 'twitter_image_file', maxCount: 1 },  // Phase 15.1
 ]), ctrl.create);
 r.patch('/:id',          requirePermission('bundle_translation', 'update'), upload.fields([
   { name: 'thumbnail_url_file', maxCount: 1 },
-  { name: 'banner_url_file', maxCount: 1 },
+  { name: 'banner_url_file',    maxCount: 1 },
+  { name: 'og_image_file',      maxCount: 1 },  // Phase 15.1
+  { name: 'twitter_image_file', maxCount: 1 },  // Phase 15.1
 ]), ctrl.update);
 r.delete('/:id',         requirePermission('bundle_translation', 'delete'), ctrl.softDelete);
 r.patch('/:id/restore',  requirePermission('bundle_translation', 'delete'), ctrl.restore);
