@@ -1,3 +1,5 @@
+import { createReadStream, promises as fsp, statSync } from 'fs';
+import { Readable } from 'stream';
 import { config } from '../config';
 
 const STREAM_BASE = 'https://video.bunnycdn.com';
@@ -229,6 +231,94 @@ export async function uploadVideoToStream(
     : `https://vz-cdn.b-cdn.net/${videoId}/thumbnail.jpg`;
 
   return { videoId, embedUrl, thumbnailUrl, status: videoData.status };
+}
+
+// ─── Streaming upload (no buffer — for large videos) ──────
+
+/**
+ * Stream a video file from disk directly into Bunny Stream.
+ * Used when multer writes large uploads to disk; avoids loading the
+ * whole file into Node heap (which would OOM on multi-GB videos).
+ *
+ * Returns the same shape as uploadVideoToStream.
+ */
+export async function uploadVideoStreamFromPath(
+  filePath: string,
+  title: string,
+  collectionId?: string,
+): Promise<{ videoId: string; embedUrl: string; thumbnailUrl: string; status: number }> {
+  const libId = config.bunny.streamLibraryId;
+
+  // Step 1: Create video object
+  const body: any = { title };
+  if (collectionId) body.collectionId = collectionId;
+
+  const createRes = await fetch(`${STREAM_BASE}/library/${libId}/videos`, {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!createRes.ok) {
+    const text = await createRes.text();
+    throw new Error(`Bunny Stream create failed: ${createRes.status} ${text}`);
+  }
+  const videoData = await createRes.json() as { guid: string; status: number };
+  const videoId = videoData.guid;
+
+  // Step 2: Stream binary upload
+  try {
+    const size = statSync(filePath).size;
+    const nodeStream = createReadStream(filePath);
+    // Node's fetch accepts a Web ReadableStream as body — convert with Readable.toWeb.
+    const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream;
+
+    const uploadRes = await fetch(`${STREAM_BASE}/library/${libId}/videos/${videoId}`, {
+      method: 'PUT',
+      headers: {
+        'AccessKey': config.bunny.streamApiKey,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(size),
+      },
+      body: webStream,
+      // Node's fetch requires `duplex: 'half'` when sending a stream body.
+      ...({ duplex: 'half' } as any),
+    });
+    if (!uploadRes.ok) {
+      try { await deleteVideoFromStream(videoId); } catch {}
+      const text = await uploadRes.text();
+      throw new Error(`Bunny Stream upload failed: ${uploadRes.status} ${text}`);
+    }
+  } catch (err) {
+    try { await deleteVideoFromStream(videoId); } catch {}
+    throw err;
+  } finally {
+    // Best-effort cleanup of multer's temp file (caller may also clean up)
+    fsp.unlink(filePath).catch(() => {});
+  }
+
+  const embedUrl = `https://iframe.mediadelivery.net/embed/${libId}/${videoId}`;
+  const thumbnailUrl = config.bunny.streamCdn
+    ? `${config.bunny.streamCdn}/${videoId}/thumbnail.jpg`
+    : `https://vz-cdn.b-cdn.net/${videoId}/thumbnail.jpg`;
+
+  return { videoId, embedUrl, thumbnailUrl, status: videoData.status };
+}
+
+/**
+ * Extract a Bunny Stream video GUID from a stored URL string.
+ * Recognises both embed URLs (https://iframe.mediadelivery.net/embed/{lib}/{guid})
+ * and direct CDN URLs (https://vz-*.b-cdn.net/{guid}/...).
+ * Returns null for external URLs (YouTube, Vimeo, etc.) so callers can skip cleanup.
+ */
+export function extractBunnyVideoGuid(url: string | null | undefined): string | null {
+  if (!url) return null;
+  // Embed URL: .../embed/<libId>/<guid>
+  const embedMatch = url.match(/mediadelivery\.net\/embed\/\d+\/([0-9a-fA-F-]{36})/);
+  if (embedMatch) return embedMatch[1];
+  // Direct play / thumbnail URL: ...b-cdn.net/<guid>/...
+  const cdnMatch = url.match(/b-cdn\.net\/([0-9a-fA-F-]{36})\//);
+  if (cdnMatch) return cdnMatch[1];
+  return null;
 }
 
 // ─── Video Fetch from URL (zero server memory) ────────────

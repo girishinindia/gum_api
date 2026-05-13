@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
+import { promises as fsp } from 'fs';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { deleteImage, processAndUploadImage, uploadRawFile } from '../../services/storage.service';
+import { uploadVideoStreamFromPath, deleteVideoFromStream, extractBunnyVideoGuid } from '../../services/video.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -15,18 +17,47 @@ function extractBunnyPath(cdnUrl: string): string {
 }
 
 /**
- * Phase 15.4 — Handle the two media-tab uploads (trailer thumbnail image +
- * brochure PDF) coming in via multer.fields(). Returns the columns to merge
- * into the row. When updating, pass `old` so the previous CDN files are
- * purged before the new ones replace them.
+ * Best-effort delete of a Bunny Stream video the platform owns.
+ * Returns silently for external URLs (YouTube/Vimeo) so they're untouched.
+ */
+async function maybeDeleteBunnyStreamVideo(url: string | null | undefined): Promise<void> {
+  const guid = extractBunnyVideoGuid(url);
+  if (!guid) return;
+  try { await deleteVideoFromStream(guid); } catch {}
+}
+
+interface OldMedia {
+  trailer_thumbnail_url?: string | null;
+  brochure_url?:          string | null;
+  trailer_video_url?:     string | null;
+  video_url?:             string | null;
+}
+
+type MediaUploadResult = Partial<{
+  trailer_thumbnail_url: string;
+  brochure_url:          string;
+  trailer_video_url:     string;
+  video_url:             string;
+}>;
+
+/**
+ * Phase 15.4 + 15.5 — Handle the four media-tab uploads (trailer thumbnail
+ * image + brochure PDF + trailer video + main course video) coming in via
+ * multer.fields() with disk storage. Returns the columns to merge into the
+ * row. When updating, pass `old` so the previous CDN files / Bunny Stream
+ * videos are purged before the new ones replace them.
+ *
+ * Small files (thumb/brochure) are read into a buffer; videos are streamed
+ * straight from disk into Bunny Stream so multi-GB uploads never hit the
+ * Node heap.
  */
 async function handleCourseMediaUploads(
   req: Request,
   slugHint: string,
-  old?: { trailer_thumbnail_url?: string | null; brochure_url?: string | null },
-): Promise<Partial<{ trailer_thumbnail_url: string; brochure_url: string }>> {
+  old?: OldMedia,
+): Promise<MediaUploadResult> {
   const files = (req.files as { [field: string]: Express.Multer.File[] } | undefined) ?? {};
-  const out: any = {};
+  const out: MediaUploadResult = {};
 
   const thumb = files.trailer_thumbnail?.[0];
   if (thumb) {
@@ -34,7 +65,9 @@ async function handleCourseMediaUploads(
       try { await deleteImage(extractBunnyPath(old.trailer_thumbnail_url), old.trailer_thumbnail_url); } catch {}
     }
     const path = `courses/${slugHint}/trailer-thumb-${Date.now()}.webp`;
-    out.trailer_thumbnail_url = await processAndUploadImage(thumb.buffer, path, { width: 1280, height: 720, quality: 85 });
+    const buf = await fsp.readFile(thumb.path);
+    out.trailer_thumbnail_url = await processAndUploadImage(buf, path, { width: 1280, height: 720, quality: 85 });
+    fsp.unlink(thumb.path).catch(() => {});
   }
 
   const brochure = files.brochure?.[0];
@@ -44,7 +77,27 @@ async function handleCourseMediaUploads(
     }
     const ext = (brochure.originalname.match(/\.[^.]+$/)?.[0] ?? '.pdf').toLowerCase();
     const path = `courses/${slugHint}/brochure-${Date.now()}${ext}`;
-    out.brochure_url = await uploadRawFile(brochure.buffer, path);
+    const buf = await fsp.readFile(brochure.path);
+    out.brochure_url = await uploadRawFile(buf, path);
+    fsp.unlink(brochure.path).catch(() => {});
+  }
+
+  // Phase 15.5 — Bunny Stream uploads (multi-GB safe via streaming).
+  const trailerVideo = files.trailer_video?.[0];
+  if (trailerVideo) {
+    await maybeDeleteBunnyStreamVideo(old?.trailer_video_url);
+    const title = `${slugHint} — trailer`;
+    const { embedUrl } = await uploadVideoStreamFromPath(trailerVideo.path, title);
+    out.trailer_video_url = embedUrl;
+    // uploadVideoStreamFromPath unlinks the temp file in its `finally`.
+  }
+
+  const courseVideo = files.video?.[0];
+  if (courseVideo) {
+    await maybeDeleteBunnyStreamVideo(old?.video_url);
+    const title = `${slugHint} — course`;
+    const { embedUrl } = await uploadVideoStreamFromPath(courseVideo.path, title);
+    out.video_url = embedUrl;
   }
 
   return out;
@@ -209,11 +262,16 @@ export async function update(req: Request, res: Response) {
 
   updates.updated_by = req.user!.id;
 
-  // Phase 15.4 — Media-tab uploads (delete-on-replace handled inside helper).
+  // Phase 15.4 + 15.5 — Media-tab uploads (delete-on-replace handled inside helper).
   const mediaUploads = await handleCourseMediaUploads(
     req,
     updates.slug || old.slug || old.code || `course-${id}`,
-    { trailer_thumbnail_url: old.trailer_thumbnail_url, brochure_url: old.brochure_url },
+    {
+      trailer_thumbnail_url: old.trailer_thumbnail_url,
+      brochure_url:          old.brochure_url,
+      trailer_video_url:     old.trailer_video_url,
+      video_url:             old.video_url,
+    },
   );
   Object.assign(updates, mediaUploads);
 
@@ -331,7 +389,7 @@ export async function restore(req: Request, res: Response) {
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   try {
-    const { data: old } = await supabase.from('courses').select('code, slug, trailer_thumbnail_url, brochure_url').eq('id', id).single();
+    const { data: old } = await supabase.from('courses').select('code, slug, trailer_thumbnail_url, brochure_url, trailer_video_url, video_url').eq('id', id).single();
     if (!old) return err(res, 'Course not found', 404);
 
     // Phase 15.4 — clean up the course-level CDN files (thumbnail + brochure).
@@ -341,6 +399,9 @@ export async function remove(req: Request, res: Response) {
     if (old.brochure_url) {
       try { await deleteImage(extractBunnyPath(old.brochure_url), old.brochure_url); } catch {}
     }
+    // Phase 15.5 — clean up Bunny Stream videos (only ours; external URLs left alone).
+    await maybeDeleteBunnyStreamVideo(old.trailer_video_url);
+    await maybeDeleteBunnyStreamVideo(old.video_url);
 
     // Cascade permanent delete: bottom-up to satisfy FK constraints
     // 1. Delete course_chapter_topics (leaf)
