@@ -258,11 +258,8 @@ export async function issue(req: Request, res: Response) {
     certificate_issued_at: cert.issued_at,
   }).eq('id', enrollment_id);
 
-  // Increment student_profiles.certificates_earned
-  const { data: sp } = await supabase.from('student_profiles').select('certificates_earned').eq('user_id', user_id).single();
-  if (sp) {
-    await supabase.from('student_profiles').update({ certificates_earned: (sp.certificates_earned || 0) + 1 }).eq('user_id', user_id);
-  }
+  // Phase 13 — student_profiles dropped; certificates_earned counter no longer maintained.
+  // Authoritative source is the issued_certificates table itself (count rows by user_id).
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'certificate_issued', targetType: 'issued_certificate', targetId: cert.id, targetName: certNumber, ip: getClientIp(req), metadata: { user_id, template_id, enrollment_id } });
@@ -363,10 +360,7 @@ export async function bulkIssue(req: Request, res: Response) {
         certificate_issued_at: cert.issued_at,
       }).eq('id', enrollment.id);
 
-      // Increment student counter
-      supabase.from('student_profiles').select('certificates_earned').eq('user_id', enrollment.user_id).single().then(({ data: sp }) => {
-        if (sp) supabase.from('student_profiles').update({ certificates_earned: (sp.certificates_earned || 0) + 1 }).eq('user_id', enrollment.user_id);
-      });
+      // Phase 13 — student_profiles dropped; no counter to bump.
     }
   }
 
@@ -400,12 +394,7 @@ export async function revoke(req: Request, res: Response) {
     certificate_issued_at: null,
   }).eq('id', cert.enrollment_id);
 
-  // Decrement student counter
-  supabase.from('student_profiles').select('certificates_earned').eq('user_id', cert.user_id).single().then(({ data: sp }) => {
-    if (sp && sp.certificates_earned > 0) {
-      supabase.from('student_profiles').update({ certificates_earned: sp.certificates_earned - 1 }).eq('user_id', cert.user_id);
-    }
-  });
+  // Phase 13 — student_profiles dropped; no counter to decrement.
 
   // Delete certificate file from CDN
   if (cert.certificate_url) {

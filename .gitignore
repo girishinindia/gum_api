@@ -1,5 +1,32 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
+coverage/
+.cache/
+
+# ── Phase 12.1 — Sentry source maps ──
+# CI uploads source maps to Sentry then strips *.map from the production
+# build. Keep .map files out of git regardless.
+**/*.map
+.sentryclirc
+
+# ── Editor / OS noise ──
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Test artefacts ──
+tests/**/__tmp__/
+*.tsbuildinfo
+
+# ── Phase 13 — pre-drop snapshot for the profile-consolidation work is
+# intentionally COMMITTED (sql/PHASE13_PRE_DROP_SNAPSHOT.sql) so the row
+# data stays recoverable from git history. Local debug DB dumps should NOT
+# be committed though:
+local-db-dump-*.sql
+*.dump

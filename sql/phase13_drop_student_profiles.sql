@@ -1,0 +1,17 @@
+-- ─────────────────────────────────────────────────────────────────
+-- Phase 13.3 — Drop student_profiles
+--
+-- Snapshot in sql/PHASE13_PRE_DROP_SNAPSHOT.sql. Zero incoming FKs.
+-- Referral attribution will move to dedicated referral_codes /
+-- referral_usages tables when the referral product launches; for now
+-- processReferralRewards() is a no-op.
+--
+-- Counter columns (courses_enrolled, certificates_earned, xp_points,
+-- total_badges_earned, total_amount_paid) were denormalised mirrors of
+-- data that already lives in enrollments / issued_certificates /
+-- user_badges / orders — compute on demand if ever needed.
+--
+-- Applied to live DB on 2026-05-13 via Supabase MCP migration
+-- `phase13_drop_student_profiles`. Mirrored here for repo history.
+-- ─────────────────────────────────────────────────────────────────
+DROP TABLE IF EXISTS public.student_profiles CASCADE;

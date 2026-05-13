@@ -14,6 +14,7 @@
  */
 
 import { supabase } from '../config/supabase';
+import { db } from './db';
 import { redis } from '../config/redis';
 import { createEarningsFromOrder, reverseEarningsForOrder } from './instructorEarning.service';
 import {
@@ -25,6 +26,60 @@ import { creditWallet } from './wallet.service';
 
 // ── Constants ──
 const GST_RATE = 0.18; // 18% GST for digital services in India
+
+// ──────────────────────────────────────────────
+// Re-entrant step wrapper
+//
+// Each piece of post-payment work is gated on a (order_id, step_name) row.
+// If the step is already 'completed' we skip; otherwise we run the work,
+// then mark it completed. A crash mid-step leaves the row in 'running' —
+// the next invocation re-runs it (each step is individually idempotent
+// thanks to source-id-based uniqueness in wallet_transactions, enrollments,
+// invoices, etc.).
+// ──────────────────────────────────────────────
+async function withStep<T>(
+  orderId: number,
+  stepName: string,
+  fn: () => Promise<T>,
+): Promise<{ skipped: boolean; result?: T }> {
+  let claimRows: any;
+  try {
+    claimRows = await db.callFn('fn_claim_payment_step', {
+      p_order_id: orderId,
+      p_step_name: stepName,
+    });
+  } catch (claimErr: any) {
+    console.error(`[POST-PAYMENT] Step claim failed (${stepName}):`, claimErr?.message);
+    // If we can't claim, run the step anyway — each downstream piece is
+    // independently idempotent. Better to over-run than to silently drop.
+    const result = await fn();
+    return { skipped: false, result };
+  }
+
+  const row = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+  if (row && row.current_status === 'completed') {
+    return { skipped: true };
+  }
+
+  try {
+    const result = await fn();
+    await db.callFn('fn_complete_payment_step', {
+      p_order_id: orderId,
+      p_step_name: stepName,
+      p_result: null,
+    });
+    return { skipped: false, result };
+  } catch (e: any) {
+    try {
+      await db.callFn('fn_fail_payment_step', {
+        p_order_id: orderId,
+        p_step_name: stepName,
+        p_error: e?.message || 'unknown',
+      });
+    } catch { /* best-effort */ }
+    throw e;
+  }
+}
 
 // ── Cache invalidation ──
 async function clearAllCaches() {
@@ -38,7 +93,6 @@ async function clearAllCaches() {
     redis.del('referral_codes:all'),
     redis.del('referral_usages:all'),
     redis.del('referral_rewards:all'),
-    redis.del('student_profiles:all'),
     redis.del('coupons:all'),
     redis.del('instructor_promotions:all'),
   ]);
@@ -82,106 +136,135 @@ export async function orchestratePostPayment(params: PostPaymentParams): Promise
     throw new Error(`No order items found for order #${orderId}`);
   }
 
+  // ── Every step below is re-entrant via withStep(). A second call (from
+  //    webhook + verify racing, or an admin replay) skips completed steps.
+
   // 2. Calculate GST and update order
-  const gstAmount = await calculateAndStoreGST(order);
+  const gstStep = await withStep(orderId, 'gst', () => calculateAndStoreGST(order));
+  const gstAmount = (gstStep.result as number | undefined) ?? Number(order.tax_amount || 0);
 
   // 3. Create enrollments (handles bundles → all courses, batches → course)
-  const enrollmentCount = await createEnrollmentsFromOrder(orderId, userId, orderItems, createdBy);
+  const enrollmentStep = await withStep(orderId, 'enrollments',
+    () => createEnrollmentsFromOrder(orderId, userId, orderItems, createdBy));
+  const enrollmentCount = (enrollmentStep.result as number | undefined) ?? 0;
 
   // 4. Update student profile
-  await updateStudentProfile(userId, order.total_amount, enrollmentCount);
+  await withStep(orderId, 'student_profile',
+    () => updateStudentProfile(userId, order.total_amount, enrollmentCount));
 
   // 5. Increment coupon usage (if not already done)
   if (!params.skipCouponIncrement && order.coupon_id) {
-    await incrementCouponUsage(order.coupon_id);
+    await withStep(orderId, 'coupon_increment', () => incrementCouponUsage(order.coupon_id));
   }
 
   // 6. Increment promotion usage
   if (order.promotion_id) {
-    await incrementPromotionUsage(order.promotion_id);
+    await withStep(orderId, 'promotion_increment', () => incrementPromotionUsage(order.promotion_id));
   }
 
   // 7. Process referral rewards
-  const referralReward = await processReferralRewards(userId, orderId, order.total_amount);
+  const referralStep = await withStep(orderId, 'referral_rewards',
+    () => processReferralRewards(userId, orderId, order.total_amount));
+  const referralReward = (referralStep.result as boolean | undefined) ?? false;
 
   // 8. Create instructor earnings (revenue share)
   let instructorEarnings = 0;
   try {
-    const earningResult = await createEarningsFromOrder(orderId, userId, gstAmount, createdBy);
-    instructorEarnings = earningResult.totalEarnings;
+    const earningStep = await withStep(orderId, 'instructor_earnings', async () => {
+      const earningResult = await createEarningsFromOrder(orderId, userId, gstAmount, createdBy);
+      return earningResult.totalEarnings;
+    });
+    instructorEarnings = (earningStep.result as number | undefined) ?? 0;
 
-    // 8b. Credit instructor wallets with their earnings
-    const { data: earnings } = await supabase
-      .from('instructor_earnings')
-      .select('instructor_id, earning_amount')
-      .eq('order_id', orderId)
-      .is('deleted_at', null);
-
-    if (earnings) {
-      for (const earning of earnings) {
-        await creditWallet({
-          userId: earning.instructor_id,
-          amount: Number(earning.earning_amount),
-          sourceType: 'earning',
-          sourceId: orderId,
-          description: `Earning from order #${orderId}`,
-          metadata: { order_id: orderId },
-          createdBy,
-        }).catch(e => console.error('[POST-PAYMENT] Wallet credit failed:', e));
+    // 8b. Credit instructor wallets — idempotent at the UDF level via
+    //     (source_type='earning', source_id=orderId). A re-run is a no-op.
+    await withStep(orderId, 'instructor_wallet_credits', async () => {
+      const { data: earnings } = await supabase
+        .from('instructor_earnings')
+        .select('instructor_id, earning_amount')
+        .eq('order_id', orderId)
+        .is('deleted_at', null);
+      if (earnings) {
+        for (const earning of earnings) {
+          await creditWallet({
+            userId: earning.instructor_id,
+            amount: Number(earning.earning_amount),
+            sourceType: 'earning',
+            sourceId: orderId,
+            description: `Earning from order #${orderId}`,
+            metadata: { order_id: orderId },
+            createdBy,
+          }).catch(e => console.error('[POST-PAYMENT] Wallet credit failed:', e));
+        }
       }
-    }
+      return earnings?.length || 0;
+    });
   } catch (e) {
     console.error('[POST-PAYMENT] Instructor earnings failed (non-fatal):', e);
   }
 
-  // 9. Send notifications (non-blocking — failures don't affect payment)
-  try {
-    // Notify student: payment received
-    await notifyPaymentReceived(userId, order.total_amount, orderId, createdBy);
+  // 9. Notifications — wrapped so a transient SMS/email outage doesn't re-send.
+  await withStep(orderId, 'notifications', async () => {
+    try {
+      await notifyPaymentReceived(userId, order.total_amount, orderId, createdBy);
 
-    // Notify student: enrollment confirmed (get first course name)
-    if (orderItems.length > 0) {
-      const firstItem = orderItems[0];
-      let courseName = 'your course';
-      if (firstItem.item_type === 'course') {
-        const { data: c } = await supabase.from('courses').select('name').eq('id', firstItem.item_id).single();
-        if (c) courseName = c.name;
-      } else if (firstItem.item_type === 'bundle') {
-        const { data: b } = await supabase.from('bundles').select('name').eq('id', firstItem.item_id).single();
-        if (b) courseName = b.name;
-      }
-      await notifyEnrollmentConfirmed(userId, courseName, orderId, createdBy);
-    }
-
-    // Notify each instructor about their earning
-    const { data: earnings } = await supabase
-      .from('instructor_earnings')
-      .select('instructor_id, earning_amount, item_type, item_id')
-      .eq('order_id', orderId)
-      .is('deleted_at', null);
-
-    if (earnings) {
-      for (const earning of earnings) {
-        let itemName = 'an item';
-        const tableMap: Record<string, string> = { course: 'courses', bundle: 'bundles', batch: 'course_batches', webinar: 'webinars' };
-        const nameCol: Record<string, string> = { course: 'name', bundle: 'name', batch: 'batch_name', webinar: 'title' };
-        const tbl = tableMap[earning.item_type];
-        const col = nameCol[earning.item_type];
-        if (tbl && col) {
-          const { data: item } = await supabase.from(tbl).select(col).eq('id', earning.item_id).single();
-          if (item) itemName = (item as Record<string, any>)[col];
+      if (orderItems.length > 0) {
+        const firstItem = orderItems[0];
+        let courseName = 'your course';
+        if (firstItem.item_type === 'course') {
+          const { data: c } = await supabase.from('courses').select('name').eq('id', firstItem.item_id).single();
+          if (c) courseName = c.name;
+        } else if (firstItem.item_type === 'bundle') {
+          const { data: b } = await supabase.from('bundles').select('name').eq('id', firstItem.item_id).single();
+          if (b) courseName = b.name;
         }
-        await notifyInstructorEarning(earning.instructor_id, earning.earning_amount, itemName, orderId);
+        await notifyEnrollmentConfirmed(userId, courseName, orderId, createdBy);
       }
+
+      const { data: earnings } = await supabase
+        .from('instructor_earnings')
+        .select('instructor_id, earning_amount, item_type, item_id')
+        .eq('order_id', orderId)
+        .is('deleted_at', null);
+
+      if (earnings) {
+        for (const earning of earnings) {
+          let itemName = 'an item';
+          const tableMap: Record<string, string> = { course: 'courses', bundle: 'bundles', batch: 'course_batches', webinar: 'webinars' };
+          const nameCol: Record<string, string> = { course: 'name', bundle: 'name', batch: 'batch_name', webinar: 'title' };
+          const tbl = tableMap[earning.item_type];
+          const col = nameCol[earning.item_type];
+          if (tbl && col) {
+            const { data: item } = await supabase.from(tbl).select(col).eq('id', earning.item_id).single();
+            if (item) itemName = (item as Record<string, any>)[col];
+          }
+          await notifyInstructorEarning(earning.instructor_id, earning.earning_amount, itemName, orderId);
+        }
+      }
+      return true;
+    } catch (e) {
+      console.error('[POST-PAYMENT] Notification failed (non-fatal):', e);
+      return false;
     }
-  } catch (e) {
-    console.error('[POST-PAYMENT] Notification failed (non-fatal):', e);
-  }
+  });
 
   // 10. Clear cart
-  await supabase.from('cart_items').delete().eq('user_id', userId);
+  await withStep(orderId, 'clear_cart', async () => {
+    await supabase.from('cart_items').delete().eq('user_id', userId);
+    return true;
+  });
 
-  // 11. Invalidate caches
+  // 11. Invoice PDF (Phase 8.7) — fire-and-forget enqueue so a slow Puppeteer
+  //     boot can't stall the checkout response. Idempotent at the queue layer
+  //     (jobId='invoice:<orderId>') and at the service layer (returns existing
+  //     URL when invoices.tax_invoice_no is already populated).
+  await withStep(orderId, 'invoice_pdf', async () => {
+    const { enqueueInvoicePdf } = await import('./pdfQueue.service');
+    await enqueueInvoicePdf(orderId);
+    return true;
+  });
+
+  // 12. Invalidate caches (cheap, not gated)
   await clearAllCaches();
 
   return { enrollments: enrollmentCount, gstAmount, referralReward, instructorEarnings };
@@ -346,26 +429,13 @@ async function upsertEnrollment(
 
 
 // ──────────────────────────────────────────────
-// Student Profile Update
+// Student Profile Update (Phase 13 — removed)
+// student_profiles table was dropped. Denormalised counters
+// `courses_enrolled` and `total_amount_paid` are no longer maintained.
+// If you ever need them, compute on-demand from the enrollments + orders tables.
 // ──────────────────────────────────────────────
-async function updateStudentProfile(userId: number, totalAmountPaid: number, newEnrollments: number) {
-  // Find student profile by user_id
-  const { data: profile } = await supabase
-    .from('student_profiles')
-    .select('id, courses_enrolled, total_amount_paid')
-    .eq('user_id', userId)
-    .single();
-
-  if (profile) {
-    await supabase
-      .from('student_profiles')
-      .update({
-        courses_enrolled: (profile.courses_enrolled || 0) + newEnrollments,
-        total_amount_paid: Math.round(((profile.total_amount_paid || 0) + totalAmountPaid) * 100) / 100,
-      })
-      .eq('id', profile.id);
-  }
-  // If no student profile exists, that's OK — admin can create one later
+async function updateStudentProfile(_userId: number, _totalAmountPaid: number, _newEnrollments: number) {
+  // intentionally no-op
 }
 
 
@@ -415,92 +485,16 @@ async function incrementPromotionUsage(promotionId: number) {
 // Referral Rewards
 // ──────────────────────────────────────────────
 async function processReferralRewards(
-  userId: number,
-  orderId: number,
-  orderTotal: number,
+  _userId: number,
+  _orderId: number,
+  _orderTotal: number,
 ): Promise<boolean> {
-  // Check if this user signed up with a referral code (via student_profiles.referred_by_user_id)
-  const { data: profile } = await supabase
-    .from('student_profiles')
-    .select('id, referred_by_user_id, referral_code_used')
-    .eq('user_id', userId)
-    .single();
-
-  if (!profile?.referral_code_used) return false;
-
-  // Find the referral code record
-  const { data: refCode } = await supabase
-    .from('referral_codes')
-    .select('*')
-    .eq('referral_code', profile.referral_code_used)
-    .eq('is_active', true)
-    .is('deleted_at', null)
-    .single();
-
-  if (!refCode) return false;
-
-  // Check if we already created a usage record for this order
-  const { data: existingUsage } = await supabase
-    .from('referral_usages')
-    .select('id')
-    .eq('referral_code_id', refCode.id)
-    .eq('referred_user_id', userId)
-    .eq('order_id', orderId)
-    .single();
-
-  if (existingUsage) return false; // Already processed
-
-  // Create referral usage record
-  const { data: usage } = await supabase
-    .from('referral_usages')
-    .insert({
-      referral_code_id: refCode.id,
-      referred_user_id: userId,
-      order_id: orderId,
-      order_amount: orderTotal,
-      usage_status: 'completed',
-      completed_at: new Date().toISOString(),
-    })
-    .select('id')
-    .single();
-
-  // Calculate referrer reward
-  let rewardAmount = 0;
-  if (refCode.referrer_reward_type === 'percentage' && refCode.referrer_reward_percentage) {
-    rewardAmount = orderTotal * (refCode.referrer_reward_percentage / 100);
-    if (refCode.max_discount_amount && rewardAmount > refCode.max_discount_amount) {
-      rewardAmount = refCode.max_discount_amount;
-    }
-  } else if (refCode.referrer_reward_type === 'fixed' && refCode.referrer_reward_amount) {
-    rewardAmount = refCode.referrer_reward_amount;
-  } else if (refCode.referrer_reward_type === 'credit' && refCode.referrer_reward_amount) {
-    rewardAmount = refCode.referrer_reward_amount;
-  }
-
-  rewardAmount = Math.round(rewardAmount * 100) / 100;
-
-  if (rewardAmount > 0 && usage) {
-    // Create reward record for the referrer
-    await supabase.from('referral_rewards').insert({
-      referral_code_id: refCode.id,
-      referral_usage_id: usage.id,
-      reward_type: refCode.referrer_reward_type || 'credit',
-      reward_amount: rewardAmount,
-      reward_status: 'pending',
-      is_active: true,
-    });
-  }
-
-  // Update referral code stats
-  await supabase
-    .from('referral_codes')
-    .update({
-      usage_count: (refCode.usage_count || 0) + 1,
-      total_referrals: (refCode.total_referrals || 0) + 1,
-      successful_referrals: (refCode.successful_referrals || 0) + 1,
-      total_earnings: Math.round(((refCode.total_earnings || 0) + rewardAmount) * 100) / 100,
-    })
-    .eq('id', refCode.id);
-
-  return true;
+  // Phase 13 — student_profiles (which held signup-time referral attribution
+  // via `referred_by_user_id` and `referral_code_used`) is dropped. The
+  // dedicated referral_codes / referral_usages / referral_rewards tables
+  // are still in place but unused (0 rows). When the referral product
+  // actually launches, reintroduce attribution as a column on `users`
+  // (e.g. `signup_referral_code_id`) and rebuild this function around the
+  // existing referral_usages insert/update flow.
+  return false;
 }

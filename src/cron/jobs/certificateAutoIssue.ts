@@ -116,6 +116,15 @@ export async function runCertificateAutoIssue(): Promise<{ issued: number; noTem
 
     issued++;
 
+    // Phase 8.7 — enqueue PDF + PNG render. Idempotent at the queue layer
+    // (jobId='certificate:<id>'); slow Puppeteer boot can't stall the cron.
+    try {
+      const { enqueueCertificatePdf } = await import('../../services/pdfQueue.service');
+      await enqueueCertificatePdf(cert!.id);
+    } catch (e: any) {
+      logger.warn({ err: e?.message, certId: cert?.id }, '[Cron:CertAutoIssue] Enqueue PDF failed (non-fatal)');
+    }
+
     // Notify the student
     try {
       await sendNotification({

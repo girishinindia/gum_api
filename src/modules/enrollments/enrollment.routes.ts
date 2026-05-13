@@ -10,6 +10,8 @@ r.use(authMiddleware, attachPermissions());
 r.get('/', ctrl.list);
 r.get('/user/:userId', ctrl.getByUser);
 r.get('/:id/progress', ctrl.getProgress);
+// Phase 3.2 — signed video playback URL (Bunny Stream token auth)
+r.get('/:id/playback/:videoId', ctrl.getPlaybackUrl);
 r.get('/:id', ctrl.getById);
 r.post('/:id/progress', requirePermission('enrollment_progress', 'create'), ctrl.updateProgress);
 r.post('/', requirePermission('enrollment', 'create'), ctrl.create);

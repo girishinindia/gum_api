@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.github
+.env
+.env.*
+*.log
+.DS_Store
+tests
+jest.config.js
+tsconfig.test.json
+README.md
+sql
+docker-compose.yml

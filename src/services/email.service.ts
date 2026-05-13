@@ -194,7 +194,17 @@ function buildHtml(purpose: EmailPurpose, name: string, otp?: string): string {
 
 // ── Public API ──
 
-async function sendViaBrevo(email: string, name: string, subject: string, html: string): Promise<void> {
+/**
+ * Direct Brevo call — never use this from a request handler. The queue
+ * worker uses it; everyone else goes through {@link sendOtpEmail} /
+ * {@link sendNotificationEmail} which honour Phase 7 queue routing.
+ */
+export async function sendEmailDirect(
+  email: string,
+  name: string,
+  subject: string,
+  html: string,
+): Promise<void> {
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -212,18 +222,48 @@ async function sendViaBrevo(email: string, name: string, subject: string, html: 
   if (!res.ok) throw new Error('Brevo email failed: ' + (await res.text()));
 }
 
+// Lazy require to avoid an import cycle (queue.service → logger → config OK,
+// but email.service is imported very early during auth bootstrap; the queue
+// is created on first call only).
+async function maybeEnqueueEmail(payload: {
+  email: string;
+  name: string;
+  subject: string;
+  html: string;
+}): Promise<void> {
+  const { enqueue } = await import('./queue.service');
+  await enqueue(
+    'email',
+    'send',
+    payload,
+    {
+      syncFallback: (data) =>
+        sendEmailDirect(data.email, data.name, data.subject, data.html),
+    },
+  );
+}
+
 // Backward-compatible: used by existing auth flows
-export async function sendOtpEmail(email: string, name: string, otp: string, purpose: EmailPurpose = 'registration'): Promise<void> {
+export async function sendOtpEmail(
+  email: string,
+  name: string,
+  otp: string,
+  purpose: EmailPurpose = 'registration',
+): Promise<void> {
   const t = TEMPLATES[purpose];
   const subject = t.subject(otp);
   const html = buildHtml(purpose, name, otp);
-  return sendViaBrevo(email, name, subject, html);
+  return maybeEnqueueEmail({ email, name, subject, html });
 }
 
 // For non-OTP emails (welcome, suspension, reactivation)
-export async function sendNotificationEmail(email: string, name: string, purpose: EmailPurpose): Promise<void> {
+export async function sendNotificationEmail(
+  email: string,
+  name: string,
+  purpose: EmailPurpose,
+): Promise<void> {
   const t = TEMPLATES[purpose];
   const subject = t.subject();
   const html = buildHtml(purpose, name);
-  return sendViaBrevo(email, name, subject, html);
+  return maybeEnqueueEmail({ email, name, subject, html });
 }

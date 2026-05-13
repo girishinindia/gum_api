@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Typecheck + Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps (skip Puppeteer Chromium download)
+        run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:ci
+        env:
+          # Dummy values so config/index.ts's non-null assertions don't crash
+          # during module-load time. tests/setup.ts also sets these but
+          # belt-and-braces in CI keeps node_modules postinstall happy.
+          SUPABASE_URL: 'https://example.supabase.co'
+          SUPABASE_SERVICE_ROLE_KEY: 'ci-service-role'
+          JWT_ACCESS_SECRET: 'ci-jwt-access'
+          JWT_REFRESH_SECRET: 'ci-jwt-refresh'
+          UPSTASH_REDIS_URL: 'redis://localhost:6379'
+          BREVO_API_KEY: 'ci-brevo'
+          SMS_API_KEY: 'ci-sms'
+          SMS_ENTITY_ID: 'ci-entity'
+          SMS_DLT_TEMPLATE_ID: 'ci-dlt'
+          BUNNY_STORAGE_ZONE: 'ci-zone'
+          BUNNY_STORAGE_KEY: 'ci-key'
+          BUNNY_STORAGE_URL: 'https://storage.bunnycdn.com'
+          BUNNY_CDN_URL: 'https://ci.b-cdn.net'
+          BUNNY_STREAM_LIBRARY_ID: '629329'
+          BUNNY_STREAM_TOKEN_KEY: 'ci-token-key'
+          RAZORPAY_KEY_ID: 'rzp_test_ci'
+          RAZORPAY_KEY_SECRET: 'rzp_test_ci_secret'
+
+  build:
+    name: Production Build
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # Job-level env so the Sentry steps can guard on it with `if:`
+    # (GitHub Actions can't evaluate `secrets.X` directly in conditionals).
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG:        ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT:    ${{ secrets.SENTRY_PROJECT }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Build TypeScript
+        run: npm run build
+
+      # ── Phase 12.1 — Sentry source-map upload ──
+      # Skipped automatically when SENTRY_AUTH_TOKEN isn't configured (forks,
+      # PRs from non-collaborators, etc.) so the build stays green even if
+      # the secret isn't available.
+      - name: Upload source maps to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: |
+          set -e
+          RELEASE="$GITHUB_SHA"
+          echo "Uploading source maps for release $RELEASE"
+          npx @sentry/cli@^2.50 releases new       "$RELEASE"
+          npx @sentry/cli@^2.50 sourcemaps inject  ./dist
+          npx @sentry/cli@^2.50 sourcemaps upload  --release="$RELEASE" --strip-prefix "$GITHUB_WORKSPACE" ./dist
+          npx @sentry/cli@^2.50 releases finalize  "$RELEASE"
+
+      # Strip *.map files from the artefact that ships to production so the
+      # public web surface doesn't expose them. Sentry already has them.
+      - name: Strip source maps from dist (post-upload)
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: find ./dist -name '*.map' -delete

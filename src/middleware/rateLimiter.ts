@@ -55,3 +55,30 @@ export const checkoutLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Too many checkout attempts. Please try again later.' },
 });
+
+/**
+ * Public certificate verify endpoint: GET /verify/cert/:cert_number
+ * Cert numbers are higher-entropy than resume slugs so a slightly more
+ * permissive limit is acceptable. 60 req/min per IP.
+ */
+export const publicVerifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests. Please slow down.' },
+});
+
+/**
+ * Phase 11.5.3 — Public fuzzy-search endpoints.
+ * Each request hits a trigram index (cheap) but the endpoint is unauthenticated
+ * so bots will hammer it. 90 req/min per IP keeps a real keystroke-driven UX
+ * smooth (≈1.5 req/sec) while choking off scrapers.
+ */
+export const publicSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 90,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many search requests. Please slow down.' },
+});

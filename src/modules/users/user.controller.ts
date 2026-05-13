@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { supabase } from '../../config/supabase';
+import { db } from '../../services/db';
 import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
@@ -297,7 +298,7 @@ export async function getSessions(req: Request, res: Response) {
 }
 
 export async function revokeAllSessions(req: Request, res: Response) {
-  const { data: count } = await supabase.rpc('revoke_all_sessions', { p_user_id: parseInt(req.params.id), p_reason: 'admin' });
+  const count = await db.callFn('revoke_all_sessions', { p_user_id: parseInt(req.params.id), p_reason: 'admin' }).catch(() => 0);
   logAdmin({ actorId: req.user!.id, action: 'all_sessions_revoked', targetType: 'user', targetId: parseInt(req.params.id), ip: getClientIp(req), metadata: { count } });
   return ok(res, { revoked: count }, `${count} sessions revoked`);
 }

@@ -15,6 +15,8 @@ import { runCourseReminder } from './jobs/courseReminder';
 import { runStaleCartCleanup } from './jobs/staleCartCleanup';
 import { runCouponDeactivation } from './jobs/couponDeactivation';
 import { runOldNotificationCleanup } from './jobs/oldNotificationCleanup';
+import { runWalletReconciliation } from './jobs/walletReconciliation';
+import { runRevenueDailyRefresh } from './jobs/revenueDailyRefresh';
 
 // ── Types ──
 export interface CronJobDef {
@@ -155,6 +157,22 @@ const jobs: CronJobDef[] = [
     schedule: '0 6 * * *',           // Daily at 6:00 AM
     description: 'Soft-delete read notifications (90+ days) and permanently failed notifications (30+ days)',
     handler: runOldNotificationCleanup,
+    lockTtl: 120,
+    enabled: true,
+  },
+  {
+    name: 'wallet-reconciliation',
+    schedule: '30 1 * * *',          // Daily at 01:30 AM
+    description: 'Compare wallets.balance vs SUM(wallet_transactions) and flag any drift',
+    handler: runWalletReconciliation,
+    lockTtl: 300,
+    enabled: true,
+  },
+  {
+    name: 'revenue-daily-refresh',
+    schedule: '30 2 * * *',          // Daily at 02:30 AM (Asia/Kolkata bucketing in the view)
+    description: 'Refresh v_revenue_daily materialised view for the revenue dashboard',
+    handler: runRevenueDailyRefresh,
     lockTtl: 120,
     enabled: true,
   },

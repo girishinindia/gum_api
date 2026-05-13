@@ -16,6 +16,7 @@
  */
 
 import { supabase } from '../config/supabase';
+import { db } from './db';
 import { redis } from '../config/redis';
 
 // ── Types ──
@@ -111,147 +112,85 @@ export async function getWalletBalance(userId: number): Promise<number> {
 }
 
 // ── Credit wallet ──
+// Atomic: delegates the entire insert-txn + update-balance flow to fn_wallet_credit
+// in Postgres. SELECT … FOR UPDATE holds the wallets row throughout, eliminating
+// the prior 2-query race window where a crash between the insert and the update
+// would leave balance drift. Idempotent via idx_wallet_txns_idempotent.
 export async function creditWallet(params: WalletCreditParams): Promise<WalletTransactionResult> {
   const { userId, amount, sourceType, sourceId, description, metadata, createdBy } = params;
 
   if (amount <= 0) return { success: false, error: 'Amount must be positive' };
 
-  const wallet = await getOrCreateWallet(userId);
-  if (!wallet) return { success: false, error: 'Failed to get or create wallet' };
-
-  const balanceBefore = Number(wallet.balance);
-  const balanceAfter = balanceBefore + amount;
-
-  // Insert transaction (idempotent via unique index when sourceId provided)
-  const { data: txn, error: txnError } = await supabase
-    .from('wallet_transactions')
-    .insert({
-      wallet_id: wallet.id,
-      transaction_type: 'credit',
-      amount,
-      balance_before: balanceBefore,
-      balance_after: balanceAfter,
-      source_type: sourceType,
-      source_id: sourceId || null,
-      description,
-      status: 'completed',
-      metadata: metadata || null,
-      created_by: createdBy || null,
-      is_active: true,
-    })
-    .select('id')
-    .single();
-
-  if (txnError) {
-    // Idempotent: if it's a duplicate, return success without changing balance
-    if (txnError.code === '23505') {
-      return { success: true, walletId: wallet.id, balanceBefore, balanceAfter: balanceBefore, error: 'Duplicate transaction — already credited' };
-    }
-    console.error('[WalletService] Credit transaction failed:', txnError.message);
-    return { success: false, error: txnError.message };
+  let data: any;
+  try {
+    data = await db.callFn('fn_wallet_credit', {
+      p_user_id: userId,
+      p_amount: amount,
+      p_source_type: sourceType,
+      p_source_id: sourceId ?? null,
+      p_description: description,
+      p_metadata: metadata ?? null,
+      p_created_by: createdBy ?? null,
+    });
+  } catch (e: any) {
+    console.error('[WalletService] fn_wallet_credit failed:', e?.message);
+    return { success: false, error: e?.message ?? 'fn_wallet_credit failed' };
   }
 
-  // Update wallet balance + aggregates
-  const { error: updateError } = await supabase
-    .from('wallets')
-    .update({
-      balance: balanceAfter,
-      total_credited: Number(wallet.balance) + amount, // We need to re-read but for simplicity use RPC or increment
-      updated_by: createdBy || null,
-    })
-    .eq('id', wallet.id);
-
-  if (updateError) {
-    console.error('[WalletService] Wallet balance update failed:', updateError.message);
-    // Transaction was recorded — balance will be reconciled
-  }
-
-  // Update total_credited using raw SQL increment for accuracy
-  try { await supabase.rpc('increment_wallet_total_credited', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { success: false, error: 'No row returned from fn_wallet_credit' };
 
   await clearWalletCaches(userId);
 
   return {
     success: true,
-    walletId: wallet.id,
-    transactionId: txn?.id,
-    balanceBefore,
-    balanceAfter,
+    walletId: Number(row.wallet_id),
+    transactionId: Number(row.transaction_id),
+    balanceBefore: Number(row.balance_before),
+    balanceAfter: Number(row.balance_after),
+    error: row.status === 'duplicate' ? 'Duplicate transaction — already credited' : undefined,
   };
 }
 
 // ── Debit wallet ──
-export async function debitWallet(params: WalletDebitParams): Promise<WalletTransactionResult> {
-  const { userId, amount, sourceType, sourceId, description, metadata, createdBy } = params;
+// Atomic via fn_wallet_debit. Honours wallet freeze + insufficient-balance
+// policy server-side (Postgres ERRCODEs P0001 / P0002).
+export async function debitWallet(params: WalletDebitParams & { allowOverdraft?: boolean }): Promise<WalletTransactionResult> {
+  const { userId, amount, sourceType, sourceId, description, metadata, createdBy, allowOverdraft } = params;
 
   if (amount <= 0) return { success: false, error: 'Amount must be positive' };
 
-  const wallet = await getOrCreateWallet(userId);
-  if (!wallet) return { success: false, error: 'Failed to get or create wallet' };
-  if (wallet.is_frozen) return { success: false, error: 'Wallet is frozen' };
-
-  const balanceBefore = Number(wallet.balance);
-  if (balanceBefore < amount) return { success: false, error: 'Insufficient balance' };
-
-  const balanceAfter = balanceBefore - amount;
-
-  const txnType = sourceType === 'payout' ? 'payout' : sourceType === 'purchase' ? 'debit' : 'debit';
-
-  const { data: txn, error: txnError } = await supabase
-    .from('wallet_transactions')
-    .insert({
-      wallet_id: wallet.id,
-      transaction_type: txnType,
-      amount,
-      balance_before: balanceBefore,
-      balance_after: balanceAfter,
-      source_type: sourceType,
-      source_id: sourceId || null,
-      description,
-      status: 'completed',
-      metadata: metadata || null,
-      created_by: createdBy || null,
-      is_active: true,
-    })
-    .select('id')
-    .single();
-
-  if (txnError) {
-    if (txnError.code === '23505') {
-      return { success: true, walletId: wallet.id, balanceBefore, balanceAfter: balanceBefore, error: 'Duplicate transaction' };
-    }
-    console.error('[WalletService] Debit transaction failed:', txnError.message);
-    return { success: false, error: txnError.message };
+  let data: any;
+  try {
+    data = await db.callFn('fn_wallet_debit', {
+      p_user_id: userId,
+      p_amount: amount,
+      p_source_type: sourceType,
+      p_source_id: sourceId ?? null,
+      p_description: description,
+      p_metadata: metadata ?? null,
+      p_created_by: createdBy ?? null,
+      p_allow_overdraft: !!allowOverdraft,
+    });
+  } catch (error: any) {
+    if (error.code === 'P0001') return { success: false, error: 'Wallet is frozen' };
+    if (error.code === 'P0002') return { success: false, error: 'Insufficient balance' };
+    console.error('[WalletService] fn_wallet_debit failed:', error.message);
+    return { success: false, error: error.message };
   }
 
-  // Update wallet balance
-  const { error: updateError } = await supabase
-    .from('wallets')
-    .update({
-      balance: balanceAfter,
-      updated_by: createdBy || null,
-    })
-    .eq('id', wallet.id);
-
-  if (updateError) {
-    console.error('[WalletService] Wallet balance update failed:', updateError.message);
-  }
-
-  // Increment debited/withdrawn aggregates
-  if (sourceType === 'payout') {
-    try { await supabase.rpc('increment_wallet_total_withdrawn', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
-  } else {
-    try { await supabase.rpc('increment_wallet_total_debited', { wallet_row_id: wallet.id, inc_amount: amount }); } catch {}
-  }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { success: false, error: 'No row returned from fn_wallet_debit' };
 
   await clearWalletCaches(userId);
 
   return {
     success: true,
-    walletId: wallet.id,
-    transactionId: txn?.id,
-    balanceBefore,
-    balanceAfter,
+    walletId: Number(row.wallet_id),
+    transactionId: Number(row.transaction_id),
+    balanceBefore: Number(row.balance_before),
+    balanceAfter: Number(row.balance_after),
+    error: row.status === 'duplicate' ? 'Duplicate transaction — already debited' : undefined,
   };
 }
 

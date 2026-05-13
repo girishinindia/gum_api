@@ -1,0 +1,17 @@
+-- ============================================================
+-- 50_post_payment_steps.sql
+-- Phase 2.3 — Re-entrant post-payment orchestration.
+-- Applied to live DB as migration: phase2_post_payment_steps
+--
+-- Tables: post_payment_steps(order_id, step_name) PRIMARY KEY
+-- Functions:
+--   fn_claim_payment_step(order, step)    → claim row (or detect completed)
+--   fn_complete_payment_step(order, step) → mark success
+--   fn_fail_payment_step(order, step)     → mark failure (retriable)
+--
+-- The JS withStep() wrapper in postPayment.service.ts uses these to gate
+-- every step of orchestratePostPayment(). A crash mid-orchestration leaves
+-- the row in 'running'; the next call (from webhook re-delivery or admin
+-- replay) detects it and re-runs.
+-- ============================================================
+-- See live migration phase2_post_payment_steps for the full body.

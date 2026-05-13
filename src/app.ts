@@ -46,8 +46,6 @@ import userSkillRoutes from './modules/user-skills/userSkill.routes';
 import userLanguageRoutes from './modules/user-languages/userLanguage.routes';
 import userDocumentRoutes from './modules/user-documents/userDocument.routes';
 import userProjectRoutes from './modules/user-projects/userProject.routes';
-import employeeProfileRoutes from './modules/employee-profiles/employeeProfile.routes';
-import studentProfileRoutes from './modules/student-profiles/studentProfile.routes';
 import instructorProfileRoutes from './modules/instructor-profiles/instructorProfile.routes';
 import subjectRoutes from './modules/subjects/subject.routes';
 import chapterRoutes from './modules/chapters/chapter.routes';
@@ -172,6 +170,16 @@ import chatInviteRoutes from './modules/chat-invites/chatInvite.routes';
 import announcementRoutes from './modules/announcements/announcement.routes';
 import walletRoutes from './modules/wallets/wallet.routes';
 import walletTransactionRoutes from './modules/wallets/walletTransaction.routes';
+import webhookRoutes from './modules/webhooks/webhook.routes';
+import adminQueueRoutes from './modules/admin-queues/adminQueue.routes';
+import verifyRoutes from './modules/verify/verify.routes';
+import bankAccountRoutes from './modules/bank-accounts/bankAccount.routes';
+import instructorPayoutRoutes from './modules/instructor-payouts/instructorPayout.routes';
+import adminRevenueRoutes from './modules/admin-revenue/adminRevenue.routes';
+import adminDashboardsRoutes from './modules/admin-dashboards/adminDashboards.routes';
+import searchRoutes from './modules/search/search.routes';
+import pushDeviceRoutes from './modules/push-devices/pushDevice.routes';
+import pushPublicRoutes from './modules/push-devices/pushPublic.routes';
 
 const app = express();
 
@@ -199,6 +207,24 @@ app.use(activityLogger);
 
 // ── Health Check ──
 app.get('/health', (_req, res) => res.json({ status: 'ok', app: config.appName, version: config.apiVersion, timestamp: new Date().toISOString() }));
+
+// ── Prometheus metrics (Phase 7.6) ──
+// Mounted before auth/RBAC so a Prometheus scraper can hit it.
+// Lock down at the network layer (private VPC / METRICS_ALLOWED_IPS).
+if (config.metrics.enabled) {
+  app.get('/metrics', async (req, res) => {
+    if (config.metrics.allowedIps.length > 0) {
+      const callerIp = (req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      if (!config.metrics.allowedIps.includes(callerIp)) {
+        return res.status(403).type('text/plain').send('forbidden');
+      }
+    }
+    const { registry, refreshQueueDepthGauge } = await import('./services/metrics.service');
+    try { await refreshQueueDepthGauge(); } catch { /* swallow */ }
+    res.set('Content-Type', registry.contentType);
+    res.send(await registry.metrics());
+  });
+}
 
 // ── API Docs (Swagger UI) ──
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -243,8 +269,6 @@ app.use(`${api}/user-skills`,              userSkillRoutes);
 app.use(`${api}/user-languages`,           userLanguageRoutes);
 app.use(`${api}/user-documents`,           userDocumentRoutes);
 app.use(`${api}/user-projects`,            userProjectRoutes);
-app.use(`${api}/employee-profiles`,          employeeProfileRoutes);
-app.use(`${api}/student-profiles`,           studentProfileRoutes);
 app.use(`${api}/instructor-profiles`,        instructorProfileRoutes);
 app.use(`${api}/subjects`,                    subjectRoutes);
 app.use(`${api}/chapters`,                    chapterRoutes);
@@ -369,6 +393,16 @@ app.use(`${api}/chat-invites`,                             chatInviteRoutes);
 app.use(`${api}/announcements`,                            announcementRoutes);
 app.use(`${api}/wallets`,                                  walletRoutes);
 app.use(`${api}/wallet-transactions`,                      walletTransactionRoutes);
+app.use(`${api}/webhooks`,                                 webhookRoutes);
+app.use(`${api}/admin/queues`,                             adminQueueRoutes);
+app.use(`${api}/verify`,                                   verifyRoutes);
+app.use(`${api}/bank-accounts`,                            bankAccountRoutes);
+app.use(`${api}/instructor-payouts`,                       instructorPayoutRoutes);
+app.use(`${api}/admin/revenue`,                            adminRevenueRoutes);
+app.use(`${api}/admin/dashboards`,                         adminDashboardsRoutes);
+app.use(`${api}/search`,                                   searchRoutes);
+app.use(`${api}/push`,                                     pushPublicRoutes);
+app.use(`${api}/push-devices`,                             pushDeviceRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
@@ -385,6 +419,20 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
       status,
       userId: (req as any).user?.id,
     }, `Unhandled ${status}: ${err.message}`);
+
+    // Phase 7.5 — ship 5xx to Sentry (no-op when SENTRY_DSN not set)
+    if (config.sentry.dsn) {
+      try {
+        const Sentry = require('@sentry/node');
+        Sentry.withScope((scope: any) => {
+          scope.setTag('http.method', req.method);
+          scope.setTag('http.status', String(status));
+          scope.setContext('request', { url: req.originalUrl, ip: req.ip });
+          if ((req as any).user?.id) scope.setUser({ id: String((req as any).user.id) });
+          Sentry.captureException(err);
+        });
+      } catch { /* swallow */ }
+    }
   } else {
     logger.warn({ method: req.method, url: req.originalUrl, status }, err.message);
   }

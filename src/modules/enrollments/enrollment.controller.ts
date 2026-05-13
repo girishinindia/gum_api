@@ -6,6 +6,8 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { signEmbedUrl } from '../../services/bunnyToken.service';
+import { hasPermission } from '../../middleware/rbac';
 
 const TABLE = 'enrollments';
 const CACHE_KEY = 'enrollments:all';
@@ -217,4 +219,92 @@ export async function updateProgress(req: Request, res: Response) {
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'enrollment_progress_updated', targetType: 'enrollment_progress', targetId: progressData.id, targetName: `Progress #${progressData.id}`, ip: getClientIp(req) });
   return ok(res, { ...progressData, enrollment_progress_pct: progressPct }, existing ? 'Progress updated' : 'Progress created', existing ? 200 : 201);
+}
+
+// ──────────────────────────────────────────────
+// Phase 3.2 — Signed video playback URL
+//
+// GET /enrollments/:id/playback/:videoId
+// Returns a short-lived signed Bunny Stream embed URL for the requested
+// videoId. Access is gated by:
+//   1. Caller must own the enrollment (user_id match) OR have admin
+//      enrollment:read permission (e.g. instructor reviewing student progress).
+//   2. Enrollment must be active and not soft-deleted.
+//   3. The videoId must exist in sub_topics and (best-effort) be reachable
+//      from this enrollment's content tree.
+// ──────────────────────────────────────────────
+export async function getPlaybackUrl(req: Request, res: Response) {
+  const enrollmentId = parseInt(req.params.id, 10);
+  const videoId = String(req.params.videoId || '').trim();
+  const callerId = req.user!.id;
+
+  if (!Number.isFinite(enrollmentId) || enrollmentId <= 0) {
+    return err(res, 'Invalid enrollment id', 400);
+  }
+  if (!videoId || videoId.length > 64) {
+    return err(res, 'Invalid videoId', 400);
+  }
+
+  // 1. Fetch enrollment
+  const { data: enrollment, error: enrollErr } = await supabase
+    .from('enrollments')
+    .select('id, user_id, item_type, item_id, enrollment_status, is_active, deleted_at, expires_at')
+    .eq('id', enrollmentId)
+    .single();
+
+  if (enrollErr || !enrollment) {
+    return err(res, 'Enrollment not found', 404);
+  }
+
+  const ownsEnrollment = enrollment.user_id === callerId;
+  const canViewAny = hasPermission(req, 'enrollment', 'read');
+  if (!ownsEnrollment && !canViewAny) {
+    return err(res, 'Forbidden', 403);
+  }
+
+  if (enrollment.deleted_at) {
+    return err(res, 'Enrollment has been removed', 410);
+  }
+  if (!enrollment.is_active || enrollment.enrollment_status !== 'active') {
+    return err(res, 'Enrollment is not active', 403);
+  }
+  if (enrollment.expires_at && new Date(enrollment.expires_at) < new Date()) {
+    return err(res, 'Enrollment expired', 403);
+  }
+
+  // 2. Confirm the video exists in our content tree at all (cheap check)
+  const { data: subTopic } = await supabase
+    .from('sub_topics')
+    .select('id, video_id, video_source, video_status, deleted_at')
+    .eq('video_id', videoId)
+    .is('deleted_at', null)
+    .limit(1)
+    .maybeSingle();
+
+  if (!subTopic) {
+    return err(res, 'Video not found in any sub-topic', 404);
+  }
+  if (subTopic.video_source && subTopic.video_source !== 'bunny_stream') {
+    return err(res, 'Video is not served via Bunny Stream', 400);
+  }
+  if (subTopic.video_status && subTopic.video_status !== 'ready') {
+    return err(res, `Video not ready (status: ${subTopic.video_status})`, 409);
+  }
+
+  // 3. Sign the URL. TTL defaults to BUNNY_STREAM_TOKEN_TTL_SECONDS (1h).
+  let signed;
+  try {
+    signed = signEmbedUrl(videoId);
+  } catch (e: any) {
+    console.error('[Enrollment.getPlaybackUrl] sign failed:', e?.message);
+    return err(res, 'Playback signing failed (server config)', 500);
+  }
+
+  return ok(res, {
+    embed_url: signed.embedUrl,
+    expires_at: signed.expiresAt.toISOString(),
+    video_id: videoId,
+    enrollment_id: enrollmentId,
+    library_id: signed.libraryId,
+  }, 'Signed playback URL');
 }

@@ -1,0 +1,17 @@
+-- ============================================================
+-- 49_wallet_atomic_udfs.sql
+-- Phase 2.2 — Atomic wallet credit/debit + reconciliation helper.
+-- Applied to live DB as migration: phase2_wallet_atomic_udfs
+--
+-- Functions:
+--   fn_get_or_create_wallet(user_id)             → BIGINT
+--   fn_wallet_credit(user, amount, src, …)       → SETOF (wallet,txn,before,after,status)
+--   fn_wallet_debit(user, amount, src, …)        → SETOF (wallet,txn,before,after,status)
+--   fn_wallet_reconcile_check()                  → SETOF (wallet, user, stored, computed, drift)
+--
+-- All three balance-changing functions use SELECT … FOR UPDATE on the
+-- wallets row to make the txn-insert + balance-update atomic. Idempotency
+-- is enforced via the existing idx_wallet_txns_idempotent unique partial
+-- index — duplicate (source_type, source_id) returns 'duplicate' status.
+-- ============================================================
+-- See live migration phase2_wallet_atomic_udfs for the full body.

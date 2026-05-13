@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
+import { db, DbError } from '../../services/db';
 import { ok, err } from '../../utils/response';
 
 /**
@@ -11,7 +12,7 @@ export async function list(req: Request, res: Response) {
 
   // Auto-sync the requested table(s) so counts are always fresh
   if (tableName) {
-    try { await supabase.rpc('udf_sync_table_summary', { p_table_name: tableName }); } catch {}
+    try { await db.callFn('udf_sync_table_summary', { p_table_name: tableName }); } catch {}
   }
 
   let q = supabase.from('table_summary').select('*');
@@ -31,10 +32,13 @@ export async function list(req: Request, res: Response) {
  * POST /table-summary/sync
  * Triggers a full sync of all table summaries
  */
-export async function syncAll(req: Request, res: Response) {
-  const { data, error: e } = await supabase.rpc('udf_sync_all_table_summaries');
-  if (e) return err(res, e.message, 500);
-  return ok(res, data, 'All table summaries synced');
+export async function syncAll(_req: Request, res: Response) {
+  try {
+    const data = await db.callFn('udf_sync_all_table_summaries');
+    return ok(res, data, 'All table summaries synced');
+  } catch (e) {
+    return err(res, e instanceof DbError ? e.message : 'sync failed', 500);
+  }
 }
 
 /**
@@ -42,9 +46,10 @@ export async function syncAll(req: Request, res: Response) {
  * Triggers sync for a single table
  */
 export async function syncOne(req: Request, res: Response) {
-  const { data, error: e } = await supabase.rpc('udf_sync_table_summary', {
-    p_table_name: req.params.tableName,
-  });
-  if (e) return err(res, e.message, 500);
-  return ok(res, data, `Table summary synced for ${req.params.tableName}`);
+  try {
+    const data = await db.callFn('udf_sync_table_summary', { p_table_name: req.params.tableName });
+    return ok(res, data, `Table summary synced for ${req.params.tableName}`);
+  } catch (e) {
+    return err(res, e instanceof DbError ? e.message : 'sync failed', 500);
+  }
 }

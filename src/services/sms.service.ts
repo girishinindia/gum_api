@@ -31,12 +31,16 @@ export const SMS_TEMPLATES = {
 
 export type SmsTemplateName = keyof typeof SMS_TEMPLATES;
 
-// Generic sender — takes template name, builds message from registry
-export async function sendSms(
+/**
+ * Direct DLT call — never call from a request handler. The queue worker
+ * uses this; everyone else goes through {@link sendSms} / {@link sendOtpSms}
+ * which honour Phase 7 queue routing.
+ */
+export async function sendSmsDirect(
   mobile: string,
   name: string,
   otp: string,
-  templateName: SmsTemplateName = 'user_registration'
+  templateName: SmsTemplateName = 'user_registration',
 ): Promise<void> {
   const tpl = SMS_TEMPLATES[templateName];
   const phone = mobile.replace('+', '');
@@ -56,10 +60,31 @@ export async function sendSms(
   });
 
   const res = await fetch(`https://www.smsgatewayhub.com/api/mt/SendSMS?${params}`);
-  const data = await res.json() as { ErrorCode?: string; ErrorMessage?: string };
+  const data = (await res.json()) as { ErrorCode?: string; ErrorMessage?: string };
   if (data.ErrorCode && data.ErrorCode !== '000') {
     throw new Error('SMS failed: ' + (data.ErrorMessage || JSON.stringify(data)));
   }
+}
+
+// Generic sender — takes template name, builds message from registry.
+// Routes through the SMS queue when QUEUE_ENABLED=true; otherwise calls
+// sendSmsDirect synchronously (pre-Phase-7 behaviour).
+export async function sendSms(
+  mobile: string,
+  name: string,
+  otp: string,
+  templateName: SmsTemplateName = 'user_registration',
+): Promise<void> {
+  const { enqueue } = await import('./queue.service');
+  await enqueue(
+    'sms',
+    'send',
+    { mobile, name, otp, templateName },
+    {
+      syncFallback: (d) =>
+        sendSmsDirect(d.mobile, d.name, d.otp, d.templateName as SmsTemplateName),
+    },
+  );
 }
 
 // Backwards-compatible alias used by existing registration flow

@@ -1,0 +1,13 @@
+-- ============================================================
+-- phase9_payouts_tds_schema.sql
+-- Phase 9.2 — Real bank payouts + TDS 194-O schema.
+-- Applied to live DB as migration: phase9_payouts_tds_schema
+--
+-- Adds:
+--   bank_accounts                          (new table)
+--   instructor_profiles.pan_number / pan_verified / gstin
+--   payout_requests.bank_account_id
+--   payout_settlements (+ 11 columns covering TDS + gateway)
+--   fn_generate_tds_certificate_no(instructor_id, fy_label?)
+-- ============================================================
+-- See live migration for the full body.

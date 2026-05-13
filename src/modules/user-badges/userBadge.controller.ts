@@ -94,15 +94,8 @@ export async function award(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 
-  // Increment student_profiles.total_badges_earned and xp_points
-  const { data: badgeData } = await supabase.from('badges').select('xp_reward').eq('id', badge_id).single();
-  supabase.from('student_profiles').select('total_badges_earned, xp_points').eq('user_id', user_id).single().then(({ data: sp }) => {
-    if (sp) {
-      const updates: any = { total_badges_earned: (sp.total_badges_earned || 0) + 1 };
-      if (badgeData?.xp_reward) updates.xp_points = (sp.xp_points || 0) + badgeData.xp_reward;
-      supabase.from('student_profiles').update(updates).eq('user_id', user_id).then(() => {});
-    }
-  });
+  // Phase 13 — student_profiles dropped; total_badges_earned + xp_points counters no longer maintained.
+  // user_badges (this table) and badges.xp_reward are the authoritative source.
 
   await clearCache();
   const userName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
@@ -147,14 +140,7 @@ export async function bulkAward(req: Request, res: Response) {
     if (!e && data) {
       awarded.push(data);
 
-      // Update student profile
-      supabase.from('student_profiles').select('total_badges_earned, xp_points').eq('user_id', userId).single().then(({ data: sp }) => {
-        if (sp) {
-          const updates: any = { total_badges_earned: (sp.total_badges_earned || 0) + 1 };
-          if (badge.xp_reward) updates.xp_points = (sp.xp_points || 0) + badge.xp_reward;
-          supabase.from('student_profiles').update(updates).eq('user_id', userId).then(() => {});
-        }
-      });
+      // Phase 13 — student_profiles dropped; no counter to bump.
     }
   }
 
@@ -172,15 +158,7 @@ export async function removeBadge(req: Request, res: Response) {
   const { error: e } = await supabase.from('user_badges').delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 
-  // Decrement student_profiles.total_badges_earned and xp_points
-  const { data: badge } = await supabase.from('badges').select('xp_reward').eq('id', ub.badge_id).single();
-  supabase.from('student_profiles').select('total_badges_earned, xp_points').eq('user_id', ub.user_id).single().then(({ data: sp }) => {
-    if (sp) {
-      const updates: any = { total_badges_earned: Math.max(0, (sp.total_badges_earned || 0) - 1) };
-      if (badge?.xp_reward) updates.xp_points = Math.max(0, (sp.xp_points || 0) - badge.xp_reward);
-      supabase.from('student_profiles').update(updates).eq('user_id', ub.user_id).then(() => {});
-    }
-  });
+  // Phase 13 — student_profiles dropped; no counter to decrement.
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'user_badge_removed', targetType: 'user_badge', targetId: id, targetName: `badge:${ub.badge_id} user:${ub.user_id}`, ip: getClientIp(req) });

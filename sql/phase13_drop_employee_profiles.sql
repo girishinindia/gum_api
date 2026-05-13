@@ -1,0 +1,11 @@
+-- ─────────────────────────────────────────────────────────────────
+-- Phase 13.2 — Drop employee_profiles
+--
+-- Snapshot of all rows preserved in sql/PHASE13_PRE_DROP_SNAPSHOT.sql
+-- before this migration ran. No other tables FK into employee_profiles
+-- (verified via pg_constraint query — zero incoming FKs).
+--
+-- Applied to live DB on 2026-05-13 via Supabase MCP migration
+-- `phase13_drop_employee_profiles`. Mirrored here for repo history.
+-- ─────────────────────────────────────────────────────────────────
+DROP TABLE IF EXISTS public.employee_profiles CASCADE;

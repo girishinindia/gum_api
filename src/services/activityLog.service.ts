@@ -1,31 +1,38 @@
-import { supabase } from '../config/supabase';
+import { db, DbError } from './db';
 import { logger } from '../utils/logger';
 
 async function rpcSafe(fn: string, params: Record<string, any>): Promise<any> {
-  const { data, error } = await supabase.rpc(fn, params);
-  if (error) {
-    // User-friendly messages for common activity log errors
-    if (error.message?.includes('check constraint') && error.message?.includes('action_check')) {
-      const action = params.p_action || 'unknown';
-      logger.error(
-        { fn, action, error: error.message },
-        `[ActivityLog] Action "${action}" is not registered in the database constraint. Please run the latest migration to update the allowed actions list.`
-      );
-    } else if (error.code === '23503') {
-      logger.error(
-        { fn, error: error.message },
-        '[ActivityLog] Referenced record not found — the user or target may have been deleted.'
-      );
-    } else if (error.code === '23505') {
-      logger.error(
-        { fn, error: error.message },
-        '[ActivityLog] Duplicate activity log entry detected — this event was already recorded.'
-      );
+  try {
+    return await db.callFn(fn, params);
+  } catch (e) {
+    if (e instanceof DbError) {
+      const code = e.code;
+      const message = e.message ?? '';
+      // User-friendly messages for common activity log errors
+      if (message.includes('check constraint') && message.includes('action_check')) {
+        const action = params.p_action || 'unknown';
+        logger.error(
+          { fn, action, error: message },
+          `[ActivityLog] Action "${action}" is not registered in the database constraint. Please run the latest migration to update the allowed actions list.`
+        );
+      } else if (code === '23503') {
+        logger.error(
+          { fn, error: message },
+          '[ActivityLog] Referenced record not found — the user or target may have been deleted.'
+        );
+      } else if (code === '23505') {
+        logger.error(
+          { fn, error: message },
+          '[ActivityLog] Duplicate activity log entry detected — this event was already recorded.'
+        );
+      } else {
+        logger.error({ fn, error: message }, '[ActivityLog] Failed to record activity — please check database connectivity and schema.');
+      }
     } else {
-      logger.error({ fn, error: error.message }, '[ActivityLog] Failed to record activity — please check database connectivity and schema.');
+      logger.error({ fn, err: e }, '[ActivityLog] unexpected error');
     }
+    return null;
   }
-  return data;
 }
 
 export const logAuth = (p: { userId?: number | null; action: string; identifier?: string | null; ip?: string | null; userAgent?: string | null; deviceType?: string | null; metadata?: any }) =>

@@ -29,29 +29,28 @@ function parseBody(req: Request): any {
   delete body.updated_by;
   delete body.deleted_by;
 
+  // Phase 13 — drop fields that no longer exist on the trimmed table.
+  const DROPPED_AT_PHASE13 = [
+    'tagline','instructor_bio','demo_video_url','intro_video_duration_sec',
+    'teaching_mode','teaching_experience_years','total_teaching_hours','industry_experience_years',
+    'specialization_id','secondary_specialization_id','preferred_teaching_language_id','preferred_time_slots',
+    'highest_qualification','certifications_summary','awards_and_recognition',
+    'max_concurrent_courses','available_from','available_until','available_hours_per_week','is_available',
+    'total_courses_created','total_courses_published','total_students_taught',
+    'completion_rate','total_content_minutes','patents_count','publications_count',
+    'joining_date','branch_id','department_id','designation_id','total_experience_years',
+  ];
+  for (const f of DROPPED_AT_PHASE13) delete body[f];
+
   // Parse booleans
-  if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
-  if (typeof body.is_available === 'string') body.is_available = body.is_available === 'true';
-  if (typeof body.is_verified === 'string') body.is_verified = body.is_verified === 'true';
-  if (typeof body.is_featured === 'string') body.is_featured = body.is_featured === 'true';
+  if (typeof body.is_active === 'string')    body.is_active   = body.is_active   === 'true';
+  if (typeof body.is_verified === 'string')  body.is_verified = body.is_verified === 'true';
+  if (typeof body.is_featured === 'string')  body.is_featured = body.is_featured === 'true';
+  if (typeof body.pan_verified === 'string') body.pan_verified = body.pan_verified === 'true';
 
   // Parse numbers
-  if (typeof body.designation_id === 'string') body.designation_id = parseInt(body.designation_id) || null;
-  if (typeof body.department_id === 'string') body.department_id = parseInt(body.department_id) || null;
-  if (typeof body.branch_id === 'string') body.branch_id = parseInt(body.branch_id) || null;
-  if (typeof body.specialization_id === 'string') body.specialization_id = parseInt(body.specialization_id) || null;
-  if (typeof body.secondary_specialization_id === 'string') body.secondary_specialization_id = parseInt(body.secondary_specialization_id) || null;
-  if (typeof body.preferred_teaching_language_id === 'string') body.preferred_teaching_language_id = parseInt(body.preferred_teaching_language_id) || null;
-  if (typeof body.intro_video_duration_sec === 'string') body.intro_video_duration_sec = parseInt(body.intro_video_duration_sec) || null;
-  if (typeof body.publications_count === 'string') body.publications_count = parseInt(body.publications_count) || null;
-  if (typeof body.patents_count === 'string') body.patents_count = parseInt(body.patents_count) || null;
-  if (typeof body.total_courses_created === 'string') body.total_courses_created = parseInt(body.total_courses_created) || null;
-  if (typeof body.total_courses_published === 'string') body.total_courses_published = parseInt(body.total_courses_published) || null;
-  if (typeof body.total_students_taught === 'string') body.total_students_taught = parseInt(body.total_students_taught) || null;
   if (typeof body.total_reviews_received === 'string') body.total_reviews_received = parseInt(body.total_reviews_received) || null;
-  if (typeof body.total_content_minutes === 'string') body.total_content_minutes = parseInt(body.total_content_minutes) || null;
-  if (typeof body.max_concurrent_courses === 'string') body.max_concurrent_courses = parseInt(body.max_concurrent_courses) || null;
-  if (typeof body.approved_by === 'string') body.approved_by = parseInt(body.approved_by) || null;
+  if (typeof body.approved_by === 'string')            body.approved_by = parseInt(body.approved_by) || null;
 
   // Empty strings to null
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
@@ -74,20 +73,14 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
-  // Filters
+  // Filters (Phase 13 — dropped cols removed from filter set)
   if (req.query.instructor_type) q = q.eq('instructor_type', req.query.instructor_type);
-  if (req.query.teaching_mode) q = q.eq('teaching_mode', req.query.teaching_mode);
   if (req.query.approval_status) q = q.eq('approval_status', req.query.approval_status);
-  if (req.query.is_available === 'true') q = q.eq('is_available', true);
-  else if (req.query.is_available === 'false') q = q.eq('is_available', false);
-  if (req.query.is_verified === 'true') q = q.eq('is_verified', true);
+  if (req.query.is_verified === 'true')  q = q.eq('is_verified', true);
   else if (req.query.is_verified === 'false') q = q.eq('is_verified', false);
-  if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
+  if (req.query.is_featured === 'true')  q = q.eq('is_featured', true);
   else if (req.query.is_featured === 'false') q = q.eq('is_featured', false);
-  if (req.query.branch_id) q = q.eq('branch_id', req.query.branch_id);
-  if (req.query.department_id) q = q.eq('department_id', req.query.department_id);
-  if (req.query.specialization_id) q = q.eq('specialization_id', req.query.specialization_id);
-  if (req.query.is_active === 'true') q = q.eq('is_active', true);
+  if (req.query.is_active === 'true')    q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
   // Sort + paginate

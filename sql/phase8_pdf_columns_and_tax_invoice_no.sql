@@ -1,0 +1,14 @@
+-- ============================================================
+-- phase8_pdf_columns_and_tax_invoice_no.sql
+-- Phase 8.2 — Document generation prerequisites.
+-- Applied to live DB as migration: phase8_pdf_columns_and_tax_invoice_no
+--
+-- Adds:
+--   invoices.tax_invoice_no            VARCHAR(40)  UNIQUE (when set)
+--   invoices.tax_invoice_issued_at     TIMESTAMPTZ
+--   issued_certificates.png_url        VARCHAR(500)
+--
+--   fn_generate_tax_invoice_no(p_state_code VARCHAR)
+--     → 'GST-<STATE>-<FY>-<NNNNNN>'  e.g. GST-GJ-2526-000123
+-- ============================================================
+-- See live migration for the full body.

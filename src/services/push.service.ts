@@ -1,0 +1,165 @@
+/**
+ * Push Service (Phase 11.2.3)
+ * ───────────────────────────
+ * Web Push (VAPID) via the `web-push` library — no Firebase.
+ *
+ * Two entry points:
+ *
+ *   • `sendPushDirect(device, payload)` — fire one push immediately.
+ *     Used by the queue worker and as the syncFallback in `enqueuePush`.
+ *
+ *   • `enqueuePush(userId, payload)` — fan out a push to every active
+ *     device owned by `userId`. Each device gets its own queue job so a
+ *     single dead endpoint can't poison the rest of the batch.
+ *
+ * Auto-deactivation: when the browser vendor returns 404 / 410, the
+ * subscription is gone for good (user uninstalled the app, cleared site
+ * data, etc.) — we mark `is_active = false` and stop trying.
+ */
+
+import webpush from 'web-push';
+import { config } from '../config';
+import { logger } from '../utils/logger';
+import { supabase } from '../config/supabase';
+import { enqueue } from './queue.service';
+
+let _configured = false;
+function ensureConfigured() {
+  if (_configured) return;
+  if (!config.push.vapidPublicKey || !config.push.vapidPrivateKey) {
+    throw new Error('[push] VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set');
+  }
+  webpush.setVapidDetails(
+    config.push.vapidSubject,
+    config.push.vapidPublicKey,
+    config.push.vapidPrivateKey,
+  );
+  _configured = true;
+}
+
+export interface PushDevice {
+  id:       number;
+  endpoint: string;
+  p256dh:   string;
+  auth:     string;
+}
+
+export interface PushPayload {
+  title: string;
+  body:  string;
+  /** Click target (relative or absolute URL). The service worker handles `notificationclick`. */
+  url?:  string;
+  icon?: string;
+  /** Caller-provided correlation id surfaced in logs. */
+  tag?:  string;
+  /** Arbitrary structured data passed through to the SW (kept ≤ 3KB total payload after JSON-encode). */
+  data?: Record<string, unknown>;
+}
+
+/**
+ * Send one push to one device. Throws on transport errors; on 404/410
+ * the device is silently deactivated and the call resolves.
+ *
+ * @returns `'sent'` on success, `'gone'` if the subscription is dead.
+ */
+export async function sendPushDirect(
+  device: PushDevice,
+  payload: PushPayload,
+): Promise<'sent' | 'gone'> {
+  ensureConfigured();
+
+  const body = JSON.stringify({
+    title: payload.title,
+    body:  payload.body,
+    url:   payload.url  ?? '/',
+    icon:  payload.icon ?? '/icons/notification.png',
+    tag:   payload.tag,
+    data:  payload.data ?? {},
+  });
+
+  try {
+    await webpush.sendNotification(
+      { endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } },
+      body,
+      { TTL: 60 * 60 * 24 },   // browser holds the message up to 1 day if device is offline
+    );
+
+    // Mark device "alive" so we can prune stale ones later.
+    await supabase.from('push_devices')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', device.id);
+
+    return 'sent';
+  } catch (e: any) {
+    const status = e?.statusCode ?? e?.status ?? null;
+    if (status === 404 || status === 410) {
+      // Subscription is permanently dead — flip off.
+      await supabase.from('push_devices')
+        .update({ is_active: false })
+        .eq('id', device.id);
+      logger.info({ deviceId: device.id, status }, '[push] deactivated dead subscription');
+      return 'gone';
+    }
+    logger.error({ err: e, deviceId: device.id, status }, '[push] sendNotification failed');
+    throw e;
+  }
+}
+
+/**
+ * Fan a push out to every active device for a user. Each device gets its
+ * own queue job so failures are isolated. Returns the number of devices
+ * targeted (jobs enqueued, not delivery successes).
+ *
+ * When the push queue is disabled (PUSH_QUEUE_ENABLED=false), sends
+ * synchronously in-process via `syncFallback`.
+ */
+export async function enqueuePush(
+  userId: number,
+  payload: PushPayload,
+): Promise<{ enqueued: number }> {
+  // Fetch active devices for the user (service-role bypasses RLS).
+  const { data: devices, error } = await supabase
+    .from('push_devices')
+    .select('id, endpoint, p256dh, auth')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .is('deleted_at', null);
+
+  if (error) {
+    logger.error({ err: error, userId }, '[push] failed to load devices');
+    return { enqueued: 0 };
+  }
+  if (!devices || devices.length === 0) {
+    logger.debug({ userId }, '[push] no active devices');
+    return { enqueued: 0 };
+  }
+
+  // Enqueue one job per device — failure isolation.
+  for (const d of devices) {
+    await enqueue<{ device: PushDevice; payload: PushPayload }>(
+      'push',
+      'send',
+      { device: d as PushDevice, payload },
+      {
+        // Stable job id keeps double-enqueues idempotent for short windows.
+        jobId: `push:${d.id}:${payload.tag ?? Date.now()}`,
+        syncFallback: async ({ device, payload }) => {
+          try { await sendPushDirect(device, payload); }
+          catch (e) { logger.warn({ err: e, deviceId: device.id }, '[push] syncFallback delivery failed'); }
+        },
+      },
+    );
+  }
+
+  return { enqueued: devices.length };
+}
+
+/**
+ * Worker processor — wired in `src/worker.ts`.
+ */
+export async function processPushJob(job: {
+  data: { device: PushDevice; payload: PushPayload };
+}): Promise<{ status: 'sent' | 'gone' }> {
+  const status = await sendPushDirect(job.data.device, job.data.payload);
+  return { status };
+}

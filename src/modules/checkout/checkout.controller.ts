@@ -14,6 +14,12 @@ import {
 import { orchestratePostPayment } from '../../services/postPayment.service';
 import { reverseEarningsForOrder } from '../../services/instructorEarning.service';
 import { notifyRefundProcessed } from '../../services/notification.service';
+import {
+  beginWebhookEvent,
+  completeWebhookEvent,
+  failWebhookEvent,
+  fallbackEventId,
+} from '../../services/webhookEvents.service';
 
 // ── Cache keys ──
 const clearOrderCaches = async () => {
@@ -266,6 +272,7 @@ export async function initiateCheckout(req: Request, res: Response) {
  * Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, order_id }
  */
 export async function verifyPayment(req: Request, res: Response) {
+  let webhookRowId: number | null = null;
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, order_id } = req.body;
 
@@ -277,6 +284,26 @@ export async function verifyPayment(req: Request, res: Response) {
     const isValid = verifyPaymentSignature({ razorpay_order_id, razorpay_payment_id, razorpay_signature });
     if (!isValid) return err(res, 'Payment verification failed — invalid signature', 400);
 
+    // 1b. Idempotency gate — keyed on razorpay_payment_id. If two browsers
+    //     close the modal simultaneously, only ONE call orchestrates; the
+    //     second returns the "already processed" path below.
+    const event = await beginWebhookEvent({
+      provider: 'razorpay',
+      eventId: fallbackEventId('verify', razorpay_payment_id),
+      eventType: 'payment.verify',
+      relatedType: 'order',
+      relatedId: order_id ?? null,
+      ipAddress: getClientIp(req),
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+
+    if (!event) {
+      const { data: existingOrder } = await supabase
+        .from('orders').select('id, order_number, payment_status').eq('razorpay_order_id', razorpay_order_id).single();
+      return ok(res, { order: existingOrder, already_processed: true }, 'Payment already verified');
+    }
+    webhookRowId = event.id;
+
     // 2. Fetch the Razorpay payment details
     const rpPayment = await fetchPayment(razorpay_payment_id);
 
@@ -287,10 +314,14 @@ export async function verifyPayment(req: Request, res: Response) {
       .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
-    if (!order) return err(res, 'Order not found for this Razorpay order', 404);
+    if (!order) {
+      if (webhookRowId) await failWebhookEvent(webhookRowId, 'order_not_found');
+      return err(res, 'Order not found for this Razorpay order', 404);
+    }
 
-    // Prevent double-processing
+    // Defense-in-depth — also check order state. The webhook may have fired first.
     if (order.payment_status === 'paid') {
+      if (webhookRowId) await completeWebhookEvent(webhookRowId, { skipped: 'already_paid', orderId: order.id });
       return ok(res, { order, already_processed: true }, 'Payment already verified');
     }
 
@@ -390,9 +421,13 @@ export async function verifyPayment(req: Request, res: Response) {
       ip: getClientIp(req),
     });
 
+    if (webhookRowId) await completeWebhookEvent(webhookRowId, { orderId: order.id, paymentId: payment?.id });
     return ok(res, { order_id: order.id, order_number: order.order_number, payment_id: payment?.id }, 'Payment verified successfully');
   } catch (e: any) {
     console.error('[CHECKOUT] verifyPayment error:', e);
+    if (webhookRowId) {
+      try { await failWebhookEvent(webhookRowId, e.message || 'unknown'); } catch { /* best-effort */ }
+    }
     return err(res, e.message || 'Payment verification failed', 500);
   }
 }
@@ -403,11 +438,14 @@ export async function verifyPayment(req: Request, res: Response) {
  * Handles: payment.captured, payment.failed, refund.created, refund.processed
  */
 export async function handleWebhook(req: Request, res: Response) {
+  let webhookRowId: number | null = null;
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
     const webhookSecret = config.razorpay.webhookSecret || config.razorpay.keySecret;
 
     // Verify webhook signature
+    // NOTE: For perfect HMAC fidelity we should mount express.raw() on this
+    //       route — JSON.stringify is best-effort. Tracked in Phase 10 cleanup.
     const rawBody = JSON.stringify(req.body);
     const isValid = verifyWebhookSignature(rawBody, signature, webhookSecret);
     if (!isValid) {
@@ -417,6 +455,33 @@ export async function handleWebhook(req: Request, res: Response) {
 
     const event = req.body.event;
     const payload = req.body.payload;
+
+    // ── Idempotency gate ──
+    // Razorpay supplies x-razorpay-event-id; fall back to a hash of payload.
+    const headerEventId = (req.headers['x-razorpay-event-id'] as string) || '';
+    const entity =
+      payload?.payment?.entity ||
+      payload?.refund?.entity ||
+      payload?.order?.entity ||
+      {};
+    const eventId = headerEventId || fallbackEventId('razorpay', event, entity.id, entity.created_at);
+
+    const registered = await beginWebhookEvent({
+      provider: 'razorpay',
+      eventId,
+      eventType: event || 'unknown',
+      rawBody,
+      relatedType: payload?.payment ? 'payment' : payload?.refund ? 'refund' : 'order',
+      relatedId: null,
+      ipAddress: getClientIp(req),
+      userAgent: req.headers['user-agent'] ?? null,
+    });
+
+    // Duplicate delivery: 200 OK so Razorpay stops retrying.
+    if (!registered) {
+      return res.status(200).json({ success: true, duplicate: true });
+    }
+    webhookRowId = registered.id;
 
     switch (event) {
       case 'payment.captured': {
@@ -581,11 +646,19 @@ export async function handleWebhook(req: Request, res: Response) {
       }
     }
 
+    // Mark event as processed
+    if (webhookRowId) await completeWebhookEvent(webhookRowId);
+
     // Always return 200 to Razorpay
     return res.status(200).json({ success: true });
   } catch (e: any) {
     console.error('[WEBHOOK] Error:', e);
-    // Still return 200 to prevent Razorpay retries on our errors
+    // Record failure but still return 200 to prevent Razorpay retry storms
+    // on our internal errors. The webhook_events row stays as 'failed' for
+    // manual replay from /admin/webhook-events.
+    if (webhookRowId) {
+      try { await failWebhookEvent(webhookRowId, e.message || 'unknown'); } catch { /* best-effort */ }
+    }
     return res.status(200).json({ success: true });
   }
 }

@@ -9,6 +9,7 @@
 import { supabase } from '../config/supabase';
 import { redis } from '../config/redis';
 import { config } from '../config';
+import { enqueuePush } from './push.service';
 
 // ── Types ──
 export interface SendNotificationParams {
@@ -16,11 +17,13 @@ export interface SendNotificationParams {
   notificationType: string;
   title: string;
   message: string;
-  channels?: ('in_app' | 'email' | 'sms')[];
+  channels?: ('in_app' | 'email' | 'sms' | 'push')[];
   referenceType?: string;
   referenceId?: number;
   metadata?: Record<string, any>;
   createdBy?: number;
+  /** Phase 11.2 — optional click-target for the push notification card. */
+  pushUrl?: string;
 }
 
 export interface BulkNotificationParams {
@@ -28,11 +31,12 @@ export interface BulkNotificationParams {
   notificationType: string;
   title: string;
   message: string;
-  channels?: ('in_app' | 'email' | 'sms')[];
+  channels?: ('in_app' | 'email' | 'sms' | 'push')[];
   referenceType?: string;
   referenceId?: number;
   metadata?: Record<string, any>;
   createdBy?: number;
+  pushUrl?: string;
 }
 
 // ── Cache helpers ──
@@ -44,11 +48,11 @@ async function clearNotificationCaches() {
 async function getUserPreference(
   userId: number,
   notificationType: string,
-  channel: 'email' | 'sms' | 'in_app',
+  channel: 'email' | 'sms' | 'in_app' | 'push',
 ): Promise<boolean> {
   const { data } = await supabase
     .from('notification_preferences')
-    .select('email_enabled, sms_enabled, in_app_enabled')
+    .select('email_enabled, sms_enabled, in_app_enabled, push_enabled')
     .eq('user_id', userId)
     .eq('notification_type', notificationType)
     .is('deleted_at', null)
@@ -56,9 +60,10 @@ async function getUserPreference(
 
   if (!data) return true; // Default: all enabled
 
-  if (channel === 'email') return data.email_enabled !== false;
-  if (channel === 'sms') return data.sms_enabled !== false;
+  if (channel === 'email')  return data.email_enabled  !== false;
+  if (channel === 'sms')    return data.sms_enabled    !== false;
   if (channel === 'in_app') return data.in_app_enabled !== false;
+  if (channel === 'push')   return data.push_enabled   !== false;
   return true;
 }
 
@@ -243,6 +248,36 @@ export async function sendNotification(params: SendNotificationParams): Promise<
         }).eq('id', notification.id);
       }
     }
+
+    // Push delivery (Phase 11.2)
+    if (channel === 'push') {
+      try {
+        const { enqueued } = await enqueuePush(userId, {
+          title,
+          body: message,
+          url:  params.pushUrl ?? '/',
+          tag:  notificationType,
+          data: {
+            notification_id: notification?.id ?? null,
+            reference_type:  referenceType ?? null,
+            reference_id:    referenceId   ?? null,
+          },
+        });
+        if (notification) {
+          await supabase.from('notifications').update({
+            delivery_status: enqueued > 0 ? 'delivered' : 'failed',
+            metadata: { ...(metadata ?? {}), push_devices_targeted: enqueued },
+          }).eq('id', notification.id);
+        }
+      } catch (e) {
+        if (notification) {
+          await supabase.from('notifications').update({
+            delivery_status: 'failed',
+          }).eq('id', notification.id);
+        }
+        console.error('[NOTIFICATION] push delivery failed:', e);
+      }
+    }
   }
 
   await clearNotificationCaches();
@@ -265,6 +300,7 @@ export async function sendBulkNotification(params: BulkNotificationParams): Prom
       referenceId: params.referenceId,
       metadata: params.metadata,
       createdBy: params.createdBy,
+      pushUrl:   params.pushUrl,
     });
     totalSent += ids.length;
   }
@@ -328,7 +364,7 @@ export async function notifyEnrollmentConfirmed(
     notificationType: 'enrollment_confirmed',
     title: 'Enrollment Confirmed',
     message: `You have been successfully enrolled in "${courseName}". Happy learning!`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'order',
     referenceId: orderId,
     createdBy,
@@ -346,7 +382,7 @@ export async function notifyPaymentReceived(
     notificationType: 'payment_received',
     title: 'Payment Received',
     message: `Your payment of ₹${amount.toFixed(2)} has been received and your order #${orderId} is confirmed.`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'order',
     referenceId: orderId,
     createdBy,
@@ -364,7 +400,7 @@ export async function notifyRefundProcessed(
     notificationType: 'refund_processed',
     title: 'Refund Processed',
     message: `Your refund of ₹${amount.toFixed(2)} for order #${orderId} has been processed. It may take 5-7 business days to reflect.`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'order',
     referenceId: orderId,
     createdBy,
@@ -382,7 +418,7 @@ export async function notifyInstructorEarning(
     notificationType: 'instructor_earning',
     title: 'New Earning',
     message: `You earned ₹${amount.toFixed(2)} from a sale of "${courseName}" (Order #${orderId}).`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'order',
     referenceId: orderId,
   });
@@ -398,7 +434,7 @@ export async function notifyPayoutApproved(
     notificationType: 'payout_approved',
     title: 'Payout Approved',
     message: `Your payout request of ₹${amount.toFixed(2)} has been approved and will be processed shortly.`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'payout_request',
     referenceId: payoutRequestId,
   });
@@ -414,7 +450,7 @@ export async function notifyPayoutCompleted(
     notificationType: 'payout_completed',
     title: 'Payout Completed',
     message: `Your payout of ₹${amount.toFixed(2)} has been settled. Please check your bank account.`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'payout_request',
     referenceId: payoutRequestId,
   });
@@ -430,7 +466,7 @@ export async function notifyPayoutRejected(
     notificationType: 'payout_rejected',
     title: 'Payout Request Rejected',
     message: `Your payout request was rejected. Reason: ${reason}. Please contact support for details.`,
-    channels: ['in_app', 'email'],
+    channels: ['in_app', 'email', 'push'],
     referenceType: 'payout_request',
     referenceId: payoutRequestId,
   });

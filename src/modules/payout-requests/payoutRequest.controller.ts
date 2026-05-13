@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
+import { db } from '../../services/db';
 import { redis } from '../../config/redis';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
@@ -7,6 +8,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { notifyPayoutApproved, notifyPayoutRejected } from '../../services/notification.service';
 import { applySearch } from '../../utils/search';
+import { logger } from '../../utils/logger';
 
 const TABLE = 'payout_requests';
 const CACHE_KEY = 'payout_requests:all';
@@ -177,31 +179,154 @@ export async function approve(req: Request, res: Response) {
     if (old.request_status !== 'pending') return err(res, `Cannot approve a request with status "${old.request_status}"`, 400);
 
     const now = new Date().toISOString();
-    const { approved_amount, review_notes } = req.body;
+    const { approved_amount, review_notes, bank_account_id: bodyBankId } = req.body;
+    const grossAmount = approved_amount ? parseFloat(approved_amount) : Number(old.requested_amount);
 
+    // Phase 9.6 — Resolve a verified bank account for this instructor.
+    // Caller can pass bank_account_id explicitly; otherwise we use the
+    // instructor's primary verified account.
+    const bankAccountId = bodyBankId ? parseInt(bodyBankId) : (old.bank_account_id || null);
+    let bank: any = null;
+    if (bankAccountId) {
+      const { data: b } = await supabase.from('bank_accounts').select('*').eq('id', bankAccountId).is('deleted_at', null).maybeSingle();
+      if (b && b.user_id === old.instructor_id) bank = b;
+    }
+    if (!bank) {
+      const { data: b } = await supabase
+        .from('bank_accounts')
+        .select('*')
+        .eq('user_id', old.instructor_id)
+        .eq('verification_status', 'verified')
+        .eq('is_primary', true)
+        .is('deleted_at', null)
+        .maybeSingle();
+      bank = b;
+    }
+    if (!bank) {
+      return err(res, 'Instructor has no verified bank account on file. Ask them to add + verify one before approving payouts.', 409);
+    }
+
+    // Phase 9.6 — Compute TDS (uses YTD aggregate + PAN status)
+    const { computeTdsForPayout } = await import('../../services/tds.service');
+    const tds = await computeTdsForPayout({
+      instructorId: old.instructor_id,
+      grossAmount,
+    });
+
+    // Update the payout_request row (approved + linked bank)
     const updates: any = {
       request_status: 'approved',
-      approved_amount: approved_amount ? parseFloat(approved_amount) : old.requested_amount,
+      approved_amount: grossAmount,
       reviewed_by: req.user!.id,
       reviewed_at: now,
       review_notes: review_notes || null,
+      bank_account_id: bank.id,
       updated_by: req.user!.id,
     };
 
     const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
     if (e) return err(res, e.message, 500);
 
+    // Allocate TDS certificate number (only if TDS is being deducted)
+    let tdsCertificateNo: string | null = null;
+    if (tds.tdsAmount > 0) {
+      try {
+        const certNoData = await db.callFn('fn_generate_tds_certificate_no', {
+          p_instructor_id: old.instructor_id,
+          p_fy_label: tds.fyLabel,
+        });
+        tdsCertificateNo = String(Array.isArray(certNoData) ? certNoData[0] : certNoData);
+      } catch { /* keep tdsCertificateNo null on failure — settlement still goes ahead */ }
+    }
+
+    // Phase 9.6 — Create a payout_settlement row in 'queued' state
+    const settlementNo = `STL-${tds.fyLabel}-${String(old.instructor_id).padStart(6, '0')}-${String(id).padStart(6, '0')}`;
+    const { data: settlement, error: stlErr } = await supabase
+      .from('payout_settlements')
+      .insert({
+        payout_request_id: id,
+        instructor_id: old.instructor_id,
+        settlement_number: settlementNo,
+        settled_amount: tds.netAmount,
+        gross_amount: tds.grossAmount,
+        net_amount: tds.netAmount,
+        tds_amount: tds.tdsAmount,
+        tds_rate: tds.tdsRate,
+        tds_section: tds.appliedSection.startsWith('exempt') ? '194-O' : tds.appliedSection,
+        tds_certificate_no: tdsCertificateNo,
+        fy_label: tds.fyLabel,
+        bank_account_id: bank.id,
+        gateway: 'razorpayx',
+        settlement_status: 'queued',
+        payment_method: 'bank_transfer',
+        bank_details: {
+          masked_account: `••••${String(bank.account_number).slice(-4)}`,
+          ifsc: bank.ifsc_code,
+        },
+        metadata: { tds_breakdown: tds },
+        created_by: req.user!.id,
+      })
+      .select('id, settlement_number')
+      .single();
+
+    if (stlErr) {
+      logger.error({ err: stlErr.message, payoutRequestId: id }, '[PayoutRequest.approve] Settlement insert failed');
+      return err(res, `Settlement creation failed: ${stlErr.message}`, 500);
+    }
+
+    // Phase 9.6 — enqueue the actual bank transfer (worker calls gateway)
+    try {
+      const { enqueue } = await import('../../services/queue.service');
+      await enqueue(
+        'payouts',
+        'execute',
+        { settlementId: settlement!.id },
+        {
+          jobId: `payout:${settlement!.id}`,
+          syncFallback: async ({ settlementId }) => {
+            const { executeQueuedPayout } = await import('../../services/payoutExecutor.service');
+            await executeQueuedPayout(settlementId);
+          },
+        },
+      );
+    } catch (queueErr: any) {
+      logger.error({ err: queueErr?.message, settlementId: settlement?.id }, '[PayoutRequest.approve] Enqueue failed');
+      // The settlement row stays in 'queued' — admin can replay via /admin/queues
+    }
+
     await clearCache();
 
     // Notify instructor
     try {
-      await notifyPayoutApproved(old.instructor_id, updates.approved_amount, id);
+      await notifyPayoutApproved(old.instructor_id, tds.netAmount, id);
     } catch (notifyErr) {
       console.error('[PAYOUT_REQUEST] Failed to send approval notification:', notifyErr);
     }
 
-    logAdmin({ actorId: req.user!.id, action: 'payout_request_approved', targetType: 'payout_request', targetId: id, targetName: old.request_number || `#${id}`, ip: getClientIp(req) });
-    return ok(res, data, 'Payout request approved');
+    logAdmin({
+      actorId: req.user!.id,
+      action: 'payout_request_approved',
+      targetType: 'payout_request',
+      targetId: id,
+      targetName: old.request_number || `#${id}`,
+      changes: { gross: tds.grossAmount, tds: tds.tdsAmount, net: tds.netAmount, fy: tds.fyLabel },
+      ip: getClientIp(req),
+    });
+
+    return ok(res, {
+      ...data,
+      settlement_id: settlement!.id,
+      settlement_number: settlement!.settlement_number,
+      tds: {
+        gross_amount: tds.grossAmount,
+        tds_amount: tds.tdsAmount,
+        tds_rate: tds.tdsRate,
+        net_amount: tds.netAmount,
+        applied_section: tds.appliedSection,
+        fy_label: tds.fyLabel,
+        certificate_no: tdsCertificateNo,
+      },
+    }, 'Payout request approved and queued for bank transfer');
   } catch (e: any) {
     return err(res, e.message, 500);
   }

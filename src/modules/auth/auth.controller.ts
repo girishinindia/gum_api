@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { config } from '../../config';
 import { supabase } from '../../config/supabase';
+import { db, DbError } from '../../services/db';
 import { redis } from '../../config/redis';
 import * as otpSvc from '../../services/otp.service';
 import { sendOtpEmail } from '../../services/email.service';
@@ -18,10 +19,10 @@ export async function register(req: Request, res: Response) {
   const ip = getClientIp(req);
   const ua = req.headers['user-agent'] || null;
 
-  const { data: emailOk } = await supabase.rpc('is_email_available', { p_email: cleanEmail });
+  const emailOk = await db.callFn('is_email_available', { p_email: cleanEmail }).catch(() => false);
   if (!emailOk) return err(res, 'Email already registered', 409);
 
-  const { data: mobileOk } = await supabase.rpc('is_mobile_available', { p_mobile: cleanMobile });
+  const mobileOk = await db.callFn('is_mobile_available', { p_mobile: cleanMobile }).catch(() => false);
   if (!mobileOk) return err(res, 'Mobile already registered', 409);
 
   for (const dest of [cleanEmail, cleanMobile]) {
@@ -81,11 +82,13 @@ export async function verifyOtp(req: Request, res: Response) {
   logAuth({ action: `otp_verified_${otpChannel}`, identifier: channel === 'email' ? reg.email : reg.mobile, ip });
 
   if (reg.email_verified && reg.mobile_verified) {
-    const { data: userId, error: dbErr } = await supabase.rpc('create_verified_user', { p_first_name: reg.first_name, p_last_name: reg.last_name, p_email: reg.email, p_mobile: reg.mobile, p_password_hash: reg.password_hash });
-    if (dbErr) return err(res, 'Account creation failed', 500);
+    let userId: number;
+    try {
+      userId = await db.callFn('create_verified_user', { p_first_name: reg.first_name, p_last_name: reg.last_name, p_email: reg.email, p_mobile: reg.mobile, p_password_hash: reg.password_hash }) as unknown as number;
+    } catch { return err(res, 'Account creation failed', 500); }
 
     const tokens = generateTokens(userId);
-    await supabase.rpc('create_session', { p_user_id: userId, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) });
+    await db.callFn('create_session', { p_user_id: userId, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) }).catch(() => {/* best-effort */});
     await redis.del(`has_session:${userId}`);
     await otpSvc.cleanup(pending_id);
 
@@ -127,8 +130,11 @@ export async function login(req: Request, res: Response) {
   const ip = getClientIp(req);
   const ua = req.headers['user-agent'] || null;
 
-  const { data: users, error: dbErr } = await supabase.rpc('find_user_for_login', { p_identifier: identifier });
-  if (dbErr || !users?.length) { logAuth({ action: 'login_failed', identifier, ip, userAgent: ua, metadata: { reason: 'not_found' } }); return err(res, 'Invalid credentials', 401); }
+  let users: any[] = [];
+  try {
+    users = (await db.callFn('find_user_for_login', { p_identifier: identifier })) as any[];
+  } catch { /* fall through */ }
+  if (!users?.length) { logAuth({ action: 'login_failed', identifier, ip, userAgent: ua, metadata: { reason: 'not_found' } }); return err(res, 'Invalid credentials', 401); }
   const u = users[0];
 
   if (u.status === 'suspended') return err(res, 'Account suspended', 403);
@@ -136,15 +142,15 @@ export async function login(req: Request, res: Response) {
 
   const valid = await bcrypt.compare(password, u.password_hash);
   if (!valid) {
-    await supabase.rpc('update_login_failure', { p_user_id: u.user_id });
+    await db.callFn('update_login_failure', { p_user_id: u.user_id }).catch(() => {/* best-effort */});
     logAuth({ userId: u.user_id, action: 'login_failed', identifier, ip, userAgent: ua, metadata: { reason: 'wrong_password' } });
     if (u.failed_login_count + 1 >= 5) logAuth({ userId: u.user_id, action: 'account_locked', identifier, ip });
     return err(res, 'Invalid credentials', 401);
   }
 
   const tokens = generateTokens(u.user_id);
-  await supabase.rpc('update_login_success', { p_user_id: u.user_id, p_method: 'email_password' });
-  await supabase.rpc('create_session', { p_user_id: u.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: ua, p_device_type: getDeviceType(ua || undefined) });
+  await db.callFn('update_login_success', { p_user_id: u.user_id, p_method: 'email_password' }).catch(() => {/* best-effort */});
+  await db.callFn('create_session', { p_user_id: u.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: ua, p_device_type: getDeviceType(ua || undefined) }).catch(() => {/* best-effort */});
 
   // Clear stale session/permission cache so first authenticated request works immediately
   await Promise.all([redis.del(`has_session:${u.user_id}`), redis.del(`perms:${u.user_id}`)]);
@@ -158,13 +164,16 @@ export async function refresh(req: Request, res: Response) {
   const { refresh_token } = (req as any).validated;
   try { verifyRefresh(refresh_token); } catch { return err(res, 'Invalid refresh token', 401); }
 
-  const { data: sessions } = await supabase.rpc('verify_refresh_session', { p_refresh_hash: hashSha256(refresh_token) });
+  let sessions: any[] = [];
+  try {
+    sessions = (await db.callFn('verify_refresh_session', { p_refresh_hash: hashSha256(refresh_token) })) as any[];
+  } catch { /* fall through */ }
   if (!sessions?.length) return err(res, 'Session expired', 401);
   const s = sessions[0];
 
   const tokens = generateTokens(s.user_id);
-  await supabase.rpc('revoke_session', { p_session_id: s.session_id, p_reason: 'token_refresh' });
-  await supabase.rpc('create_session', { p_user_id: s.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: getClientIp(req), p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) });
+  await db.callFn('revoke_session', { p_session_id: s.session_id, p_reason: 'token_refresh' }).catch(() => {/* best-effort */});
+  await db.callFn('create_session', { p_user_id: s.user_id, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: getClientIp(req), p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) }).catch(() => {/* best-effort */});
 
   // Clear stale cache so next request sees the fresh session
   await Promise.all([redis.del(`has_session:${s.user_id}`), redis.del(`perms:${s.user_id}`)]);
@@ -341,7 +350,7 @@ export async function resetPassword(req: Request, res: Response) {
   const passwordHash = await bcrypt.hash(new_password, config.bcrypt.saltRounds);
 
   // Update password + revoke ALL active sessions (force re-login on all devices)
-  const { error: dbErr } = await supabase.rpc('change_password', { p_user_id: reset.user_id, p_new_hash: passwordHash });
+  const dbErr = await db.callFn('change_password', { p_user_id: reset.user_id, p_new_hash: passwordHash }).then(() => null).catch((e: Error) => e);
   if (dbErr) return err(res, 'Password reset failed', 500);
 
   await otpSvc.cleanupReset(reset_pending_id);
