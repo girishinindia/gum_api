@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Migration 19: User Profile Modules
 -- Creates: user_experience, user_social_medias, user_skills, user_languages, user_documents, user_projects
 -- Updates: permissions, activity log CHECK constraint

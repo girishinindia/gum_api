@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- 34_fix_activity_log_action_constraint.sql
 -- Fix: widen action column from varchar(30) to varchar(60) and add all missing action values
 

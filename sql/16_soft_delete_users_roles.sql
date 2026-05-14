@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Migration 16: Soft delete for users, roles
 -- Adds deleted_at column, permissions, and syncs table_summary
 

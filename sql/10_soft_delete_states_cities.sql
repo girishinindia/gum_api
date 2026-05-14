@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 10_soft_delete_states_cities.sql
 -- Soft Delete & Restore for States and Cities

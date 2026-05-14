@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ══════════════════════════════════════════════════════════════
 -- MIGRATION 46: Announcements & Wallets
 -- ══════════════════════════════════════════════════════════════

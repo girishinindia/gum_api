@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 33_coupon_management.sql
 -- Creates: coupons, coupon_courses, coupon_bundles, coupon_batches, coupon_webinars

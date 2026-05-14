@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  29 – Add Assessment Module Actions to Activity Log
 --  Registers exercise, mini_project, and capstone_project

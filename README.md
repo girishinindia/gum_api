@@ -28,6 +28,12 @@ cp .env.example .env
 # 3. Run SQL migrations in Supabase SQL Editor (in order!)
 #    sql/01_rbac.sql
 #    sql/02_auth_countries_logs.sql
+#    …
+#
+#    For NEW migrations, copy sql/templates/new-table.sql and follow
+#    docs/MIGRATIONS.md — every new public-schema table must include
+#    explicit GRANTs to anon/authenticated/service_role (enforced by
+#    Supabase from 2026-10-30 on existing projects).
 
 # 4. Start development server
 npm run dev

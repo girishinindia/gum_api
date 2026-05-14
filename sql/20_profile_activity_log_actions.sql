@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Migration 20: Add employee/student/instructor profile actions to activity log CHECK constraint
 -- Also adds material module actions (subjects, chapters, topics, translations)
 

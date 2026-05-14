@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  24 – Seed permissions for Subject, Chapter, Topic
 --       and their Translation modules.

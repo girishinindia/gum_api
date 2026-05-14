@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  07 – Category Translations & Sub-Category Translations
 -- ═══════════════════════════════════════════════════════════════

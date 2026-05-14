@@ -15,6 +15,7 @@
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --runInBand",
     "lint": "eslint .",
+    "lint:sql": "node scripts/lint-sql.mjs",
     "format": "prettier --write .",
     "postinstall": "node scripts/patch-types.js"
   },

@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Add 'material_tree_imported' and 'auto_sub_topics_generated' to allowed activity log actions
 
 -- ── Update activity log constraint ──

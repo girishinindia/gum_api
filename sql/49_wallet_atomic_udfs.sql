@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 49_wallet_atomic_udfs.sql
 -- Phase 2.2 — Atomic wallet credit/debit + reconciliation helper.

@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 14_soft_delete_social_medias_categories_sub_categories.sql
 -- Soft Delete & Restore for Social Medias, Categories, Sub Categories

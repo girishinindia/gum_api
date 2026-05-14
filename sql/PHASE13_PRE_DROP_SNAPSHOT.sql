@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ─────────────────────────────────────────────────────────────────
 -- Phase 13 — Pre-drop snapshot (2026-05-13)
 --

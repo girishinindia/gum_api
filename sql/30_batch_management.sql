@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  30 – Batch Management: Permissions + Activity Log Actions
 --  Seeds permissions for course_batches and batch_translations,

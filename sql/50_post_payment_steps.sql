@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 50_post_payment_steps.sql
 -- Phase 2.3 — Re-entrant post-payment orchestration.

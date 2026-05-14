@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  32 – Referral Management: Permissions + Activity Log Actions
 --  Seeds permissions for referral_codes, referral_usages,

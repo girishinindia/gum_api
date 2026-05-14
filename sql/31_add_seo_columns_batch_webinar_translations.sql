@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ═══════════════════════════════════════════════════════════════
 --  31 – Add missing columns to batch_translations
 --  Tags, Open Graph, Twitter Card, Structured Data, Search Vector

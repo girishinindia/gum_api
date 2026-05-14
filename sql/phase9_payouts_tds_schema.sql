@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- phase9_payouts_tds_schema.sql
 -- Phase 9.2 — Real bank payouts + TDS 194-O schema.

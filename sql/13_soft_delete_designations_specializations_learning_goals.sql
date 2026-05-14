@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 13_soft_delete_designations_specializations_learning_goals.sql
 -- Soft Delete & Restore for Designations, Specializations, Learning Goals

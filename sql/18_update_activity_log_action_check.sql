@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Migration 18: Update admin_activity_log action CHECK constraint
 -- Adds soft_delete and restore actions for all modules
 

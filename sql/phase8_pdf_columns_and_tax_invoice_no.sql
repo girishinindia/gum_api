@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- phase8_pdf_columns_and_tax_invoice_no.sql
 -- Phase 8.2 — Document generation prerequisites.

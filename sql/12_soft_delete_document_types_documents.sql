@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 12_soft_delete_document_types_documents.sql
 -- Soft Delete & Restore for Document Types and Documents

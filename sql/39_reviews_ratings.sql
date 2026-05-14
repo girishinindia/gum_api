@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 39_reviews_ratings.sql
 -- Reviews & Ratings module: reviews, review_helpfulness

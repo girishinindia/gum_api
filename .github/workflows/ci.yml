@@ -29,6 +29,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Phase 18.1 — Supabase Data-API grant enforcement.
+      # Fails the build if any new sql/ file has a CREATE TABLE in `public`
+      # without the required GRANTs to anon/authenticated/service_role.
+      # See docs/MIGRATIONS.md for the rationale. Pre-existing legacy
+      # files are grandfathered via the `-- lint-sql: skip` directive.
+      - name: Lint SQL migrations (grant enforcement)
+        run: npm run lint:sql
+
       - name: Test
         run: npm run test:ci
         env:

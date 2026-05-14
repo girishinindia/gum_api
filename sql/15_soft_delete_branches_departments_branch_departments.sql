@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- Migration 15: Soft delete for branches, departments, branch_departments
 -- Adds deleted_at column, permissions, and syncs table_summary
 

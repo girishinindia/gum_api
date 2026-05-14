@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- 11_soft_delete_skills_languages_education_levels.sql
 -- Soft Delete & Restore for Skills, Languages, Education Levels

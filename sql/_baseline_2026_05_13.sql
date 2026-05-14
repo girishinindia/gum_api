@@ -1,3 +1,4 @@
+-- lint-sql: skip   (legacy file; grants already applied in live DB pre-2026-05-15)
 -- ============================================================
 -- _baseline_2026_05_13.sql
 -- Live-schema baseline · Genius ITens Project · captured 2026-05-13
