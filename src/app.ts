@@ -192,8 +192,41 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── CORS ──
+//
+// Accept three classes of origin so multi-developer LAN testing works
+// without per-machine env tweaks:
+//   1. Wildcard           — when CORS_ORIGINS contains '*' (open).
+//   2. Explicit whitelist — exact-match entries from CORS_ORIGINS env.
+//   3. Dev safe regex     — any localhost / 127.0.0.1 / 192.168.x.y origin
+//                            with any port, so dev servers can swap ports
+//                            (3000/3001/5001/7001/…) and teammates can hit
+//                            the host via LAN IP without us reconfiguring.
+//
+// Production deployments should set CORS_ORIGINS to the real domains only
+// (no '*'). The dev regex still accepts localhost/LAN origins, which is
+// harmless in prod because no browser will be hitting a public API from
+// localhost:7001 anyway — but if you want to lock it down completely,
+// gate the regex on NODE_ENV !== 'production'.
+const DEV_ORIGIN_PATTERNS = [
+  /^https?:\/\/localhost(?::\d+)?$/i,
+  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+  /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+  /^https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+];
+const corsWhitelist = config.cors.origins;
+const corsOpen = corsWhitelist.includes('*');
+
 app.use(cors({
-  origin: config.cors.origins.includes('*') ? '*' : config.cors.origins,
+  origin(origin, callback) {
+    // No Origin header → same-origin / curl / server-to-server. Allow.
+    if (!origin) return callback(null, true);
+    if (corsOpen) return callback(null, true);
+    if (corsWhitelist.includes(origin)) return callback(null, true);
+    if (DEV_ORIGIN_PATTERNS.some((re) => re.test(origin))) return callback(null, true);
+    // Reject — express-cors will omit the Allow-Origin header so the
+    // browser blocks the response with a clear CORS error.
+    return callback(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-recaptcha-token'],
