@@ -67,6 +67,11 @@ export async function create(req: Request, res: Response) {
 
   const payload: any = { ...parsed.data, created_by: req.user!.id };
 
+  // Phase 35.2 invariant — see createMyEducation.
+  if (payload.is_currently_studying === true) {
+    payload.end_date = null;
+  }
+
   // Handle certificate upload
   if (req.file) {
     const path = `certificates/user-${payload.user_id}-edu-${Date.now()}.webp`;
@@ -101,6 +106,12 @@ export async function update(req: Request, res: Response) {
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
 
   const updates: any = { ...parsed.data, updated_by: req.user!.id };
+
+  // Phase 35.2 invariant — see updateMyEducation.
+  const effectivelyCurrent = updates.is_currently_studying ?? old.is_currently_studying;
+  if (effectivelyCurrent === true) {
+    updates.end_date = null;
+  }
 
   // Handle certificate upload
   if (req.file) {
@@ -238,6 +249,18 @@ export async function createMyEducation(req: Request, res: Response) {
 
   const payload: any = { ...parsed.data, user_id: userId, created_by: userId };
 
+  // ── Invariant guard (Phase 35.2) ──
+  //
+  // Defensive: regardless of what the client claims, a "currently
+  // studying" record cannot have an end_date. We saw rows in the live
+  // table where both flags were set — almost certainly a client-side
+  // race condition where the user toggled the checkbox between when the
+  // form rendered and when the request fired. Enforcing it here means
+  // the DB invariant is preserved no matter what the wire payload says.
+  if (payload.is_currently_studying === true) {
+    payload.end_date = null;
+  }
+
   if (req.file) {
     const path = `certificates/user-${userId}-edu-${Date.now()}.webp`;
     payload.certificate_url = await processAndUploadImage(req.file.buffer, path, { width: 1200, height: 1600, quality: 85 });
@@ -273,6 +296,21 @@ export async function updateMyEducation(req: Request, res: Response) {
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
 
   const updates: any = { ...parsed.data, updated_by: userId };
+
+  // ── Invariant guard (Phase 35.2) ──
+  //
+  // Same as create: if the client says "currently studying", we force
+  // end_date to null. AND if the client toggled it off (false), but
+  // didn't supply a new end_date, we leave end_date alone — the user
+  // probably wants to keep whatever was there.
+  //
+  // The `?? old.is_currently_studying` covers PATCHes where the client
+  // only sent some fields and left out is_currently_studying entirely —
+  // we still need to respect the persisted flag for the invariant.
+  const effectivelyCurrent = updates.is_currently_studying ?? old.is_currently_studying;
+  if (effectivelyCurrent === true) {
+    updates.end_date = null;
+  }
 
   if (req.file) {
     if (old.certificate_url) {
