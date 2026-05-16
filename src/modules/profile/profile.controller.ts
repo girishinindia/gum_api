@@ -152,17 +152,14 @@ export async function updateEmailInitiate(req: Request, res: Response) {
   const emailOtp = await otpSvc.storeAndGetProfileOTP(pendingId, 'email');
   await otpSvc.setCooldown(cleanEmail);
 
-  // Send both notifications concurrently
-  const [emailRes, smsRes] = await Promise.allSettled([
-    sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'update_email'),
-    sendSms(user.mobile, user.first_name, emailOtp, 'update_email'),
-  ]);
-
-  if (emailRes.status === 'rejected') console.error('[UpdateEmail] Email OTP send failed:', emailRes.reason);
-  if (smsRes.status === 'rejected') console.error('[UpdateEmail] SMS notification send failed:', smsRes.reason);
-
-  if (emailRes.status === 'rejected' && smsRes.status === 'rejected') {
-    return err(res, 'Failed to send OTPs. Please try again.', 500);
+  // Bug 1 fix: only send the OTP to the NEW email. The existing mobile is already
+  // verified — we don't need to revalidate it. The OTP on the new email is what
+  // proves the user actually owns the address they're trying to switch to.
+  try {
+    await sendOtpEmail(cleanEmail, user.first_name, emailOtp, 'update_email');
+  } catch (e) {
+    console.error('[UpdateEmail] Email OTP send failed:', e);
+    return err(res, 'Failed to send OTP. Please try again.', 500);
   }
 
   logAuth({ userId, action: 'update_email_initiated', identifier: cleanEmail, ip: getClientIp(req), metadata: { old_email: user.email } });

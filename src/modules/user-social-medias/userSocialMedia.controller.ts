@@ -117,8 +117,35 @@ export async function createMy(req: Request, res: Response) {
   const parsed = createUserSocialMediaSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const payload: any = { ...parsed.data, user_id: userId, created_by: userId };
+
+  // Bug 4 defence: restore soft-deleted row instead of inserting a duplicate.
+  // See userLanguage.controller.ts:createMy for the same pattern.
+  const { data: existing } = await supabase
+    .from('user_social_medias')
+    .select('id, deleted_at')
+    .eq('user_id', userId)
+    .eq('social_media_id', payload.social_media_id)
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.deleted_at) {
+      const { data, error: e } = await supabase
+        .from('user_social_medias')
+        .update({ ...payload, deleted_at: null, deleted_by: null, updated_by: userId })
+        .eq('id', existing.id)
+        .select(SELECT_WITH_JOINS)
+        .single();
+      if (e) return err(res, e.message, 500);
+      logAdmin({ actorId: userId, action: 'user_social_media_restored', targetType: 'user_social_media', targetId: data.id, targetName: data.username || data.profile_url, ip: getClientIp(req) });
+      return ok(res, data, 'Social link re-added', 201);
+    }
+    return err(res, 'This social link is already added', 409);
+  }
+
   const { data, error: e } = await supabase.from('user_social_medias').insert(payload).select(SELECT_WITH_JOINS).single();
-  if (e) return err(res, e.message, 500);
+  if (e) { if (e.code === '23505') return err(res, 'This social link is already added', 409); return err(res, e.message, 500); }
   logAdmin({ actorId: userId, action: 'user_social_media_created', targetType: 'user_social_media', targetId: data.id, targetName: data.username || data.profile_url, ip: getClientIp(req) });
   return ok(res, data, 'Social media link added', 201);
 }

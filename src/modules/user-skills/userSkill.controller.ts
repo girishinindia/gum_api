@@ -117,6 +117,33 @@ export async function createMy(req: Request, res: Response) {
   const parsed = createUserSkillSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const payload: any = { ...parsed.data, user_id: userId, created_by: userId };
+
+  // Bug 4 defence: restore soft-deleted row instead of inserting a duplicate.
+  // See userLanguage.controller.ts:createMy for the same pattern.
+  const { data: existing } = await supabase
+    .from('user_skills')
+    .select('id, deleted_at')
+    .eq('user_id', userId)
+    .eq('skill_id', payload.skill_id)
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.deleted_at) {
+      const { data, error: e } = await supabase
+        .from('user_skills')
+        .update({ ...payload, deleted_at: null, deleted_by: null, updated_by: userId })
+        .eq('id', existing.id)
+        .select(SELECT_WITH_JOINS)
+        .single();
+      if (e) return err(res, e.message, 500);
+      logAdmin({ actorId: userId, action: 'user_skill_restored', targetType: 'user_skill', targetId: data.id, targetName: data.skill?.name || String(data.skill_id), ip: getClientIp(req) });
+      return ok(res, data, 'Skill re-added', 201);
+    }
+    return err(res, 'This skill is already added', 409);
+  }
+
   const { data, error: e } = await supabase.from('user_skills').insert(payload).select(SELECT_WITH_JOINS).single();
   if (e) { if (e.code === '23505') return err(res, 'This skill is already added', 409); return err(res, e.message, 500); }
   logAdmin({ actorId: userId, action: 'user_skill_created', targetType: 'user_skill', targetId: data.id, targetName: data.skill?.name || String(data.skill_id), ip: getClientIp(req) });

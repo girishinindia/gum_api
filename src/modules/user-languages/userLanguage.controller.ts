@@ -115,6 +115,37 @@ export async function createMy(req: Request, res: Response) {
   const parsed = createUserLanguageSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const payload: any = { ...parsed.data, user_id: userId, created_by: userId };
+
+  // Bug 4 defence: if a soft-deleted row exists for this (user_id, language_id),
+  // restore it with the new payload instead of inserting a duplicate. This is
+  // belt-and-braces protection on top of migration 52, which converts the
+  // unique constraint to a partial index that only covers live rows.
+  const { data: existing } = await supabase
+    .from('user_languages')
+    .select('id, deleted_at')
+    .eq('user_id', userId)
+    .eq('language_id', payload.language_id)
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.deleted_at) {
+      // Soft-deleted: undelete + refresh fields
+      const { data, error: e } = await supabase
+        .from('user_languages')
+        .update({ ...payload, deleted_at: null, deleted_by: null, updated_by: userId })
+        .eq('id', existing.id)
+        .select(SELECT_WITH_JOINS)
+        .single();
+      if (e) return err(res, e.message, 500);
+      logAdmin({ actorId: userId, action: 'user_language_restored', targetType: 'user_language', targetId: data.id, targetName: data.language?.name || String(data.language_id), ip: getClientIp(req) });
+      return ok(res, data, 'Language re-added', 201);
+    }
+    // Live row already exists
+    return err(res, 'This language is already added', 409);
+  }
+
   const { data, error: e } = await supabase.from('user_languages').insert(payload).select(SELECT_WITH_JOINS).single();
   if (e) { if (e.code === '23505') return err(res, 'This language is already added', 409); return err(res, e.message, 500); }
   logAdmin({ actorId: userId, action: 'user_language_created', targetType: 'user_language', targetId: data.id, targetName: data.language?.name || String(data.language_id), ip: getClientIp(req) });
