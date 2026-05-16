@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission, requireSuperAdmin } from '../../middleware/rbac';
 import { upload } from '../../middleware/upload';
+import { validate } from '../../middleware/validate';
+import { assignSelfRoleSchema } from './user.schema';
 import * as ctrl from './user.controller';
 
 const r = Router();
@@ -11,6 +13,7 @@ r.use(authMiddleware, attachPermissions());
 r.get('/me',                                    ctrl.getMe);
 r.patch('/me', upload.single('avatar'),         ctrl.updateMe);
 r.get('/me/permissions',                        ctrl.getMyPermissions);
+r.post('/me/roles',     validate(assignSelfRoleSchema), ctrl.assignMyRole);
 
 // User management
 r.get('/',                                      requirePermission('user', 'read'), ctrl.list);

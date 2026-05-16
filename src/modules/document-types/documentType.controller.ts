@@ -21,8 +21,10 @@ function parseBody(req: Request): any {
 }
 
 // GET /document-types
+// `maxLimit: 500` — document types are a curated reference list, but
+// raise the cap so the profile-page Documents dropdown is never truncated.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 500 });
 
   let q = supabase.from('document_types').select('*', { count: 'exact' });
 

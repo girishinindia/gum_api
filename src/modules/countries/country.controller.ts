@@ -26,8 +26,9 @@ function parseMultipartBody(req: Request): any {
   return body;
 }
 
+// GET /countries — `maxLimit: 500` is plenty (ISO 3166-1 has ~250 territories).
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 500 });
 
   let q = supabase.from('countries').select('*', { count: 'exact' });
 

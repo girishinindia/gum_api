@@ -22,8 +22,10 @@ function parseBody(req: Request): any {
 }
 
 // GET /education-levels?level_category=school
+// `maxLimit: 500` lets the profile-page education dropdown load the full
+// ladder (school → diploma → UG → PG → doctoral → professional) in one shot.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'level_order' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'level_order', maxLimit: 500 });
 
   let q = supabase.from('education_levels').select('*', { count: 'exact' });
 

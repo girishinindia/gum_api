@@ -22,8 +22,11 @@ function parseBody(req: Request): any {
 }
 
 // GET /cities?state_id=1
+// `maxLimit: 2000` lets the profile-page dropdown load every city for a
+// state in one shot. Tamil Nadu has ~900 active cities; 2000 leaves
+// headroom while still guarding against runaway `?limit=999999` calls.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 2000 });
 
   let q = supabase.from('cities').select('*, states(name, state_code, country_id, countries(name, iso2))', { count: 'exact' });
 

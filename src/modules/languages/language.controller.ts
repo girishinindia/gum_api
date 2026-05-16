@@ -22,8 +22,10 @@ function parseBody(req: Request): any {
 }
 
 // GET /languages?for_material=true
+// `maxLimit: 2000` — the languages master is an ISO list (~200) but
+// matches the cities precedent for headroom against future growth.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 2000 });
 
   let q = supabase.from('languages').select('*', { count: 'exact' });
 

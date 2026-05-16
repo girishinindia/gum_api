@@ -29,8 +29,10 @@ function parseMultipartBody(req: Request): any {
   return body;
 }
 
+// GET /social-medias — `maxLimit: 200` covers any reasonable platform
+// roster while keeping a defensive ceiling.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 200 });
 
   let q = supabase.from('social_medias').select('*', { count: 'exact' });
 

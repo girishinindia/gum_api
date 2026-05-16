@@ -178,3 +178,19 @@ export async function getUserBadges(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
   return ok(res, data || []);
 }
+
+// ── LIST MY BADGES (self) ──
+// Any authenticated user can list their own awarded badges. No
+// `user_badge:read` permission required — uses req.user.id so a student
+// can see their badges without admin grants. Mirrors `getUserBadges`
+// but locked to the caller's own user_id.
+export async function listMy(req: Request, res: Response) {
+  const { data, error: e } = await supabase
+    .from('user_badges')
+    .select('*, badges(id, name, slug, description, icon_url, category, xp_reward)')
+    .eq('user_id', req.user!.id)
+    .order('earned_at', { ascending: false });
+
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}

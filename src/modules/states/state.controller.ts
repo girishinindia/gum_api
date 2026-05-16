@@ -22,8 +22,10 @@ function parseBody(req: Request): any {
 }
 
 // GET /states?country_id=1
+// `maxLimit: 500` accommodates countries with hundreds of admin
+// subdivisions while staying defensive against pathological queries.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 500 });
 
   let q = supabase.from('states').select('*, countries(name, iso2)', { count: 'exact' });
 

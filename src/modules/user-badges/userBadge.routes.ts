@@ -8,6 +8,9 @@ const r = Router();
 // All routes are protected
 r.use(authMiddleware, attachPermissions());
 
+// Self — any authenticated user can list their own badges
+r.get('/me', ctrl.listMy);
+
 r.get('/',    requirePermission('user_badge', 'read'), ctrl.list);
 r.get('/:id', requirePermission('user_badge', 'read'), ctrl.getById);
 

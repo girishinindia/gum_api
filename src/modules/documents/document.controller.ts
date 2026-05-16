@@ -27,8 +27,10 @@ function parseMultipartBody(req: Request): any {
 }
 
 // GET /documents?document_type_id=1&page=1&limit=20&search=foo&sort=name&order=asc
+// `maxLimit: 500` lets the profile-page Documents picker load every
+// document name within a chosen type in one shot.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'name', maxLimit: 500 });
 
   let q = supabase.from('documents').select('*, document_types(name)', { count: 'exact' });
 

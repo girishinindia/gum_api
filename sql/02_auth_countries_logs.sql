@@ -330,21 +330,20 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
     SELECT NOT EXISTS(SELECT 1 FROM users WHERE mobile = p_mobile);
 $$;
 
+-- create_verified_user
+-- Inserts the users row only. Role assignment is now done by the API layer
+-- via POST /users/me/roles immediately after this function returns, so the
+-- caller can choose between 'student' and 'instructor' at signup time.
+-- See: src/modules/users/user.controller.ts → assignMyRole()
 CREATE OR REPLACE FUNCTION create_verified_user(
     p_first_name VARCHAR, p_last_name VARCHAR,
     p_email VARCHAR, p_mobile VARCHAR, p_password_hash VARCHAR
 ) RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_user_id BIGINT; v_role_id BIGINT;
+DECLARE v_user_id BIGINT;
 BEGIN
     INSERT INTO users (first_name, last_name, email, mobile, password_hash)
     VALUES (TRIM(p_first_name), TRIM(p_last_name), LOWER(TRIM(p_email)), p_mobile, p_password_hash)
     RETURNING id INTO v_user_id;
-
-    SELECT id INTO v_role_id FROM roles WHERE name = 'student' LIMIT 1;
-    IF v_role_id IS NOT NULL THEN
-        INSERT INTO user_roles (user_id, role_id, scope, is_active)
-        VALUES (v_user_id, v_role_id, 'global', TRUE);
-    END IF;
     RETURN v_user_id;
 END; $$;
 

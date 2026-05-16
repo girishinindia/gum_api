@@ -25,8 +25,10 @@ function parseBody(req: Request): any {
 }
 
 // GET /designations?level_band=senior&page=1&limit=20&search=foo&sort=level&order=asc
+// `maxLimit: 1000` — designations span many bands/specializations; raise
+// the cap so the profile-page Experience dropdown sees the full list.
 export async function list(req: Request, res: Response) {
-  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'level' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'level', maxLimit: 1000 });
 
   let q = supabase.from('designations').select('*', { count: 'exact' });
 

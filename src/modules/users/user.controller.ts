@@ -258,6 +258,110 @@ export async function assignRole(req: Request, res: Response) {
   return ok(res, null, `Role '${role.display_name}' assigned. User has been logged out.`, 201);
 }
 
+/**
+ * POST /users/me/roles — self-service role assignment for newly registered users.
+ *
+ * Gated by `authMiddleware` only (no `requireSuperAdmin`), so any authenticated
+ * user can call it — but the controller enforces:
+ *
+ *   1. Role must be in the self-assignable allow-list (Zod schema). Currently
+ *      only 'student' and 'instructor' are allowed.
+ *   2. The caller's `req.user.id` is the only user_id ever written — body
+ *      cannot specify another user. Self-only by construction.
+ *   3. If the user already has any active role at level > 20 (i.e., elevated
+ *      to admin/faculty/moderator), the request is rejected. This prevents
+ *      privilege swapping for users who've already been promoted.
+ *   4. Idempotent — calling twice with the same role returns the existing row
+ *      (200) instead of creating a duplicate. Safe to retry on flaky networks.
+ *
+ * Used by the signup flow: after `verifyOtp` issues tokens, the frontend
+ * immediately calls this endpoint with the role chosen during signup
+ * ('student' or 'instructor'). This populates `user_roles` so the admin
+ * portal can correctly filter and display new users by role.
+ */
+export async function assignMyRole(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const { role: roleName } = (req as any).validated;
+
+  // 1. Resolve role_id by name (case-sensitive, must be active)
+  const { data: role } = await supabase
+    .from('roles')
+    .select('id, name, display_name, level, is_active')
+    .eq('name', roleName)
+    .eq('is_active', true)
+    .single();
+  if (!role) return err(res, `Role '${roleName}' not found or inactive`, 404);
+
+  // 2. Block self-assignment if user already has an elevated role.
+  //    Self-assignable roles are level 20 (student) / 50 (instructor).
+  //    If the user has anything above 20 already, force them through the
+  //    super-admin route — they can't quietly grant themselves student/instructor.
+  const { data: existingRoles } = await supabase
+    .from('user_roles')
+    .select('id, role_id, roles!inner(level)')
+    .eq('user_id', userId)
+    .eq('is_active', true);
+  const maxExistingLevel = (existingRoles || []).reduce(
+    (m: number, ur: any) => Math.max(m, ur.roles?.level || 0), 0
+  );
+  if (maxExistingLevel > 20) {
+    return err(res, 'You already have an elevated role. Ask a super admin to change it.', 403);
+  }
+
+  // 3. Idempotency: if this exact role is already active for the user, return ok.
+  //    If it exists but is inactive (revoked), reactivate it.
+  const { data: existing } = await supabase
+    .from('user_roles')
+    .select('id, is_active')
+    .eq('user_id', userId)
+    .eq('role_id', role.id)
+    .eq('scope', 'global')
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.is_active) {
+      return ok(res, { role_id: role.id, role: role.name }, 'Role already assigned');
+    }
+    const { error: upErr } = await supabase
+      .from('user_roles')
+      .update({ is_active: true, granted_by: null })
+      .eq('id', existing.id);
+    if (upErr) return err(res, upErr.message, 500);
+  } else {
+    const { error: e } = await supabase
+      .from('user_roles')
+      .insert({
+        user_id: userId,
+        role_id: role.id,
+        scope: 'global',
+        scope_id: null,
+        is_active: true,
+        granted_by: null, // NULL denotes self-signup
+      });
+    if (e) {
+      // 23505 = unique violation — race between two concurrent assignMyRole calls.
+      // Treat as success since the row exists now.
+      if (e.code === '23505') {
+        return ok(res, { role_id: role.id, role: role.name }, 'Role already assigned');
+      }
+      return err(res, e.message, 500);
+    }
+  }
+
+  // Clear the user's permission cache so the next request reflects the new role.
+  await clearPermissionCache(userId);
+
+  // Audit log — granted_by is null so admins can spot self-signups easily
+  logAuth({
+    userId,
+    action: 'role_self_assigned',
+    ip: getClientIp(req),
+    metadata: { role: role.name, role_id: role.id, source: 'signup' },
+  });
+
+  return ok(res, { role_id: role.id, role: role.name, display_name: role.display_name }, `Role '${role.display_name}' assigned`, 201);
+}
+
 export async function revokeRole(req: Request, res: Response) {
   const userId = parseInt(req.params.id);
   const roleId = parseInt(req.params.roleId);
