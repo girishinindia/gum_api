@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { z } from "zod";
+import { multipartBool } from "../../utils/zod-helpers";
 
 export const PROJECT_TYPES = ['personal','academic','professional','freelance','open_source','research','hackathon','internship','client','government','ngo','other'] as const;
 export const PROJECT_STATUSES = ['planning','in_progress','completed','on_hold','cancelled','abandoned'] as const;
@@ -13,7 +14,7 @@ export const createUserProjectSchema = z.object({
   role_in_project: z.string().max(300).optional().nullable(),
   responsibilities: z.string().max(5000).optional().nullable(),
   team_size: z.coerce.number().int().min(1).max(10000).optional().nullable(),
-  is_solo_project: z.coerce.boolean().optional().default(false),
+  is_solo_project: multipartBool().optional().default(false),
   organization_name: z.string().max(500).optional().nullable(),
   client_name: z.string().max(500).optional().nullable(),
   industry: z.string().max(300).optional().nullable(),
@@ -25,7 +26,7 @@ export const createUserProjectSchema = z.object({
   platform: z.string().max(200).optional().nullable(),
   start_date: z.string().optional().nullable(),
   end_date: z.string().optional().nullable(),
-  is_ongoing: z.coerce.boolean().optional().default(false),
+  is_ongoing: multipartBool().optional().default(false),
   duration_months: z.coerce.number().int().min(0).max(600).optional().nullable(),
   project_status: z.enum(PROJECT_STATUSES).optional().default('completed'),
   key_achievements: z.string().max(5000).optional().nullable(),
@@ -39,8 +40,8 @@ export const createUserProjectSchema = z.object({
   documentation_url: z.string().max(1000).optional().nullable(),
   thumbnail_url: z.string().max(1000).optional().nullable(),
   case_study_url: z.string().max(1000).optional().nullable(),
-  is_featured: z.coerce.boolean().optional().default(false),
-  is_published: z.coerce.boolean().optional().default(false),
+  is_featured: multipartBool().optional().default(false),
+  is_published: multipartBool().optional().default(false),
   awards: z.string().max(2000).optional().nullable(),
   certifications: z.string().max(2000).optional().nullable(),
   reference_name: z.string().max(300).optional().nullable(),

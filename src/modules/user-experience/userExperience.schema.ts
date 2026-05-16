@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { z } from "zod";
+import { multipartBool } from "../../utils/zod-helpers";
 
 export const EMPLOYMENT_TYPES = ['full_time','part_time','contract','internship','freelance','self_employed','volunteer','apprenticeship','other'] as const;
 export const WORK_MODES = ['on_site','remote','hybrid'] as const;
@@ -14,7 +15,7 @@ export const createUserExperienceSchema = z.object({
   work_mode: z.enum(WORK_MODES).optional().default('on_site'),
   start_date: z.string().min(1, 'Start date is required'),
   end_date: z.string().optional().nullable(),
-  is_current_job: z.coerce.boolean().optional().default(false),
+  is_current_job: multipartBool().optional().default(false),
   description: z.string().max(5000).optional().nullable(),
   key_achievements: z.string().max(5000).optional().nullable(),
   skills_used: z.string().max(2000).optional().nullable(),

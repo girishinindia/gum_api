@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { multipartBool } from '../../utils/zod-helpers';
 
 // Defence in depth — even if the coerceNullStrings middleware is missed on
 // a future route, a "null" / "" date value would still be rejected here
@@ -27,8 +28,11 @@ export const createUserEducationSchema = z.object({
   grade_type: nullableEnum(['percentage', 'cgpa', 'gpa', 'grade', 'pass_fail', 'other']),
   start_date: nullableIsoDate,
   end_date: nullableIsoDate,
-  is_currently_studying: z.coerce.boolean().optional().default(false),
-  is_highest_qualification: z.coerce.boolean().optional().default(false),
+  // Phase 37.1 — `z.coerce.boolean()` is broken for the string "false"
+  // (Boolean("false") === true). multipartBool() correctly handles both
+  // native booleans and the stringified-from-multipart forms.
+  is_currently_studying: multipartBool().optional().default(false),
+  is_highest_qualification: multipartBool().optional().default(false),
   description: z.string().max(2000).optional().nullable(),
 });
 

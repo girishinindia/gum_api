@@ -39,6 +39,9 @@ export async function create(req: Request, res: Response) {
   const parsed = createUserProjectSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const payload: any = { ...parsed.data, created_by: req.user!.id };
+  // Phase 38.1 invariant — see user-education for the matching pattern.
+  // is_ongoing === true must imply end_date IS NULL.
+  if (payload.is_ongoing === true) payload.end_date = null;
   const { data, error: e } = await supabase.from('user_projects').insert(payload).select(SELECT_WITH_JOINS).single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'user_project_created', targetType: 'user_project', targetId: data.id, targetName: data.project_title, ip: getClientIp(req) });
@@ -52,6 +55,9 @@ export async function update(req: Request, res: Response) {
   const parsed = updateUserProjectSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const updates: any = { ...parsed.data, updated_by: req.user!.id };
+  // Phase 38.1 invariant — see updateMyEducation for context.
+  const effectivelyOngoing = updates.is_ongoing ?? old.is_ongoing;
+  if (effectivelyOngoing === true) updates.end_date = null;
   const { data, error: e } = await supabase.from('user_projects').update(updates).eq('id', id).select(SELECT_WITH_JOINS).single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'user_project_updated', targetType: 'user_project', targetId: id, targetName: data.project_title, ip: getClientIp(req) });
@@ -119,6 +125,8 @@ export async function createMy(req: Request, res: Response) {
   const parsed = createUserProjectSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const payload: any = { ...parsed.data, user_id: userId, created_by: userId };
+  // Phase 38.1 invariant — see user-education for the matching pattern.
+  if (payload.is_ongoing === true) payload.end_date = null;
   const { data, error: e } = await supabase.from('user_projects').insert(payload).select(SELECT_WITH_JOINS).single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: userId, action: 'user_project_created', targetType: 'user_project', targetId: data.id, targetName: data.project_title, ip: getClientIp(req) });
@@ -133,6 +141,9 @@ export async function updateMy(req: Request, res: Response) {
   const parsed = updateUserProjectSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.errors.map(e => e.message).join(', '), 400);
   const updates: any = { ...parsed.data, updated_by: userId };
+  // Phase 38.1 invariant — see updateMyEducation for context.
+  const effectivelyOngoing = updates.is_ongoing ?? old.is_ongoing;
+  if (effectivelyOngoing === true) updates.end_date = null;
   const { data, error: e } = await supabase.from('user_projects').update(updates).eq('id', id).eq('user_id', userId).select(SELECT_WITH_JOINS).single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: userId, action: 'user_project_updated', targetType: 'user_project', targetId: id, targetName: data.project_title, ip: getClientIp(req) });

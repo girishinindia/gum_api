@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { z } from "zod";
+import { multipartBool } from "../../utils/zod-helpers";
 
 export const upsertUserProfileSchema = z.object({
   // Personal Information
@@ -53,13 +54,13 @@ export const upsertUserProfileSchema = z.object({
 
   // Preferences
   preferred_language_id: z.coerce.number().optional().nullable(),
-  notification_email: z.coerce.boolean().optional(),
-  notification_sms: z.coerce.boolean().optional(),
-  notification_push: z.coerce.boolean().optional(),
+  notification_email: multipartBool().optional(),
+  notification_sms: multipartBool().optional(),
+  notification_push: multipartBool().optional(),
 
   // Resume / Public Profile
   bio: z.string().max(2000).optional().nullable(),
   headline: z.string().max(200).optional().nullable(),
   profile_slug: z.string().max(100).regex(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/, 'Slug must be lowercase alphanumeric with dots, hyphens, or underscores').optional().nullable(),
-  is_profile_public: z.coerce.boolean().optional(),
+  is_profile_public: multipartBool().optional(),
 }).partial();
