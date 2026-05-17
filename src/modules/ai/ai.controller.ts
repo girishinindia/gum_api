@@ -757,7 +757,7 @@ USER INSTRUCTIONS: ${userPrompt}`;
 const MATERIAL_FIELDS_SUBJECT = ['name', 'short_intro', 'long_intro'];
 const MATERIAL_FIELDS_CHAPTER = ['name', 'short_intro', 'long_intro', 'prerequisites', 'learning_objectives'];
 const MATERIAL_FIELDS_TOPIC   = ['name', 'short_intro', 'long_intro', 'prerequisites', 'learning_objectives'];
-const MATERIAL_FIELDS_SUB_TOPIC = ['name', 'short_intro', 'long_intro', 'tags', 'video_title', 'video_description', 'meta_title', 'meta_description', 'meta_keywords', 'og_title', 'og_description', 'twitter_title', 'twitter_description', 'focus_keyword'];
+const MATERIAL_FIELDS_SUB_TOPIC = ['name', 'short_intro', 'long_intro', 'tags', 'video_title', 'video_description', 'meta_title', 'meta_description', 'meta_keywords', 'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description', 'focus_keyword'];
 
 const MATERIAL_FIELDS_COURSE = [
   'title', 'short_intro', 'long_intro', 'tagline',
@@ -766,7 +766,7 @@ const MATERIAL_FIELDS_COURSE = [
   'course_includes', 'course_is_for', 'apply_for_designations',
   'demand_in_countries', 'salary_standard', 'future_courses',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 const COURSE_JSONB_FIELDS = ['tags', 'prerequisites', 'skills_gain', 'what_you_will_learn', 'course_includes', 'course_is_for', 'apply_for_designations', 'demand_in_countries', 'salary_standard', 'future_courses'];
@@ -775,7 +775,7 @@ const MATERIAL_FIELDS_COURSE_MODULE = [
   'name', 'short_intro', 'description',
   'tags',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 const COURSE_MODULE_JSONB_FIELDS = ['tags'];
@@ -784,7 +784,7 @@ const MATERIAL_FIELDS_COURSE_BATCH = [
   'title', 'short_description', 'description',
   'requirements', 'what_you_learn', 'tags',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 const COURSE_BATCH_JSONB_FIELDS: string[] = ['tags'];
@@ -793,7 +793,7 @@ const MATERIAL_FIELDS_WEBINAR = [
   'title', 'short_description', 'description',
   'tags',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 const WEBINAR_JSONB_FIELDS = ['tags'];
@@ -801,14 +801,14 @@ const WEBINAR_JSONB_FIELDS = ['tags'];
 const MATERIAL_FIELDS_FAQ_CATEGORY = [
   'name', 'description',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description',
+  'og_title', 'og_site_name', 'og_description',
   'focus_keyword',
 ];
 
 const MATERIAL_FIELDS_FAQ = [
   'question', 'answer',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 
@@ -835,6 +835,34 @@ function buildMaterialJsonSpec(fields: string[]): string {
 function extractMaterialFields(translated: any, fields: string[]): Record<string, any> {
   const result: Record<string, any> = {};
   for (const f of fields) result[f] = translated[f] || '';
+  // Phase 44.4 — guarantee `og_site_name` + `og_title` are populated.
+  //
+  // The AI sometimes omits these (especially `og_site_name`, which is a
+  // brand-level constant rather than a per-record value), leaving them
+  // empty in the DB. Admins then saw blanks in the batch / translation
+  // view dialogs after AI generation.
+  //
+  // Rule of thumb the platform wants:
+  //   og_site_name → always 'Grow Up More' unless AI explicitly sets
+  //                   another brand string.
+  //   og_title     → fall back to meta_title, then title, then name —
+  //                   whichever is present. Empty only if the record
+  //                   has literally no headline at all.
+  if (fields.includes('og_site_name') || translated.og_site_name) {
+    const provided = String(translated.og_site_name || '').trim();
+    result.og_site_name = provided || 'Grow Up More';
+  }
+  if (fields.includes('og_title')) {
+    const provided = String(result.og_title || '').trim();
+    if (!provided) {
+      const fallback =
+        String(translated.meta_title || '').trim() ||
+        String(translated.title || '').trim() ||
+        String(translated.name || '').trim() ||
+        '';
+      result.og_title = fallback;
+    }
+  }
   return result;
 }
 

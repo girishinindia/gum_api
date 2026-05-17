@@ -36,7 +36,10 @@ function parseBody(req: Request): any {
   return body;
 }
 
-const FK_SELECT = `*, courses(name, slug), users!course_batches_instructor_id_fkey(id, full_name, email)`;
+// Phase 44.4 — embed enough course columns that the admin "Batch
+// Details" view dialog can render a proper Course card (code, status,
+// difficulty, pricing, thumbnail) instead of just the course name.
+const FK_SELECT = `*, courses(id, name, slug, code, course_status, difficulty_level, price, original_price, is_free, trailer_thumbnail_url), users!course_batches_instructor_id_fkey(id, full_name, email)`;
 
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'display_order' });
