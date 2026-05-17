@@ -8,6 +8,7 @@ import { getClientIp, generatePendingId } from '../../utils/helpers';
 import { config } from '../../config';
 import { sendNotification } from '../../services/notification.service';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'chat_invites';
 const ROOM_TABLE = 'chat_rooms';
@@ -21,7 +22,7 @@ const clearCache = async () => { await redis.del(CACHE_KEY); };
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
   for (const k of ['room_id', 'max_uses', 'invited_user_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;

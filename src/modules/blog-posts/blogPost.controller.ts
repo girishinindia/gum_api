@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { config } from '../../config';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'blog_posts';
 const CACHE_KEY = 'blog_posts:all';
@@ -29,7 +30,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['category_id', 'author_id', 'view_count']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Parse JSONB tags
   if (typeof body.tags === 'string') {

@@ -9,6 +9,7 @@ import { markEarningsAsPaid } from '../../services/instructorEarning.service';
 import { notifyPayoutCompleted } from '../../services/notification.service';
 import { debitWallet } from '../../services/wallet.service';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'payout_settlements';
 const CACHE_KEY = 'payout_settlements:all';
@@ -23,11 +24,11 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['instructor_id', 'payout_request_id', 'processed_by']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Float fields
   for (const k of ['settlement_amount', 'processing_fee']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // JSON fields
   if (typeof body.metadata === 'string') {

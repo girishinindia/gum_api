@@ -8,6 +8,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'batch_translations';
 const PARENT_TABLE = 'course_batches';
@@ -28,7 +29,7 @@ function parseMultipartBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['batch_id', 'language_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // JSONB fields (parse from string if sent as JSON string via FormData)
   for (const k of ['tags', 'structured_data']) {

@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'ticket_messages';
 const CACHE_KEY = 'ticket_messages:all';
@@ -19,7 +20,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.is_internal === 'string') body.is_internal = body.is_internal === 'true';
   for (const k of ['ticket_id', 'sender_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;

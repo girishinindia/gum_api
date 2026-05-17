@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch } from '../../utils/search';
 import { config } from '../../config';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'custom_emojis';
 const CACHE_KEY = 'custom_emojis:all';
@@ -23,7 +24,7 @@ function parseBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_animated === 'string') body.is_animated = body.is_animated === 'true';
   for (const k of ['category_id', 'display_order']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;

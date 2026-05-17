@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'transactions';
 const CACHE_KEY = 'transactions:all';
@@ -16,10 +17,10 @@ function parseBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   for (const k of ['order_id', 'payment_id', 'user_id', 'reference_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of ['amount', 'balance_before', 'balance_after']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   if (typeof body.metadata === 'string') {
     try { body.metadata = JSON.parse(body.metadata); } catch { body.metadata = null; }

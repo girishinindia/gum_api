@@ -11,6 +11,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { coerceIntFields, coerceNumFields } from '../../utils/coerce';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -112,15 +113,15 @@ function parseBody(req: Request): any {
   for (const k of ['is_active', 'is_free', 'is_new', 'is_featured', 'is_bestseller', 'has_placement_assistance', 'has_certificate']) {
     if (typeof body[k] === 'string') body[k] = body[k] === 'true';
   }
-  // Integer fields
-  for (const k of ['max_students', 'refund_days', 'enrollment_count', 'rating_count', 'view_count', 'total_lessons', 'total_assignments', 'total_projects', 'instructor_id', 'course_language_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
-  }
-  // Numeric fields
-  for (const k of ['price', 'original_price', 'discount_percentage', 'duration_hours', 'rating_average']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
-  }
-  // Nullify empty strings
+  // Phase 44.5 — Integer fields. Use the shared coerce helper so a legit
+  // `0` is preserved instead of being collapsed to null by the old
+  // `parseInt(x) || null` idiom.
+  coerceIntFields(body, ['max_students', 'refund_days', 'enrollment_count', 'rating_count', 'view_count', 'total_lessons', 'total_assignments', 'total_projects', 'instructor_id', 'course_language_id']);
+  // Phase 44.5 — Numeric fields. Same falsy-zero bug — `price = 0` for a
+  // free course used to become null and trip the NOT NULL constraint on
+  // `courses.price`, which also rolled back the freshly-uploaded media URLs.
+  coerceNumFields(body, ['price', 'original_price', 'discount_percentage', 'duration_hours', 'rating_average']);
+  // Nullify empty strings on the remaining text fields.
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
 }

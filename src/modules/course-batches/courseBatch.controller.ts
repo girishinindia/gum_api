@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'course_batches';
 const CACHE_KEY = 'course_batches:all';
@@ -23,7 +24,7 @@ function parseBody(req: Request): any {
   if (typeof body.includes_course_access === 'string') body.includes_course_access = body.includes_course_access === 'true';
   // Integer fields
   for (const k of ['course_id', 'instructor_id', 'max_students', 'enrolled_count', 'display_order']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Numeric fields
   if (typeof body.price === 'string') body.price = parseFloat(body.price) || 0;

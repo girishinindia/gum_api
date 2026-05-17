@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'faqs';
 const CACHE_KEY = 'faqs:all';
@@ -23,7 +24,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_featured === 'string') body.is_featured = body.is_featured === 'true';
   // Integer fields
   for (const k of ['category_id', 'item_id', 'author_id', 'display_order']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }

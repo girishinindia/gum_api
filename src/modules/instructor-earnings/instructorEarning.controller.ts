@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'instructor_earnings';
 const CACHE_KEY = 'instructor_earnings:all';
@@ -20,11 +21,11 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['instructor_id', 'order_id', 'order_item_id', 'item_id', 'student_id', 'payout_request_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Float fields
   for (const k of ['order_amount', 'platform_fee', 'gst_amount', 'instructor_share', 'earning_amount']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // JSON fields
   if (typeof body.metadata === 'string') {

@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const CACHE_KEY = 'bundle_translations:all';
 const clearCache = async (bundleId?: number) => {
@@ -25,7 +26,7 @@ function parseMultipartBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['bundle_id', 'language_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // JSONB fields (parse from string if sent as JSON string via FormData)
   for (const k of ['highlights', 'tags', 'structured_data']) {

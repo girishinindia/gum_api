@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { processAndUploadImage } from '../../services/storage.service';
 import { emitNewMessage, emitMessageEdited, emitMessageDeleted, emitMessagePinToggled } from '../../socket/emitter';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'chat_messages';
 const ATTACHMENT_TABLE = 'chat_attachments';
@@ -23,7 +24,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_pinned === 'string') body.is_pinned = body.is_pinned === 'true';
   if (typeof body.is_edited === 'string') body.is_edited = body.is_edited === 'true';
   for (const k of ['room_id', 'sender_id', 'reply_to_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Parse metadata JSONB
   if (typeof body.metadata === 'string') {

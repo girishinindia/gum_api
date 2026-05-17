@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { getOrCreateWallet, creditWallet, debitWallet, freezeWallet, unfreezeWallet } from '../../services/wallet.service';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'wallets';
 const CACHE_KEY = 'wallets:all';
@@ -23,11 +24,11 @@ function parseBody(req: Request): any {
   if (typeof body.auto_payout_enabled === 'string') body.auto_payout_enabled = body.auto_payout_enabled === 'true';
   // Integer fields
   for (const k of ['user_id', 'payout_day']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Decimal fields
   for (const k of ['balance', 'min_payout_amount']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // JSON fields
   if (typeof body.payout_details === 'string') {

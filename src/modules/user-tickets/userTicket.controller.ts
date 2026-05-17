@@ -4,6 +4,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { sendNotification } from '../../services/notification.service';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TICKET_TABLE = 'support_tickets';
 const MESSAGE_TABLE = 'ticket_messages';
@@ -16,7 +17,7 @@ const MESSAGE_FK_SELECT = `*, users!ticket_messages_sender_id_fkey(id, first_nam
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
   for (const k of ['category_id', 'priority_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;

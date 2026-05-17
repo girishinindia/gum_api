@@ -9,6 +9,7 @@ import { getClientIp } from '../../utils/helpers';
 import { notifyPayoutApproved, notifyPayoutRejected } from '../../services/notification.service';
 import { applySearch } from '../../utils/search';
 import { logger } from '../../utils/logger';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'payout_requests';
 const CACHE_KEY = 'payout_requests:all';
@@ -23,11 +24,11 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['instructor_id', 'reviewed_by']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Float fields
   for (const k of ['requested_amount', 'approved_amount']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // JSON fields
   if (typeof body.metadata === 'string') {

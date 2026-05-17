@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generatePendingId } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'chat_rooms';
 const MEMBER_TABLE = 'chat_room_members';
@@ -20,7 +21,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.allow_invite_link === 'string') body.allow_invite_link = body.allow_invite_link === 'true';
   for (const k of ['max_members', 'batch_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;

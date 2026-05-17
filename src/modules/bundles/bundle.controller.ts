@@ -9,6 +9,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -25,11 +26,11 @@ function parseBody(req: Request): any {
   }
   // Integer fields
   for (const k of ['instructor_id', 'max_courses', 'validity_days', 'enrollment_count', 'rating_count', 'view_count']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Numeric fields
   for (const k of ['price', 'original_price', 'discount_percentage', 'rating_average']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // Nullify empty strings
   for (const k of ['code', 'name', 'instructor_id', 'original_price', 'discount_percentage', 'validity_days', 'starts_at', 'expires_at', 'max_courses']) {

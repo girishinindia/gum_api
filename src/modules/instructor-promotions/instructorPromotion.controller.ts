@@ -7,6 +7,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const CACHE_KEY = 'instructor_promotions:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -19,11 +20,11 @@ function parseBody(req: Request): any {
   }
   // Integer fields
   for (const k of ['instructor_id', 'usage_limit', 'usage_per_user', 'used_count', 'approved_by']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Numeric fields
   for (const k of ['discount_value', 'max_discount_amount', 'min_purchase_amount']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // Nullify empty strings
   for (const k of ['promotion_name', 'description', 'promo_code', 'discount_type', 'applicable_to', 'valid_from', 'valid_until', 'promotion_status', 'rejection_reason']) {

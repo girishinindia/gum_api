@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const CACHE_KEY = 'course_translations:all';
 const clearCache = async (courseId?: number) => {
@@ -25,7 +26,7 @@ function parseMultipartBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['course_id', 'language_id', 'sort_order', 'video_duration_minutes']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // JSONB fields (parse from string if sent as JSON string via FormData)
   for (const k of ['tags', 'prerequisites', 'skills_gain', 'what_you_will_learn', 'course_includes', 'course_is_for', 'apply_for_designations', 'demand_in_countries', 'salary_standard', 'future_courses', 'structured_data']) {

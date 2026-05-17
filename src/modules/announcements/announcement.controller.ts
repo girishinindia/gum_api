@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { dispatchAnnouncement, getReadStats } from '../../services/announcement.service';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'announcements';
 const CACHE_KEY = 'announcements:all';
@@ -24,7 +25,7 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['target_id', 'priority', 'sent_count']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Array fields (channels)
   if (typeof body.channels === 'string') {

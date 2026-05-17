@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { signEmbedUrl } from '../../services/bunnyToken.service';
 import { hasPermission } from '../../middleware/rbac';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'enrollments';
 const CACHE_KEY = 'enrollments:all';
@@ -18,10 +19,10 @@ function parseBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   for (const k of ['user_id', 'order_id', 'order_item_id', 'item_id']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of ['progress_pct']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   if (typeof body.metadata === 'string') {
     try { body.metadata = JSON.parse(body.metadata); } catch { body.metadata = null; }

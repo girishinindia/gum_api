@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'referral_codes';
 const CACHE_KEY = 'referral_codes:all';
@@ -18,11 +19,11 @@ function parseBody(req: Request): any {
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   // Integer fields
   for (const k of ['student_id', 'usage_limit', 'usage_count', 'total_referrals', 'successful_referrals']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   // Numeric fields
   for (const k of ['discount_percentage', 'max_discount_amount', 'referrer_reward_percentage', 'total_earnings']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseFloat(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toNumOrNull(body[k]);
   }
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }

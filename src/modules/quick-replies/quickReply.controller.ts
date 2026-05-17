@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
+import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'quick_replies';
 const CACHE_KEY = 'quick_replies:all';
@@ -16,7 +17,7 @@ const clearCache = async () => { await redis.del(CACHE_KEY); };
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
   for (const k of ['user_id', 'display_order']) {
-    if (typeof body[k] === 'string') body[k] = body[k] ? parseInt(body[k]) || null : null;
+    if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
