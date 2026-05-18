@@ -81,6 +81,22 @@ const start = async () => {
     logger.info({ env: config.sentry.environment }, '[Sentry] initialised');
   }
 
+  // Phase 44.6 — actively verify Bunny Stream credentials at boot rather than
+  // waiting for an admin to try uploading a video and see "Not uploaded"
+  // with no obvious reason. Non-fatal — Bunny Stream might legitimately not
+  // be configured in some environments, but the warning makes the gap loud.
+  try {
+    const { pingBunnyStream } = await import('./services/video.service');
+    const ping = await pingBunnyStream();
+    if (ping.ok) {
+      logger.info({ libraryId: ping.libraryId, videoCount: ping.videoCount }, '[Bunny Stream] credentials verified');
+    } else {
+      logger.warn(`[Bunny Stream] NOT WORKING — ${ping.reason}. Video uploads will fail until this is fixed.`);
+    }
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, '[Bunny Stream] ping threw — video uploads may be broken');
+  }
+
   // Create HTTP server (shared by Express + Socket.io)
   const httpServer = createServer(app);
 

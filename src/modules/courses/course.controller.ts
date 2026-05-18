@@ -223,7 +223,17 @@ export async function create(req: Request, res: Response) {
   }
 
   // Phase 15.4 — Media-tab uploads (thumbnail image + brochure PDF).
-  const mediaUploads = await handleCourseMediaUploads(req, body.slug || body.code || 'course');
+  // Phase 44.6 — surface upload errors as a structured response so the admin
+  // sees the real Bunny error (missing key, 403 from token-locked library,
+  // network failure…) instead of a generic 500 with no detail. Without this
+  // wrapper the controller crashes async and the toast just says "Failed".
+  let mediaUploads;
+  try {
+    mediaUploads = await handleCourseMediaUploads(req, body.slug || body.code || 'course');
+  } catch (uploadErr: any) {
+    console.error('[course.create] media upload failed:', uploadErr);
+    return err(res, `Media upload failed: ${uploadErr?.message || 'unknown error'}`, 502);
+  }
   Object.assign(body, mediaUploads);
 
   const { data, error: e } = await supabase.from('courses').insert(body).select().single();
@@ -264,16 +274,26 @@ export async function update(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
 
   // Phase 15.4 + 15.5 — Media-tab uploads (delete-on-replace handled inside helper).
-  const mediaUploads = await handleCourseMediaUploads(
-    req,
-    updates.slug || old.slug || old.code || `course-${id}`,
-    {
-      trailer_thumbnail_url: old.trailer_thumbnail_url,
-      brochure_url:          old.brochure_url,
-      trailer_video_url:     old.trailer_video_url,
-      video_url:             old.video_url,
-    },
-  );
+  // Phase 44.6 — surface upload errors as a structured response instead of
+  // letting the rejection bubble up as a generic 500 with no body. Lets the
+  // admin see "Bunny Stream create failed: 401 invalid AccessKey" in the
+  // toast, which is the actionable signal we were missing for video uploads.
+  let mediaUploads;
+  try {
+    mediaUploads = await handleCourseMediaUploads(
+      req,
+      updates.slug || old.slug || old.code || `course-${id}`,
+      {
+        trailer_thumbnail_url: old.trailer_thumbnail_url,
+        brochure_url:          old.brochure_url,
+        trailer_video_url:     old.trailer_video_url,
+        video_url:             old.video_url,
+      },
+    );
+  } catch (uploadErr: any) {
+    console.error('[course.update] media upload failed:', uploadErr);
+    return err(res, `Media upload failed: ${uploadErr?.message || 'unknown error'}`, 502);
+  }
   Object.assign(updates, mediaUploads);
 
   const hasFiles = Object.keys(mediaUploads).length > 0;

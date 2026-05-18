@@ -8,6 +8,56 @@ const apiHeaders = () => ({
   'Accept': 'application/json',
 });
 
+/**
+ * Phase 44.6 — instrumentation for the Bunny Stream upload path.
+ *
+ * Until now every Bunny call was silent: success was inferred from a thrown
+ * error or its absence, but the actual HTTP details (status, response body,
+ * timing) never landed in logs. When uploads silently failed — typically due
+ * to misconfigured `BUNNY_STREAM_API_KEY` / `BUNNY_STREAM_LIBRARY_ID` or the
+ * Phase-0.1 token-auth lock — admins saw "Not uploaded" in the UI with no way
+ * to tell why.
+ *
+ * `bunnyLog` prints a compact, single-line breadcrumb for every Bunny Stream
+ * request so we can pinpoint failures in seconds without attaching a debugger.
+ */
+function bunnyLog(step: string, info: Record<string, any>) {
+  const safe = { ...info };
+  if (safe.body && typeof safe.body === 'string' && safe.body.length > 400) {
+    safe.body = safe.body.slice(0, 400) + '…';
+  }
+  // eslint-disable-next-line no-console
+  console.log(`[bunny-stream] ${step}`, JSON.stringify(safe));
+}
+
+/**
+ * Health check — verify Bunny Stream credentials are configured AND the
+ * library is reachable. Intended for boot-time warnings and an admin
+ * diagnostics endpoint. Returns a structured result; never throws.
+ */
+export async function pingBunnyStream(): Promise<{ ok: boolean; reason?: string; libraryId?: string; videoCount?: number }> {
+  if (!config.bunny.streamApiKey) {
+    return { ok: false, reason: 'BUNNY_STREAM_API_KEY env var is empty' };
+  }
+  if (!config.bunny.streamLibraryId) {
+    return { ok: false, reason: 'BUNNY_STREAM_LIBRARY_ID env var is empty' };
+  }
+  try {
+    const res = await fetch(`${STREAM_BASE}/library/${config.bunny.streamLibraryId}/videos?page=1&itemsPerPage=1`, {
+      method: 'GET',
+      headers: apiHeaders(),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return { ok: false, reason: `Bunny responded ${res.status}: ${text.slice(0, 200)}` };
+    }
+    const body = await res.json() as any;
+    return { ok: true, libraryId: config.bunny.streamLibraryId, videoCount: body?.totalItems ?? 0 };
+  } catch (e: any) {
+    return { ok: false, reason: `fetch failed: ${e.message || e}` };
+  }
+}
+
 // ─── Collection Management ────────────────────────────────
 
 interface StreamCollection {
@@ -248,47 +298,68 @@ export async function uploadVideoStreamFromPath(
   collectionId?: string,
 ): Promise<{ videoId: string; embedUrl: string; thumbnailUrl: string; status: number }> {
   const libId = config.bunny.streamLibraryId;
+  const overallT0 = Date.now();
+
+  // Phase 44.6 — surface boot-level misconfig immediately so the admin sees
+  // a clear "credentials missing" message instead of a fetch error 30 s later.
+  if (!config.bunny.streamApiKey || !libId) {
+    const missing = !config.bunny.streamApiKey ? 'BUNNY_STREAM_API_KEY' : 'BUNNY_STREAM_LIBRARY_ID';
+    bunnyLog('config.missing', { missing, filePath, title });
+    throw new Error(`Bunny Stream is not configured — ${missing} is empty. Add it to .env and restart.`);
+  }
+
+  let fileSize = 0;
+  try { fileSize = statSync(filePath).size; } catch { /* size logged as 0 */ }
+  bunnyLog('upload.start', { title, libId, fileSize, filePath });
 
   // Step 1: Create video object
   const body: any = { title };
   if (collectionId) body.collectionId = collectionId;
 
+  const createT0 = Date.now();
   const createRes = await fetch(`${STREAM_BASE}/library/${libId}/videos`, {
     method: 'POST',
     headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  const createMs = Date.now() - createT0;
   if (!createRes.ok) {
     const text = await createRes.text();
+    bunnyLog('create.fail', { status: createRes.status, body: text, ms: createMs, title });
     throw new Error(`Bunny Stream create failed: ${createRes.status} ${text}`);
   }
   const videoData = await createRes.json() as { guid: string; status: number };
   const videoId = videoData.guid;
+  bunnyLog('create.ok', { videoId, ms: createMs });
 
   // Step 2: Stream binary upload
   try {
-    const size = statSync(filePath).size;
     const nodeStream = createReadStream(filePath);
     // Node's fetch accepts a Web ReadableStream as body — convert with Readable.toWeb.
     const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream;
 
+    const uploadT0 = Date.now();
     const uploadRes = await fetch(`${STREAM_BASE}/library/${libId}/videos/${videoId}`, {
       method: 'PUT',
       headers: {
         'AccessKey': config.bunny.streamApiKey,
         'Content-Type': 'application/octet-stream',
-        'Content-Length': String(size),
+        'Content-Length': String(fileSize),
       },
       body: webStream,
       // Node's fetch requires `duplex: 'half'` when sending a stream body.
       ...({ duplex: 'half' } as any),
     });
+    const uploadMs = Date.now() - uploadT0;
     if (!uploadRes.ok) {
-      try { await deleteVideoFromStream(videoId); } catch {}
       const text = await uploadRes.text();
+      bunnyLog('upload.fail', { status: uploadRes.status, body: text, ms: uploadMs, videoId, fileSize });
+      try { await deleteVideoFromStream(videoId); } catch {}
       throw new Error(`Bunny Stream upload failed: ${uploadRes.status} ${text}`);
     }
-  } catch (err) {
+    bunnyLog('upload.ok', { videoId, ms: uploadMs, fileSize, totalMs: Date.now() - overallT0 });
+  } catch (err: any) {
+    bunnyLog('upload.threw', { videoId, message: err?.message, totalMs: Date.now() - overallT0 });
     try { await deleteVideoFromStream(videoId); } catch {}
     throw err;
   } finally {
