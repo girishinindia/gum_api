@@ -419,36 +419,109 @@ export async function updateFull(req: Request, res: Response) {
       }
     }
 
-    // 3. Replace items if provided
+    // 3. Diff-in-place sync of items if provided.
+    //
+    // Phase 44.8 Bug 3 — the old code did a hard DELETE of every
+    // ordering_item_translations row followed by a DELETE of every
+    // ordering_items row, then re-INSERTed only the English translation.
+    // Every minor English edit therefore wiped all non-English language
+    // rows (Hindi, etc.) — that's why the Hindi tab showed empty
+    // placeholders after editing the English ordering items.
+    //
+    // Replacement strategy:
+    //   • Items WITH an id → UPDATE in place (PK preserved → all language
+    //     child rows in ordering_item_translations remain intact).
+    //   • Items WITHOUT an id → INSERT new (and seed English translation).
+    //   • Items present in DB but missing from incoming payload → DELETE
+    //     (and their child translations cascade-clean).
     if (items && Array.isArray(items)) {
-      // Delete old items + their translations
-      const { data: oldItems } = await supabase.from('ordering_items').select('id').eq('ordering_question_id', id);
-      if (oldItems && oldItems.length > 0) {
-        const oldItemIds = oldItems.map((i: any) => i.id);
-        await supabase.from('ordering_item_translations').delete().in('ordering_item_id', oldItemIds);
-        await supabase.from('ordering_items').delete().eq('ordering_question_id', id);
+      const { data: existingItems } = await supabase
+        .from('ordering_items')
+        .select('id')
+        .eq('ordering_question_id', id);
+      const existingIds = new Set((existingItems || []).map((r: any) => Number(r.id)));
+      const incomingIds = new Set(
+        items.map((i: any) => Number(i.id)).filter((n: number) => Number.isFinite(n) && n > 0),
+      );
+
+      // toDelete — in DB but not in payload
+      const toDeleteIds = [...existingIds].filter((eid: number) => !incomingIds.has(eid));
+      if (toDeleteIds.length > 0) {
+        await supabase.from('ordering_item_translations').delete().in('ordering_item_id', toDeleteIds);
+        await supabase.from('ordering_items').delete().in('id', toDeleteIds);
       }
 
-      // Insert new items
-      const itemInserts = items.map((item: any, idx: number) => ({
-        ordering_question_id: id,
-        correct_position: item.correct_position ?? idx + 1,
-        display_order: item.display_order ?? idx + 1,
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      const { data: newItems, error: iErr } = await supabase.from('ordering_items').insert(itemInserts).select();
-      if (iErr) return err(res, `Items update failed: ${iErr.message}`, 500);
+      // toUpdate — has id and still in incoming
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        const itemId = Number(item.id);
+        if (!Number.isFinite(itemId) || itemId <= 0) continue;
+        if (!existingIds.has(itemId)) continue;
 
-      // Insert English item translations
-      const itemTransInserts = (newItems || []).map((item: any, idx: number) => ({
-        ordering_item_id: item.id,
-        language_id: 7,
-        item_text: items[idx].item_text || '',
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      await supabase.from('ordering_item_translations').insert(itemTransInserts);
+        await supabase
+          .from('ordering_items')
+          .update({
+            correct_position: item.correct_position ?? idx + 1,
+            display_order: item.display_order ?? idx + 1,
+            updated_by: req.user!.id,
+          })
+          .eq('id', itemId);
+
+        // Update English translation in place, leave other languages alone.
+        if (typeof item.item_text === 'string') {
+          const { data: existingEn } = await supabase
+            .from('ordering_item_translations')
+            .select('id')
+            .eq('ordering_item_id', itemId)
+            .eq('language_id', 7)
+            .maybeSingle();
+          if (existingEn) {
+            await supabase
+              .from('ordering_item_translations')
+              .update({ item_text: item.item_text, updated_by: req.user!.id })
+              .eq('id', existingEn.id);
+          } else {
+            await supabase.from('ordering_item_translations').insert({
+              ordering_item_id: itemId,
+              language_id: 7,
+              item_text: item.item_text,
+              is_active: true,
+              created_by: req.user!.id,
+            });
+          }
+        }
+      }
+
+      // toInsert — no id (new rows added by admin)
+      const newItems = items.filter((i: any) => {
+        const n = Number(i.id);
+        return !Number.isFinite(n) || n <= 0;
+      });
+      if (newItems.length > 0) {
+        const inserts = newItems.map((item: any, idx: number) => ({
+          ordering_question_id: id,
+          correct_position: item.correct_position ?? items.length - newItems.length + idx + 1,
+          display_order: item.display_order ?? items.length - newItems.length + idx + 1,
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        const { data: created, error: iErr } = await supabase
+          .from('ordering_items')
+          .insert(inserts)
+          .select();
+        if (iErr) return err(res, `Items update failed: ${iErr.message}`, 500);
+
+        const transInserts = (created || []).map((row: any, idx: number) => ({
+          ordering_item_id: row.id,
+          language_id: 7,
+          item_text: newItems[idx].item_text || '',
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        if (transInserts.length > 0) {
+          await supabase.from('ordering_item_translations').insert(transInserts);
+        }
+      }
     }
 
     await clearCache(old.topic_id);

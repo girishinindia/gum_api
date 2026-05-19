@@ -420,36 +420,106 @@ export async function updateFull(req: Request, res: Response) {
       }
     }
 
-    // 3. Replace pairs if provided
+    // 3. Diff-in-place sync of pairs if provided.
+    //
+    // Phase 44.8 Bug 4 — old code did a hard DELETE of every
+    // matching_pair_translations row + every matching_pairs row, then
+    // re-INSERTed only English. Every minor English edit therefore wiped
+    // all non-English language rows (Hindi, etc.) — exactly the symptom in
+    // the Hindi tab "Left item N in Hindi…" placeholders.
+    //
+    // Replacement: pairs with id → UPDATE in place; without id → INSERT;
+    // present in DB but absent from payload → DELETE.
     if (pairs && Array.isArray(pairs)) {
-      // Delete old pair translations + pairs
-      const { data: oldPairs } = await supabase.from('matching_pairs').select('id').eq('matching_question_id', id);
-      if (oldPairs && oldPairs.length > 0) {
-        const oldPairIds = oldPairs.map((p: any) => p.id);
-        await supabase.from('matching_pair_translations').delete().in('matching_pair_id', oldPairIds);
-        await supabase.from('matching_pairs').delete().eq('matching_question_id', id);
+      const { data: existingPairs } = await supabase
+        .from('matching_pairs')
+        .select('id')
+        .eq('matching_question_id', id);
+      const existingIds = new Set((existingPairs || []).map((r: any) => Number(r.id)));
+      const incomingIds = new Set(
+        pairs.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n) && n > 0),
+      );
+
+      const toDeleteIds = [...existingIds].filter((eid: number) => !incomingIds.has(eid));
+      if (toDeleteIds.length > 0) {
+        // matching_pair_translations FK is CASCADE, but explicit delete keeps the contract clear.
+        await supabase.from('matching_pair_translations').delete().in('matching_pair_id', toDeleteIds);
+        await supabase.from('matching_pairs').delete().in('id', toDeleteIds);
       }
 
-      // Insert new pairs
-      const pairInserts = pairs.map((p: any, idx: number) => ({
-        matching_question_id: id,
-        display_order: p.display_order ?? idx + 1,
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      const { data: newPairs, error: pErr } = await supabase.from('matching_pairs').insert(pairInserts).select();
-      if (pErr) return err(res, `Pairs update failed: ${pErr.message}`, 500);
+      for (let idx = 0; idx < pairs.length; idx++) {
+        const pair = pairs[idx];
+        const pairId = Number(pair.id);
+        if (!Number.isFinite(pairId) || pairId <= 0) continue;
+        if (!existingIds.has(pairId)) continue;
 
-      // Insert English pair translations
-      const pairTransInserts = (newPairs || []).map((pair: any, idx: number) => ({
-        matching_pair_id: pair.id,
-        language_id: 7,
-        left_text: pairs[idx].left_text || '',
-        right_text: pairs[idx].right_text || '',
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      await supabase.from('matching_pair_translations').insert(pairTransInserts);
+        await supabase
+          .from('matching_pairs')
+          .update({
+            display_order: pair.display_order ?? idx + 1,
+            updated_by: req.user!.id,
+          })
+          .eq('id', pairId);
+
+        // English translation: in-place update, never touch other languages.
+        if (typeof pair.left_text === 'string' || typeof pair.right_text === 'string') {
+          const { data: existingEn } = await supabase
+            .from('matching_pair_translations')
+            .select('id')
+            .eq('matching_pair_id', pairId)
+            .eq('language_id', 7)
+            .maybeSingle();
+          if (existingEn) {
+            await supabase
+              .from('matching_pair_translations')
+              .update({
+                left_text: pair.left_text ?? '',
+                right_text: pair.right_text ?? '',
+                updated_by: req.user!.id,
+              })
+              .eq('id', existingEn.id);
+          } else {
+            await supabase.from('matching_pair_translations').insert({
+              matching_pair_id: pairId,
+              language_id: 7,
+              left_text: pair.left_text ?? '',
+              right_text: pair.right_text ?? '',
+              is_active: true,
+              created_by: req.user!.id,
+            });
+          }
+        }
+      }
+
+      const newPairs = pairs.filter((p: any) => {
+        const n = Number(p.id);
+        return !Number.isFinite(n) || n <= 0;
+      });
+      if (newPairs.length > 0) {
+        const inserts = newPairs.map((p: any, idx: number) => ({
+          matching_question_id: id,
+          display_order: p.display_order ?? pairs.length - newPairs.length + idx + 1,
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        const { data: created, error: pErr } = await supabase
+          .from('matching_pairs')
+          .insert(inserts)
+          .select();
+        if (pErr) return err(res, `Pairs update failed: ${pErr.message}`, 500);
+
+        const transInserts = (created || []).map((row: any, idx: number) => ({
+          matching_pair_id: row.id,
+          language_id: 7,
+          left_text: newPairs[idx].left_text || '',
+          right_text: newPairs[idx].right_text || '',
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        if (transInserts.length > 0) {
+          await supabase.from('matching_pair_translations').insert(transInserts);
+        }
+      }
     }
 
     await clearCache(old.topic_id);

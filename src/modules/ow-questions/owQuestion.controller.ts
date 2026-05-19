@@ -448,36 +448,94 @@ export async function updateFull(req: Request, res: Response) {
       }
     }
 
-    // 3. Replace synonyms if provided
+    // 3. Diff-in-place sync of synonyms if provided.
+    //
+    // Phase 44.8 Bug 4b (hidden) — old code did a hard DELETE of every
+    // one_word_synonym_translations row + every one_word_synonyms row,
+    // then re-INSERTed only English. Same wipe pattern as ordering and
+    // matching — every minor English edit silently nuked Hindi synonym
+    // translations. Now diff by id so other languages survive.
     if (synonyms && Array.isArray(synonyms)) {
-      // Delete old synonyms + their translations
-      const { data: oldSyns } = await supabase.from('one_word_synonyms').select('id').eq('one_word_question_id', id);
-      if (oldSyns && oldSyns.length > 0) {
-        const oldSynIds = oldSyns.map((s: any) => s.id);
-        await supabase.from('one_word_synonym_translations').delete().in('one_word_synonym_id', oldSynIds);
-        await supabase.from('one_word_synonyms').delete().eq('one_word_question_id', id);
+      const { data: existingSyns } = await supabase
+        .from('one_word_synonyms')
+        .select('id')
+        .eq('one_word_question_id', id);
+      const existingIds = new Set((existingSyns || []).map((r: any) => Number(r.id)));
+      const incomingIds = new Set(
+        synonyms.map((s: any) => Number(s.id)).filter((n: number) => Number.isFinite(n) && n > 0),
+      );
+
+      const toDeleteIds = [...existingIds].filter((eid: number) => !incomingIds.has(eid));
+      if (toDeleteIds.length > 0) {
+        await supabase.from('one_word_synonym_translations').delete().in('one_word_synonym_id', toDeleteIds);
+        await supabase.from('one_word_synonyms').delete().in('id', toDeleteIds);
       }
 
-      // Insert new synonyms
-      if (synonyms.length > 0) {
-        const synonymInserts = synonyms.map((s: any, idx: number) => ({
+      for (let idx = 0; idx < synonyms.length; idx++) {
+        const syn = synonyms[idx];
+        const synId = Number(syn.id);
+        if (!Number.isFinite(synId) || synId <= 0) continue;
+        if (!existingIds.has(synId)) continue;
+
+        await supabase
+          .from('one_word_synonyms')
+          .update({
+            display_order: syn.display_order ?? idx + 1,
+            updated_by: req.user!.id,
+          })
+          .eq('id', synId);
+
+        if (typeof syn.synonym_text === 'string') {
+          const { data: existingEn } = await supabase
+            .from('one_word_synonym_translations')
+            .select('id')
+            .eq('one_word_synonym_id', synId)
+            .eq('language_id', 7)
+            .maybeSingle();
+          if (existingEn) {
+            await supabase
+              .from('one_word_synonym_translations')
+              .update({ synonym_text: syn.synonym_text, updated_by: req.user!.id })
+              .eq('id', existingEn.id);
+          } else {
+            await supabase.from('one_word_synonym_translations').insert({
+              one_word_synonym_id: synId,
+              language_id: 7,
+              synonym_text: syn.synonym_text,
+              is_active: true,
+              created_by: req.user!.id,
+            });
+          }
+        }
+      }
+
+      const newSyns = synonyms.filter((s: any) => {
+        const n = Number(s.id);
+        return !Number.isFinite(n) || n <= 0;
+      });
+      if (newSyns.length > 0) {
+        const inserts = newSyns.map((s: any, idx: number) => ({
           one_word_question_id: id,
-          display_order: s.display_order ?? idx + 1,
+          display_order: s.display_order ?? synonyms.length - newSyns.length + idx + 1,
           is_active: true,
           created_by: req.user!.id,
         }));
-        const { data: newSyns, error: sErr } = await supabase.from('one_word_synonyms').insert(synonymInserts).select();
+        const { data: created, error: sErr } = await supabase
+          .from('one_word_synonyms')
+          .insert(inserts)
+          .select();
         if (sErr) return err(res, `Synonyms update failed: ${sErr.message}`, 500);
 
-        // Insert English synonym translations
-        const synTransInserts = (newSyns || []).map((syn: any, idx: number) => ({
-          one_word_synonym_id: syn.id,
+        const transInserts = (created || []).map((row: any, idx: number) => ({
+          one_word_synonym_id: row.id,
           language_id: 7,
-          synonym_text: synonyms[idx].synonym_text || '',
+          synonym_text: newSyns[idx].synonym_text || '',
           is_active: true,
           created_by: req.user!.id,
         }));
-        await supabase.from('one_word_synonym_translations').insert(synTransInserts);
+        if (transInserts.length > 0) {
+          await supabase.from('one_word_synonym_translations').insert(transInserts);
+        }
       }
     }
 

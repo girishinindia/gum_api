@@ -450,17 +450,15 @@ export async function updateFull(req: Request, res: Response) {
       }
     }
 
-    // 3. Replace options if provided
+    // 3. Diff-in-place sync of options if provided.
+    //
+    // Phase 44.8 Bug 4c — MCQ had the same wipe pattern as ordering /
+    // matching / one-word: every English edit DELETEd all
+    // mcq_option_translations + all mcq_options, then re-INSERTed only
+    // English. Hindi option translations were silently destroyed.
+    // Now diff by id so other languages survive.
     if (options && Array.isArray(options)) {
-      // Delete old options + their translations
-      const { data: oldOpts } = await supabase.from('mcq_options').select('id').eq('mcq_question_id', id);
-      if (oldOpts && oldOpts.length > 0) {
-        const oldOptIds = oldOpts.map((o: any) => o.id);
-        await supabase.from('mcq_option_translations').delete().in('mcq_option_id', oldOptIds);
-        await supabase.from('mcq_options').delete().eq('mcq_question_id', id);
-      }
-
-      // Enforce single correct for single_choice / true_false
+      // Enforce single correct for single_choice / true_false (still needs to run before update)
       const effectiveType = questionUpdates.mcq_type || old.mcq_type;
       if ((effectiveType === 'single' || effectiveType === 'single_choice' || effectiveType === 'true_false') &&
           options.filter((o: any) => o.is_correct).length > 1) {
@@ -471,26 +469,89 @@ export async function updateFull(req: Request, res: Response) {
         });
       }
 
-      // Insert new options
-      const optionInserts = options.map((o: any, idx: number) => ({
-        mcq_question_id: id,
-        is_correct: o.is_correct || false,
-        display_order: o.display_order ?? idx + 1,
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      const { data: newOpts, error: oErr } = await supabase.from('mcq_options').insert(optionInserts).select();
-      if (oErr) return err(res, `Options update failed: ${oErr.message}`, 500);
+      const { data: existingOpts } = await supabase
+        .from('mcq_options')
+        .select('id')
+        .eq('mcq_question_id', id);
+      const existingIds = new Set((existingOpts || []).map((r: any) => Number(r.id)));
+      const incomingIds = new Set(
+        options.map((o: any) => Number(o.id)).filter((n: number) => Number.isFinite(n) && n > 0),
+      );
 
-      // Insert English option translations
-      const optTransInserts = (newOpts || []).map((opt: any, idx: number) => ({
-        mcq_option_id: opt.id,
-        language_id: 7,
-        option_text: options[idx].option_text || '',
-        is_active: true,
-        created_by: req.user!.id,
-      }));
-      await supabase.from('mcq_option_translations').insert(optTransInserts);
+      const toDeleteIds = [...existingIds].filter((eid: number) => !incomingIds.has(eid));
+      if (toDeleteIds.length > 0) {
+        await supabase.from('mcq_option_translations').delete().in('mcq_option_id', toDeleteIds);
+        await supabase.from('mcq_options').delete().in('id', toDeleteIds);
+      }
+
+      for (let idx = 0; idx < options.length; idx++) {
+        const opt = options[idx];
+        const optId = Number(opt.id);
+        if (!Number.isFinite(optId) || optId <= 0) continue;
+        if (!existingIds.has(optId)) continue;
+
+        await supabase
+          .from('mcq_options')
+          .update({
+            is_correct: opt.is_correct || false,
+            display_order: opt.display_order ?? idx + 1,
+            updated_by: req.user!.id,
+          })
+          .eq('id', optId);
+
+        if (typeof opt.option_text === 'string') {
+          const { data: existingEn } = await supabase
+            .from('mcq_option_translations')
+            .select('id')
+            .eq('mcq_option_id', optId)
+            .eq('language_id', 7)
+            .maybeSingle();
+          if (existingEn) {
+            await supabase
+              .from('mcq_option_translations')
+              .update({ option_text: opt.option_text, updated_by: req.user!.id })
+              .eq('id', existingEn.id);
+          } else {
+            await supabase.from('mcq_option_translations').insert({
+              mcq_option_id: optId,
+              language_id: 7,
+              option_text: opt.option_text,
+              is_active: true,
+              created_by: req.user!.id,
+            });
+          }
+        }
+      }
+
+      const newOpts = options.filter((o: any) => {
+        const n = Number(o.id);
+        return !Number.isFinite(n) || n <= 0;
+      });
+      if (newOpts.length > 0) {
+        const inserts = newOpts.map((o: any, idx: number) => ({
+          mcq_question_id: id,
+          is_correct: o.is_correct || false,
+          display_order: o.display_order ?? options.length - newOpts.length + idx + 1,
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        const { data: created, error: oErr } = await supabase
+          .from('mcq_options')
+          .insert(inserts)
+          .select();
+        if (oErr) return err(res, `Options update failed: ${oErr.message}`, 500);
+
+        const transInserts = (created || []).map((row: any, idx: number) => ({
+          mcq_option_id: row.id,
+          language_id: 7,
+          option_text: newOpts[idx].option_text || '',
+          is_active: true,
+          created_by: req.user!.id,
+        }));
+        if (transInserts.length > 0) {
+          await supabase.from('mcq_option_translations').insert(transInserts);
+        }
+      }
     }
 
     await clearCache(old.topic_id);
