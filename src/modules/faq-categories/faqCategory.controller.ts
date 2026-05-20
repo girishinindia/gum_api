@@ -146,6 +146,12 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
   if (!old) return err(res, 'FAQ category not found', 404);
 
+  // Phase 45 — faq_category_translations.faq_category_id → faq_categories is
+  // ON DELETE RESTRICT, so permanent delete fails while translations exist.
+  // Remove them first. (faqs.category_id is ON DELETE SET NULL, so FAQs are
+  // un-categorised rather than deleted.)
+  await supabase.from('faq_category_translations').delete().eq('faq_category_id', id);
+
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 

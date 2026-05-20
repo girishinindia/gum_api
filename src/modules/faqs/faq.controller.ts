@@ -153,6 +153,10 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('question').eq('id', id).single();
   if (!old) return err(res, 'FAQ not found', 404);
 
+  // Phase 45 — faq_translations.faq_id → faqs is ON DELETE RESTRICT, so the
+  // permanent delete fails while translations exist. Remove them first.
+  await supabase.from('faq_translations').delete().eq('faq_id', id);
+
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 

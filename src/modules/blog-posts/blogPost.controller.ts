@@ -100,7 +100,10 @@ export async function create(req: Request, res: Response) {
     body.og_image_url = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
   }
 
-  body.created_by = req.user!.id;
+  // Phase 45 — blog_posts has no created_by/updated_by columns (writing them
+  // caused "Could not find the 'created_by' column"). The author lives in
+  // author_id; default it to the creating user when not explicitly set.
+  if (body.author_id == null) body.author_id = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -137,7 +140,7 @@ export async function update(req: Request, res: Response) {
     updates.og_image_url = await processAndUploadImage(files.og_image[0].buffer, ogPath, { width: 1200, height: 630, quality: 85 });
   }
 
-  updates.updated_by = req.user!.id;
+  // No updated_by column on blog_posts.
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -156,7 +159,7 @@ export async function publish(req: Request, res: Response) {
   const now = new Date().toISOString();
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ status: 'published', published_at: now, updated_by: req.user!.id })
+    .update({ status: 'published', published_at: now })
     .eq('id', id)
     .select(FK_SELECT)
     .single();
@@ -175,7 +178,7 @@ export async function archive(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ status: 'archived', updated_by: req.user!.id })
+    .update({ status: 'archived' })
     .eq('id', id)
     .select(FK_SELECT)
     .single();
