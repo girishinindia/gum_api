@@ -69,7 +69,9 @@ export async function getById(req: Request, res: Response) {
 
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
-  body.created_by = req.user!.id;
+  // Phase 45 — discussion_threads has no created_by/updated_by columns; the
+  // author is stored in author_id (set from the form). Writing created_by
+  // caused PostgREST "could not find the 'created_by' column" on insert.
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -85,7 +87,7 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Discussion thread not found', 404);
 
   const updates = parseBody(req);
-  updates.updated_by = req.user!.id;
+  // No updated_by column on this table — see create().
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -154,7 +156,7 @@ export async function closeThread(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ thread_status: 'closed', updated_by: req.user!.id })
+    .update({ thread_status: 'closed' })
     .eq('id', id)
     .select(FK_SELECT)
     .single();
@@ -172,7 +174,7 @@ export async function resolveThread(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ thread_status: 'resolved', is_answered: true, updated_by: req.user!.id })
+    .update({ thread_status: 'resolved', is_answered: true })
     .eq('id', id)
     .select(FK_SELECT)
     .single();
@@ -191,7 +193,7 @@ export async function pinThread(req: Request, res: Response) {
   const newPinned = !old.is_pinned;
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ is_pinned: newPinned, updated_by: req.user!.id })
+    .update({ is_pinned: newPinned })
     .eq('id', id)
     .select(FK_SELECT)
     .single();
