@@ -99,6 +99,25 @@ export async function softDelete(req: Request, res: Response) {
     .single();
   if (e) return err(res, e.message, 500);
 
+  // Phase 45 — cascade soft-delete so dependents don't stay live as orphaned
+  // references to a trashed policy type:
+  //   policy_type_translations, policies (of this type) + their translations.
+  await supabase.from('policy_type_translations')
+    .update({ deleted_at: now, is_active: false })
+    .eq('policy_type_id', id).is('deleted_at', null);
+
+  const { data: childPolicies } = await supabase
+    .from('policies').select('id').eq('policy_type_id', id).is('deleted_at', null);
+  const policyIds = (childPolicies || []).map((p: any) => p.id);
+  if (policyIds.length > 0) {
+    await supabase.from('policies')
+      .update({ deleted_at: now, is_active: false })
+      .in('id', policyIds).is('deleted_at', null);
+    await supabase.from('policy_translations')
+      .update({ deleted_at: now, is_active: false })
+      .in('policy_id', policyIds).is('deleted_at', null);
+  }
+
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'policy_type_soft_deleted', targetType: 'policy_type', targetId: id, targetName: old.name, ip: getClientIp(req) });
   return ok(res, data, 'Policy type moved to trash');
@@ -118,6 +137,23 @@ export async function restore(req: Request, res: Response) {
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Phase 45 — cascade restore dependents (mirrors the soft-delete cascade).
+  await supabase.from('policy_type_translations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('policy_type_id', id).not('deleted_at', 'is', null);
+
+  const { data: childPolicies } = await supabase
+    .from('policies').select('id').eq('policy_type_id', id).not('deleted_at', 'is', null);
+  const policyIds = (childPolicies || []).map((p: any) => p.id);
+  if (policyIds.length > 0) {
+    await supabase.from('policies')
+      .update({ deleted_at: null, is_active: true })
+      .in('id', policyIds);
+    await supabase.from('policy_translations')
+      .update({ deleted_at: null, is_active: true })
+      .in('policy_id', policyIds).not('deleted_at', 'is', null);
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'policy_type_restored', targetType: 'policy_type', targetId: id, targetName: old.name, ip: getClientIp(req) });

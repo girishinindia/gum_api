@@ -105,6 +105,12 @@ export async function softDelete(req: Request, res: Response) {
     .single();
   if (e) return err(res, e.message, 500);
 
+  // Phase 45 — cascade soft-delete to this policy's translations so they
+  // don't linger as live, orphaned references to a trashed policy.
+  await supabase.from('policy_translations')
+    .update({ deleted_at: now, is_active: false })
+    .eq('policy_id', id).is('deleted_at', null);
+
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'policy_soft_deleted', targetType: 'policy', targetId: id, targetName: old.title, ip: getClientIp(req) });
   return ok(res, data, 'Policy moved to trash');
@@ -124,6 +130,11 @@ export async function restore(req: Request, res: Response) {
     .select()
     .single();
   if (e) return err(res, e.message, 500);
+
+  // Phase 45 — cascade restore the policy's translations.
+  await supabase.from('policy_translations')
+    .update({ deleted_at: null, is_active: true })
+    .eq('policy_id', id).not('deleted_at', 'is', null);
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'policy_restored', targetType: 'policy', targetId: id, targetName: old.title, ip: getClientIp(req) });
