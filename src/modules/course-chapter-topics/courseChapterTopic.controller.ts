@@ -88,7 +88,51 @@ export async function create(req: Request, res: Response) {
 
   const { data, error: e } = await supabase.from('course_chapter_topics').insert(body).select(SELECT_FIELDS).single();
   if (e) {
-    if (e.code === '23505') return err(res, 'This topic is already assigned to this chapter', 409);
+    // Phase 44.9 Issue 2 — make assignment idempotent. A 23505 here means a
+    // row for (course_chapter_id, topic_id) already exists. The most common
+    // case is that it was previously soft-deleted (deleted_at set) — the
+    // unique index still counts it, so re-adding from the structure tree
+    // would 409. Instead of erroring, look it up: restore if soft-deleted,
+    // or return the live row as a no-op success. Mirrors the Phase 30.4
+    // restore-on-conflict pattern used for languages/skills/social.
+    if (e.code === '23505') {
+      const { data: existing } = await supabase
+        .from('course_chapter_topics')
+        .select('*')
+        .eq('course_chapter_id', body.course_chapter_id)
+        .eq('topic_id', body.topic_id)
+        .maybeSingle();
+
+      if (existing) {
+        if (existing.deleted_at) {
+          // Restore the soft-deleted assignment in place.
+          const { data: restored, error: rErr } = await supabase
+            .from('course_chapter_topics')
+            .update({
+              deleted_at: null,
+              is_active: body.is_active ?? true,
+              display_order: body.display_order ?? existing.display_order ?? 0,
+              updated_by: req.user!.id,
+            })
+            .eq('id', existing.id)
+            .select(SELECT_FIELDS)
+            .single();
+          if (rErr) return err(res, rErr.message, 500);
+          await clearCache(body.course_id);
+          logAdmin({ actorId: req.user!.id, action: 'course_chapter_topic_restored', targetType: 'course_chapter_topic', targetId: existing.id, targetName: `${course.name || course.code} - ${topic.name}`, ip: getClientIp(req) });
+          return ok(res, restored, 'Course chapter topic link restored', 200);
+        }
+        // Already live — treat as a successful no-op so the structure save
+        // doesn't fail on topics that are simply unchanged.
+        const { data: current } = await supabase
+          .from('course_chapter_topics')
+          .select(SELECT_FIELDS)
+          .eq('id', existing.id)
+          .single();
+        return ok(res, current, 'Topic already assigned to this chapter', 200);
+      }
+      return err(res, 'This topic is already assigned to this chapter', 409);
+    }
     return err(res, e.message, 500);
   }
 
