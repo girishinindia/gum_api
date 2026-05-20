@@ -4,7 +4,7 @@ import { redis } from '../../config/redis';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
@@ -60,6 +60,11 @@ export async function getById(req: Request, res: Response) {
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
+  // Phase 45 — auto-generate slug from name when not provided.
+  if (!body.slug && body.name) {
+    body.slug = await generateUniqueSlug(supabase, TABLE, body.name);
+  }
+
   const { data, error: e } = await supabase.from(TABLE).insert(body).select().single();
   if (e) return err(res, e.message, 500);
 
@@ -78,6 +83,11 @@ export async function update(req: Request, res: Response) {
 
   // Self-reference check
   if (updates.parent_id === id) return err(res, 'Category cannot be its own parent', 400);
+
+  // Phase 45 — keep slug populated: regenerate from name if it's empty.
+  if (!updates.slug && (updates.name || old.name)) {
+    updates.slug = await generateUniqueSlug(supabase, TABLE, updates.name || old.name, id);
+  }
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);

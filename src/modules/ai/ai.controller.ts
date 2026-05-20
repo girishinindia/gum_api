@@ -798,17 +798,23 @@ const MATERIAL_FIELDS_WEBINAR = [
 ];
 const WEBINAR_JSONB_FIELDS = ['tags'];
 
+// Phase 45 — these two tables have a SMALLER SEO column set than courses/
+// bundles: faq_category_translations / faq_translations have NO og_site_name
+// (and category has no twitter_* either). Listing og_site_name here made the
+// AI generator try to write a non-existent column → "column
+// faq_category_translations.og_site_name does not exist". Keep these lists in
+// sync with the actual table columns.
 const MATERIAL_FIELDS_FAQ_CATEGORY = [
   'name', 'description',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_site_name', 'og_description',
+  'og_title', 'og_description',
   'focus_keyword',
 ];
 
 const MATERIAL_FIELDS_FAQ = [
   'question', 'answer',
   'meta_title', 'meta_description', 'meta_keywords',
-  'og_title', 'og_site_name', 'og_description', 'twitter_title', 'twitter_description',
+  'og_title', 'og_description', 'twitter_title', 'twitter_description',
   'focus_keyword',
 ];
 
@@ -848,7 +854,10 @@ function extractMaterialFields(translated: any, fields: string[]): Record<string
   //   og_title     → fall back to meta_title, then title, then name —
   //                   whichever is present. Empty only if the record
   //                   has literally no headline at all.
-  if (fields.includes('og_site_name') || translated.og_site_name) {
+  // Only populate og_site_name when the target table actually has the column
+  // (i.e. it's in the configured field list). Previously a stray AI-returned
+  // value would set it even for tables without the column → insert error.
+  if (fields.includes('og_site_name')) {
     const provided = String(translated.og_site_name || '').trim();
     result.og_site_name = provided || 'Grow Up More';
   }
