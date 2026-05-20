@@ -10,6 +10,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { validateOwnerInstructor } from '../../utils/ownerInstructor';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -113,6 +114,10 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: bundle:activate required to create inactive', 403);
   }
 
+  // Phase 45 — owner ↔ instructor pairing
+  const ownerErr = await validateOwnerInstructor(body.bundle_owner, body.instructor_id);
+  if (ownerErr) return err(res, ownerErr, 400);
+
   body.created_by = req.user!.id;
 
   // Auto-generate slug
@@ -144,6 +149,15 @@ export async function update(req: Request, res: Response) {
     if (!hasPermission(req, 'bundle', 'activate')) {
       return err(res, 'Permission denied: bundle:activate required to change active status', 403);
     }
+  }
+
+  // Phase 45 — re-validate owner ↔ instructor only when either actually
+  // changes, so unrelated edits to legacy rows aren't blocked.
+  if ('bundle_owner' in updates || 'instructor_id' in updates) {
+    const effOwner = 'bundle_owner' in updates ? updates.bundle_owner : (old as any).bundle_owner;
+    const effInstr = 'instructor_id' in updates ? updates.instructor_id : (old as any).instructor_id;
+    const ownerErr = await validateOwnerInstructor(effOwner, effInstr);
+    if (ownerErr) return err(res, ownerErr, 400);
   }
 
   updates.updated_by = req.user!.id;

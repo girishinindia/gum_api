@@ -15,6 +15,12 @@ r.patch('/me', upload.single('avatar'),         ctrl.updateMe);
 r.get('/me/permissions',                        ctrl.getMyPermissions);
 r.post('/me/roles',     validate(assignSelfRoleSchema), ctrl.assignMyRole);
 
+// Phase 45 — assignable-user lookup for owner-aware pickers (bundles /
+// webinars / batches). MUST come before '/:id'. Returns {id, full_name}.
+//   ?kind=instructor   → users.type = 'instructor'
+//   ?kind=super_admin  → users holding the super_admin role
+r.get('/assignable',                            requirePermission('user', 'read'), ctrl.listAssignable);
+
 // User management
 r.get('/',                                      requirePermission('user', 'read'), ctrl.list);
 r.post('/', upload.single('avatar'),            requireSuperAdmin(), ctrl.create);

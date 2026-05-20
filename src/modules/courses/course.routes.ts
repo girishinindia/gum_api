@@ -41,6 +41,9 @@ r.use(authMiddleware, attachPermissions());
 r.post('/import/preview',  requirePermission('course', 'create'),      importCtrl.preview);
 r.post('/import',          requirePermission('course', 'create'),      importCtrl.importCourse);
 r.post('/',                requirePermission('course', 'create'),      mediaUpload, ctrl.create);
+// Phase 45.1 — signed playback URLs for the admin video preview (the
+// token-gated Bunny library returns 403 on the raw embed URL).
+r.get('/:id/playback',              requirePermission('course', 'read'),   ctrl.coursePlayback);
 // Phase 44.11 — dedicated video upload endpoints (buffer + uploadVideoToStream)
 r.post('/:id/upload-video',         requirePermission('course', 'update'), videoUpload.single('video'), ctrl.uploadCourseVideo);
 r.post('/:id/upload-trailer-video', requirePermission('course', 'update'), videoUpload.single('video'), ctrl.uploadCourseTrailerVideo);

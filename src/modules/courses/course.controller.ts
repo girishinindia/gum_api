@@ -6,6 +6,7 @@ import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { deleteImage, processAndUploadImage, uploadRawFile } from '../../services/storage.service';
 import { uploadVideoToStream, uploadVideoStreamFromPath, deleteVideoFromStream, extractBunnyVideoGuid, pingBunnyStream } from '../../services/video.service';
+import { signEmbedUrl } from '../../services/bunnyToken.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -32,6 +33,45 @@ export async function debugBunnyStream(_req: Request, res: Response) {
       streamCdn: config.bunny.streamCdn || '(empty)',
     },
   }, 'Bunny Stream diagnostic');
+}
+
+/**
+ * Phase 45.1 — signed playback URLs for a course's videos.
+ *
+ * The Bunny Stream library is locked with Player Token Authentication
+ * (Phase 0.1), so the raw embed URL stored in courses.video_url /
+ * trailer_video_url returns HTTP 403 when opened directly. This admin-only
+ * endpoint extracts each video's GUID and returns a short-lived signed embed
+ * URL (token + expires) that actually plays. The signing key is a server
+ * secret, so this must happen on the API — the portal can't sign on its own.
+ *
+ * GET /courses/:id/playback  → { video, trailer } each {url, expiresAt} | null
+ */
+export async function coursePlayback(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: course } = await supabase
+    .from('courses')
+    .select('id, video_url, trailer_video_url')
+    .eq('id', id)
+    .single();
+  if (!course) return err(res, 'Course not found', 404);
+
+  const signOne = (url: string | null) => {
+    const guid = extractBunnyVideoGuid(url);
+    if (!guid) return null;
+    try {
+      const s = signEmbedUrl(guid);
+      return { url: s.embedUrl, expiresAt: s.expiresAt };
+    } catch (e: any) {
+      console.error('[course.playback] sign failed:', e?.message);
+      return null;
+    }
+  };
+
+  return ok(res, {
+    video: signOne((course as any).video_url),
+    trailer: signOne((course as any).trailer_video_url),
+  }, 'Signed playback URLs');
 }
 
 /**

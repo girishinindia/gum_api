@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { validateOwnerInstructor } from '../../utils/ownerInstructor';
 
 const TABLE = 'course_batches';
 const CACHE_KEY = 'course_batches:all';
@@ -84,11 +85,9 @@ export async function create(req: Request, res: Response) {
   const { data: course } = await supabase.from('courses').select('id').eq('id', body.course_id).single();
   if (!course) return err(res, 'Course not found', 404);
 
-  // Verify instructor exists if provided
-  if (body.instructor_id) {
-    const { data: user } = await supabase.from('users').select('id').eq('id', body.instructor_id).single();
-    if (!user) return err(res, 'Instructor not found', 404);
-  }
+  // Phase 45 — owner ↔ instructor pairing (replaces the bare existence check)
+  const ownerErr = await validateOwnerInstructor(body.batch_owner, body.instructor_id);
+  if (ownerErr) return err(res, ownerErr, 400);
 
   // Auto-generate slug if not provided
   if (!body.slug) {
@@ -115,10 +114,12 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
 
-  // Verify instructor if changed
-  if (updates.instructor_id && updates.instructor_id !== old.instructor_id) {
-    const { data: user } = await supabase.from('users').select('id').eq('id', updates.instructor_id).single();
-    if (!user) return err(res, 'Instructor not found', 404);
+  // Phase 45 — re-validate owner ↔ instructor only when either changes.
+  if ('batch_owner' in updates || 'instructor_id' in updates) {
+    const effOwner = 'batch_owner' in updates ? updates.batch_owner : (old as any).batch_owner;
+    const effInstr = 'instructor_id' in updates ? updates.instructor_id : (old as any).instructor_id;
+    const ownerErr = await validateOwnerInstructor(effOwner, effInstr);
+    if (ownerErr) return err(res, ownerErr, 400);
   }
 
   // Auto-generate slug if title changed and slug not explicitly provided

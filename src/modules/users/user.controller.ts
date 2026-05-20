@@ -19,6 +19,46 @@ function extractBunnyPath(cdnUrl: string): string {
 const ALLOWED_FIELDS = ['first_name', 'last_name', 'display_name', 'locale', 'preferences', 'type'];
 const VALID_STATUSES = ['active', 'inactive', 'suspended'];
 
+/**
+ * Phase 45 — assignable-user lookup for the owner-aware instructor pickers on
+ * bundles / webinars / course_batches.
+ *   ?kind=instructor   → active users with type = 'instructor'
+ *   ?kind=super_admin  → active users holding the super_admin role (role_id 1)
+ * Returns a lightweight [{ id, full_name, email, type }] list (no pagination).
+ */
+const SUPER_ADMIN_ROLE_ID = 1;
+export async function listAssignable(req: Request, res: Response) {
+  const kind = String(req.query.kind || 'instructor');
+
+  if (kind === 'super_admin') {
+    const { data: roleRows, error: re } = await supabase
+      .from('user_roles')
+      .select('user_id')
+      .eq('role_id', SUPER_ADMIN_ROLE_ID);
+    if (re) return err(res, re.message, 500);
+    const ids = [...new Set((roleRows || []).map((r: any) => r.user_id))];
+    if (ids.length === 0) return ok(res, []);
+    const { data, error: e } = await supabase
+      .from('users')
+      .select('id, full_name, email, type')
+      .in('id', ids)
+      .is('deleted_at', null)
+      .order('full_name', { ascending: true });
+    if (e) return err(res, e.message, 500);
+    return ok(res, data || []);
+  }
+
+  // default: instructors by type
+  const { data, error: e } = await supabase
+    .from('users')
+    .select('id, full_name, email, type')
+    .eq('type', 'instructor')
+    .is('deleted_at', null)
+    .order('full_name', { ascending: true });
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
 

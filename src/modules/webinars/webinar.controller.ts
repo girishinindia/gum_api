@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { validateOwnerInstructor } from '../../utils/ownerInstructor';
 
 const TABLE = 'webinars';
 const CACHE_KEY = 'webinars:all';
@@ -79,11 +80,9 @@ export async function create(req: Request, res: Response) {
     if (!course) return err(res, 'Course not found', 404);
   }
 
-  // Verify instructor exists if provided
-  if (body.instructor_id) {
-    const { data: instructor } = await supabase.from('users').select('id').eq('id', body.instructor_id).single();
-    if (!instructor) return err(res, 'Instructor not found', 404);
-  }
+  // Phase 45 — owner ↔ instructor pairing (replaces the bare existence check)
+  const ownerErr = await validateOwnerInstructor(body.webinar_owner, body.instructor_id);
+  if (ownerErr) return err(res, ownerErr, 400);
 
   body.created_by = req.user!.id;
 
@@ -102,6 +101,14 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
   updates.updated_by = req.user!.id;
+
+  // Phase 45 — re-validate owner ↔ instructor only when either changes.
+  if ('webinar_owner' in updates || 'instructor_id' in updates) {
+    const effOwner = 'webinar_owner' in updates ? updates.webinar_owner : (old as any).webinar_owner;
+    const effInstr = 'instructor_id' in updates ? updates.instructor_id : (old as any).instructor_id;
+    const ownerErr = await validateOwnerInstructor(effOwner, effInstr);
+    if (ownerErr) return err(res, ownerErr, 400);
+  }
 
   // Verify new course if changed
   if (updates.course_id && updates.course_id !== old.course_id) {
