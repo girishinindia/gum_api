@@ -5,13 +5,100 @@ import { redis } from '../../config/redis';
 import { config } from '../../config';
 import { hasPermission } from '../../middleware/rbac';
 import { deleteImage, processAndUploadImage, uploadRawFile } from '../../services/storage.service';
-import { uploadVideoStreamFromPath, deleteVideoFromStream, extractBunnyVideoGuid } from '../../services/video.service';
+import { uploadVideoToStream, uploadVideoStreamFromPath, deleteVideoFromStream, extractBunnyVideoGuid, pingBunnyStream } from '../../services/video.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { coerceIntFields, coerceNumFields } from '../../utils/coerce';
+
+/**
+ * Phase 44.10 Probe B — admin-only diagnostic that reports whether the API
+ * can actually reach Bunny Stream with its configured credentials, plus the
+ * configured library id and a masked key prefix. Lets us settle the "is
+ * Bunny Stream configured correctly" question without reading the .env.
+ * Open GET /api/v1/courses/_debug/bunny-stream in the browser (logged in)
+ * and read the JSON. REMOVE after the video bug is resolved.
+ */
+export async function debugBunnyStream(_req: Request, res: Response) {
+  const key = config.bunny.streamApiKey || '';
+  const ping = await pingBunnyStream();
+  return ok(res, {
+    ping,
+    config: {
+      streamLibraryId: config.bunny.streamLibraryId || '(EMPTY)',
+      streamApiKey: key ? `${key.slice(0, 4)}…${key.slice(-2)} (set, len=${key.length})` : '(EMPTY)',
+      streamCdn: config.bunny.streamCdn || '(empty)',
+    },
+  }, 'Bunny Stream diagnostic');
+}
+
+/**
+ * Phase 44.11 — dedicated course video upload, mirroring the WORKING
+ * sub-topic pattern (memory buffer + uploadVideoToStream). The combined
+ * course-save multipart used uploadVideoStreamFromPath (Readable.toWeb +
+ * duplex:'half'), which silently failed on this Node build — hence
+ * video_url being NULL on every course. This buffer PUT is the same call
+ * sub-topics use successfully against the same Bunny Stream library.
+ *
+ * Generic helper shared by both the trailer and main course video routes.
+ */
+async function handleCourseVideoUpload(
+  req: Request,
+  res: Response,
+  column: 'video_url' | 'trailer_video_url',
+  titleSuffix: string,
+) {
+  const id = parseInt(req.params.id);
+  const { data: course } = await supabase
+    .from('courses')
+    .select('id, slug, code, name, video_url, trailer_video_url')
+    .eq('id', id)
+    .single();
+  if (!course) return err(res, 'Course not found', 404);
+
+  if (!req.file) return err(res, 'No video file provided', 400);
+
+  try {
+    // Delete the previously-uploaded Bunny video on this column (if ours).
+    const oldUrl = (course as any)[column] as string | null;
+    const oldGuid = extractBunnyVideoGuid(oldUrl);
+    if (oldGuid) {
+      try { await deleteVideoFromStream(oldGuid); } catch {}
+    }
+
+    const slugHint = course.slug || course.code || `course-${id}`;
+    const title = `${slugHint} — ${titleSuffix}`;
+    // Buffer PUT — the proven path. req.file.buffer comes from memoryStorage.
+    const result = await uploadVideoToStream(req.file.buffer, title);
+
+    const { data, error: e } = await supabase
+      .from('courses')
+      .update({ [column]: result.embedUrl, updated_by: req.user!.id })
+      .eq('id', id)
+      .select()
+      .single();
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    logAdmin({ actorId: req.user!.id, action: 'course_video_uploaded', targetType: 'course', targetId: id, targetName: course.code || course.slug, changes: { [column]: { old: oldUrl, new: result.embedUrl } }, ip: getClientIp(req) });
+    return ok(res, data, 'Video uploaded successfully');
+  } catch (e: any) {
+    console.error(`[course.${column}] upload failed:`, e);
+    return err(res, e.message || 'Video upload failed', 500);
+  }
+}
+
+// POST /courses/:id/upload-video — main course video
+export async function uploadCourseVideo(req: Request, res: Response) {
+  return handleCourseVideoUpload(req, res, 'video_url', 'course');
+}
+
+// POST /courses/:id/upload-trailer-video — trailer video
+export async function uploadCourseTrailerVideo(req: Request, res: Response) {
+  return handleCourseVideoUpload(req, res, 'trailer_video_url', 'trailer');
+}
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -59,6 +146,18 @@ async function handleCourseMediaUploads(
 ): Promise<MediaUploadResult> {
   const files = (req.files as { [field: string]: Express.Multer.File[] } | undefined) ?? {};
   const out: MediaUploadResult = {};
+
+  // Phase 44.10 Probe A — log exactly which media fields multer parsed, with
+  // each file's size, BEFORE any branching. This is the missing ground truth:
+  // it proves whether the video bytes actually reach the server in the same
+  // multipart request that carries the (working) thumbnail/brochure.
+  const fieldSummary: Record<string, string> = {};
+  for (const k of ['trailer_thumbnail', 'brochure', 'trailer_video', 'video']) {
+    const f = (files as any)[k]?.[0];
+    fieldSummary[k] = f ? `1 (${(f.size / 1024 / 1024).toFixed(2)} MB, ${f.originalname})` : '0';
+  }
+  // eslint-disable-next-line no-console
+  console.log('[course.media] received fields =', JSON.stringify(fieldSummary), '| contentType =', req.headers['content-type']?.slice(0, 60));
 
   const thumb = files.trailer_thumbnail?.[0];
   if (thumb) {
