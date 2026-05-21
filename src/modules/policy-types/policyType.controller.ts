@@ -166,6 +166,17 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('name').eq('id', id).single();
   if (!old) return err(res, 'Policy type not found', 404);
 
+  // Phase 45 — all child FKs are ON DELETE RESTRICT, so a permanent delete
+  // fails while children exist. Delete bottom-up: a type's policies' translations,
+  // then those policies, the type's own translations, then the type itself.
+  const { data: childPolicies } = await supabase.from('policies').select('id').eq('policy_type_id', id);
+  const policyIds = (childPolicies || []).map((p: any) => p.id);
+  if (policyIds.length > 0) {
+    await supabase.from('policy_translations').delete().in('policy_id', policyIds);
+    await supabase.from('policies').delete().in('id', policyIds);
+  }
+  await supabase.from('policy_type_translations').delete().eq('policy_type_id', id);
+
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 

@@ -147,6 +147,10 @@ export async function remove(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('title').eq('id', id).single();
   if (!old) return err(res, 'Policy not found', 404);
 
+  // Phase 45 — policy_translations.policy_id → policies is ON DELETE RESTRICT,
+  // so permanent delete fails while translations exist. Remove them first.
+  await supabase.from('policy_translations').delete().eq('policy_id', id);
+
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
 
