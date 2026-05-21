@@ -33,6 +33,68 @@ function parseBody(req: Request): any {
   return body;
 }
 
+// Phase 47 — promotion validation. Previously there was NO validation, so the
+// admin form accepted 100%+ discounts, negative usage limits, and absurd dates
+// (e.g. year 0022) that later rendered as "Invalid Date". Enforced here as the
+// authoritative guard; the portal mirrors these checks for instant feedback.
+//   • discount: percentage 1–100 (100% = free is allowed); fixed > 0 and not
+//     greater than the min-purchase amount (would make the price negative)
+//   • max_discount_amount / min_purchase_amount: not negative
+//   • usage_limit / usage_per_user: whole number ≥ 1 when set (empty = unlimited);
+//     per-user cannot exceed the total limit
+//   • dates: valid, year 2000–2100, valid_until strictly after valid_from, and
+//     valid_from today-or-future when it is being created/changed
+function validatePromotion(
+  body: any,
+  old: any = {},
+  opts: { checkFutureFrom?: boolean } = {},
+): string | null {
+  const merged = { ...old, ...body };
+  const dtype = merged.discount_type || 'percentage';
+  const isFixed = dtype === 'fixed' || dtype === 'fixed_amount';
+  const dval = merged.discount_value;
+
+  if (dval !== undefined && dval !== null) {
+    if (typeof dval !== 'number' || Number.isNaN(dval)) return 'Discount value must be a number';
+    if (dval <= 0) return 'Discount value must be greater than 0';
+    if (!isFixed && dval > 100) return 'Percentage discount cannot exceed 100%';
+  }
+
+  for (const [k, label] of [['max_discount_amount', 'Max discount amount'], ['min_purchase_amount', 'Min purchase amount']] as const) {
+    const v = merged[k];
+    if (v !== undefined && v !== null && (typeof v !== 'number' || v < 0)) return `${label} cannot be negative`;
+  }
+
+  if (isFixed && dval != null && merged.min_purchase_amount != null && dval > merged.min_purchase_amount) {
+    return 'Fixed discount cannot exceed the minimum purchase amount';
+  }
+
+  for (const [k, label] of [['usage_limit', 'Usage limit'], ['usage_per_user', 'Usage per user']] as const) {
+    const v = merged[k];
+    if (v !== undefined && v !== null && (!Number.isInteger(v) || v < 1)) {
+      return `${label} must be a whole number of at least 1 (leave empty for unlimited)`;
+    }
+  }
+  if (merged.usage_limit != null && merged.usage_per_user != null && merged.usage_per_user > merged.usage_limit) {
+    return 'Usage per user cannot exceed the total usage limit';
+  }
+
+  const from = merged.valid_from ? new Date(merged.valid_from) : null;
+  const until = merged.valid_until ? new Date(merged.valid_until) : null;
+  if (merged.valid_from && (!from || Number.isNaN(from.getTime()))) return 'Valid From is not a valid date';
+  if (merged.valid_until && (!until || Number.isNaN(until.getTime()))) return 'Valid Until is not a valid date';
+  const yearOk = (d: Date) => d.getFullYear() >= 2000 && d.getFullYear() <= 2100;
+  if (from && !yearOk(from)) return 'Valid From year must be between 2000 and 2100';
+  if (until && !yearOk(until)) return 'Valid Until year must be between 2000 and 2100';
+  if (from && until && until <= from) return 'Valid Until must be after Valid From';
+  if (opts.checkFutureFrom && from) {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (from < startOfToday) return 'Valid From must be today or a future date';
+  }
+  return null;
+}
+
 // GET /instructor-promotions
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'id' });
@@ -119,6 +181,9 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: instructor_promotion:activate required to create inactive', 403);
   }
 
+  const vErr = validatePromotion(body, {}, { checkFutureFrom: !!body.valid_from });
+  if (vErr) return err(res, vErr, 400);
+
   body.created_by = req.user!.id;
 
   // Auto-generate promo_code if not provided (use slug-style format)
@@ -159,6 +224,11 @@ export async function update(req: Request, res: Response) {
       return err(res, 'Permission denied: instructor_promotion:activate required to change active status', 403);
     }
   }
+
+  const vErr = validatePromotion(updates, old, {
+    checkFutureFrom: updates.valid_from !== undefined && updates.valid_from !== old.valid_from,
+  });
+  if (vErr) return err(res, vErr, 400);
 
   updates.updated_by = req.user!.id;
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
