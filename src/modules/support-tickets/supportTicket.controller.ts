@@ -70,10 +70,10 @@ export async function create(req: Request, res: Response) {
   const num = String((count || 0) + 1).padStart(3, '0');
   body.ticket_number = `TKT-${today}-${num}`;
 
-  // Set user_id from body or current user
+  // Set user_id from body or current user. Phase 45 — support_tickets has no
+  // created_by/updated_by columns; the requester lives in user_id. Writing
+  // created_by caused "Could not find the 'created_by' column".
   if (!body.user_id) body.user_id = req.user!.id;
-
-  body.created_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) {
@@ -102,7 +102,6 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
-  updates.updated_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -132,7 +131,7 @@ export async function changeStatus(req: Request, res: Response) {
   const validStatuses = ['open', 'in_progress', 'awaiting_reply', 'resolved', 'closed'];
   if (!validStatuses.includes(status)) return err(res, `Invalid status. Must be one of: ${validStatuses.join(', ')}`, 400);
 
-  const updates: any = { ticket_status: status, updated_by: req.user!.id };
+  const updates: any = { ticket_status: status };
   if (status === 'resolved') updates.resolved_at = new Date().toISOString();
   if (status === 'closed') updates.closed_at = new Date().toISOString();
 
@@ -161,7 +160,7 @@ export async function assign(req: Request, res: Response) {
   const { data: ticket } = await supabase.from(TABLE).select('*').eq('id', id).single();
   if (!ticket) return err(res, 'Support ticket not found', 404);
 
-  const updates: any = { assigned_to: assigned_to ? parseInt(assigned_to) : null, updated_by: req.user!.id };
+  const updates: any = { assigned_to: assigned_to ? parseInt(assigned_to) : null };
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
