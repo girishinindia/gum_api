@@ -77,6 +77,13 @@ r.post('/generate-youtube-description', requirePermission('ai', 'create'), ctrl.
 // Bulk generate missing content for multiple entities (subjects/chapters/topics/sub-topics)
 r.post('/bulk-generate-missing-content', requirePermission('ai', 'create'), ctrl.bulkGenerateMissingContent);
 
+// Phase 46 — generic single-language AI generate/translate for any entity
+// (faq_category, faq, policy, etc.). Returns generated fields for the dialog.
+r.post('/generate-entity-translation', requirePermission('ai', 'create'), ctrl.generateEntityTranslation);
+
+// Phase 46 — blog post content + SEO (single-language, in-place fill)
+r.post('/generate-blog-post-content', requirePermission('ai', 'create'), ctrl.generateBlogPostContent);
+
 // Auto MCQ generation from topic tutorials
 r.post('/auto-generate-mcq', requirePermission('mcq_question', 'create'), ctrl.autoGenerateMcq);
 

@@ -191,6 +191,18 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Phase 46 — defensively clamp `display_order` to a non-negative integer at the
+// edge. Many admin forms expose a numeric display_order input; a negative value
+// must never persist regardless of which controller handles the write.
+app.use((req, _res, next) => {
+  const b: any = req.body;
+  if (b && typeof b === 'object' && !Array.isArray(b) && b.display_order !== undefined && b.display_order !== null && b.display_order !== '') {
+    const n = Math.trunc(Number(b.display_order));
+    if (!Number.isNaN(n)) b.display_order = n < 0 ? 0 : n;
+  }
+  next();
+});
+
 // ── CORS ──
 //
 // Accept three classes of origin so multi-developer LAN testing works

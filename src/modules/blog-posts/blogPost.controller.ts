@@ -4,7 +4,7 @@ import { redis } from '../../config/redis';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
-import { getClientIp } from '../../utils/helpers';
+import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { config } from '../../config';
@@ -87,7 +87,11 @@ export async function create(req: Request, res: Response) {
     return err(res, 'title and content are required', 400);
   }
 
-  const slug = body.slug || body.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
+  // Phase 46 — auto-generate a unique slug from title when not provided
+  // (previously the computed slug was only used for image paths and never
+  // written to the row, leaving blog_posts.slug null).
+  body.slug = await generateUniqueSlug(supabase, TABLE, body.slug || body.title);
+  const slug = body.slug;
 
   // Phase 15.1 — featured image (1200×630)
   if (files?.featured_image?.[0]) {
@@ -121,7 +125,13 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
   const files = (req as any).files as { [field: string]: Express.Multer.File[] } | undefined;
-  const slug = updates.slug || old.slug || old.title.toLowerCase().replace(/\s+/g, '-').substring(0, 50);
+
+  // Phase 46 — keep slug populated & unique. Regenerate when the slug is being
+  // changed, or when the existing row has no slug yet.
+  if (updates.slug || !old.slug) {
+    updates.slug = await generateUniqueSlug(supabase, TABLE, updates.slug || updates.title || old.title, id);
+  }
+  const slug = updates.slug || old.slug;
 
   // Phase 15.1 — featured image: delete old first, then upload new.
   if (files?.featured_image?.[0]) {

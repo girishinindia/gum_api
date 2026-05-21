@@ -1372,6 +1372,152 @@ USER INSTRUCTIONS: ${userPrompt}`;
   return { results, totalInputTokens, totalOutputTokens };
 }
 
+// ─── Generic single-language AI translation for ANY ENTITY_CONFIG entity ───
+// Phase 46 — FAQ category / FAQ translation dialogs needed the same inline
+// "AI Generate Content" panel the material modules have. Material entities each
+// have their own dedicated endpoint (generateSubjectTranslation, etc.); this
+// generic version covers faq_category, faq, policy_type, policy, etc. via
+// ENTITY_CONFIG. Returns { translated: {fields} } so the dialog can populate.
+export async function generateEntityTranslation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { entity_type, entity_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
+    const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar', 'faq_category', 'faq', 'policy_type', 'policy'];
+    if (!entity_type || !validTypes.includes(entity_type)) return err(res, `entity_type must be one of: ${validTypes.join(', ')}`, 400);
+    if (!entity_id || !target_language_code) return err(res, 'entity_id and target_language_code are required', 400);
+
+    const cfg = ENTITY_CONFIG[entity_type as MaterialEntityType];
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const isEnglish = target_language_code === 'en';
+    const targetLang = target_language_name || target_language_code;
+    const nameField = cfg.nameField || 'name';
+
+    const { data: entity } = await supabase.from(cfg.table).select('*').eq('id', entity_id).single();
+    if (!entity) return err(res, `${cfg.entityLabel} not found`, 404);
+
+    const jsonSpec = buildMaterialJsonSpec(cfg.fields);
+    const userPrompt = prompt || (isEnglish
+      ? 'Generate comprehensive, human-sounding content. Fill ALL fields meaningfully.'
+      : 'Translate exactly with the same meaning. Keep technical or brand words in English that sound strange or unnatural when translated.');
+
+    let systemPrompt: string;
+    let userContent: string;
+
+    if (isEnglish) {
+      systemPrompt = `You are a professional content writer for GrowUpMore — an educational platform.
+Generate comprehensive English content for the ${cfg.entityLabel}. Write in a natural, human way — not robotic or overly formal. Fill ALL fields meaningfully (including SEO meta fields when present).
+OUTPUT — return ONLY valid JSON: ${jsonSpec}
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify({
+        [nameField]: entity[nameField] || entity.name || entity.title || entity.question || entity.code || '',
+        slug: entity.slug || '', code: entity.code || '',
+      });
+    } else {
+      const { data: enTrans } = await supabase.from(cfg.translationTable)
+        .select('*, languages!inner(iso_code)')
+        .eq(cfg.idField, entity_id).eq('languages.iso_code', 'en').is('deleted_at', null).limit(1);
+      const source = enTrans?.[0];
+      if (!source) return err(res, 'English translation not found. Please create/generate the English version first.', 404);
+
+      const sourceContent: any = {};
+      for (const f of cfg.fields) sourceContent[f] = source[f] || '';
+
+      systemPrompt = `You are a professional multilingual translator for GrowUpMore.
+Translate the English content into ${targetLang} (${target_language_code}) with EXACT same meaning.
+RULES:
+- Keep JSON keys in English.
+- Write in a natural, human way — not robotic or overly formal.
+
+MOST IMPORTANT RULE — STRICTLY FOLLOW:
+Do NOT write everything in pure ${targetLang}. You MUST keep common and technical English words in English script (Latin letters) as they are — do NOT transliterate them into regional script.
+Keep these types of words in English: subject names, technical terms, brand names, programming terms, technology names, and any word that sounds strange/unnatural/weird when translated.
+The output should be a MIX of regional language and English technical words written in English script.
+
+OUTPUT — return ONLY valid JSON: ${jsonSpec}
+USER INSTRUCTIONS: ${userPrompt}`;
+      userContent = JSON.stringify(sourceContent);
+    }
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent);
+    let translated: any;
+    try { translated = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    const fields = extractMaterialFields(translated, cfg.fields);
+    applyJsonbConversion(fields, cfg.jsonbFields);
+
+    logAdmin({ actorId: userId, action: isEnglish ? 'ai_content_generated' : 'ai_translation_generated', targetType: cfg.translationTable, targetId: Number(entity_id), targetName: `${entity_type} #${entity_id} → ${targetLang} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      source_language: isEnglish ? 'entity_info' : 'en', target_language: target_language_code, provider,
+      translated: fields,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, isEnglish ? 'Content generated successfully' : 'Translation generated successfully');
+  } catch (error: any) {
+    console.error('AI generateEntityTranslation error:', error);
+    return err(res, error.message || 'AI generation failed', 500);
+  }
+}
+
+// ─── Blog post content + SEO (single-language, no translations table) ───
+// Phase 46 — blog_posts is single-language, so "AI Fill" generates the post
+// body + SEO fields in place. Returns fields for the dialog to populate.
+export async function generateBlogPostContent(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return err(res, 'Authentication required', 401);
+    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+
+    const { title, category, prompt, provider: reqProvider } = req.body;
+    if (!title || !String(title).trim()) return err(res, 'title is required', 400);
+
+    const provider: AIProvider = (['anthropic', 'openai', 'gemini'].includes(reqProvider)) ? reqProvider : 'gemini';
+    const userPrompt = prompt || 'Write an informative, engaging blog post. Be accurate and helpful.';
+
+    const systemPrompt = `You are a professional blog writer and SEO specialist for GrowUpMore — an educational platform.
+TASK: Write a complete blog post and its SEO metadata for the given title.
+OUTPUT — return ONLY valid JSON with these keys:
+{
+  "content": "full article in clean HTML using <h2>, <h3>, <p>, <ul>, <li> tags — at least 4-6 well-structured paragraphs",
+  "excerpt": "1-2 sentence summary (max ~200 chars)",
+  "meta_title": "SEO page title (50-60 chars)",
+  "meta_description": "SEO description (150-160 chars)",
+  "meta_keywords": "comma-separated SEO keywords",
+  "tags": "comma-separated relevant tags"
+}
+RULES: Write in a natural, human way. Keep technical/brand terms in English. ${category ? `The post belongs to the "${category}" category.` : ''}
+USER INSTRUCTIONS: ${userPrompt}`;
+    const userContent = JSON.stringify({ title });
+
+    const { text, inputTokens, outputTokens } = await callAI(provider, systemPrompt, userContent, 8192);
+    let parsed: any;
+    try { parsed = parseJSON(text); } catch { return err(res, 'AI returned invalid JSON. Please try again.', 500); }
+
+    const toStr = (v: any) => (Array.isArray(v) ? v.join(', ') : String(v ?? '')).trim();
+    const fields = {
+      content: toStr(parsed.content),
+      excerpt: toStr(parsed.excerpt),
+      meta_title: toStr(parsed.meta_title),
+      meta_description: toStr(parsed.meta_description),
+      meta_keywords: toStr(parsed.meta_keywords),
+      tags: toStr(parsed.tags),
+    };
+
+    logAdmin({ actorId: userId, action: 'ai_content_generated', targetType: 'blog_post', targetId: 0, targetName: `Blog: ${String(title).slice(0, 60)} (${provider})`, ip: getClientIp(req) });
+
+    return ok(res, {
+      provider,
+      generated: fields,
+      usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
+    }, 'Blog content generated successfully');
+  } catch (error: any) {
+    console.error('AI generateBlogPostContent error:', error);
+    return err(res, error.message || 'AI generation failed', 500);
+  }
+}
+
 // ─── SUBJECT translation (single) ───
 export async function generateSubjectTranslation(req: Request, res: Response) {
   try {
@@ -6591,9 +6737,20 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
             results.push({ entity_id: entityId, status: 'skipped', languages_generated: 0 });
             skippedCount++;
           } else {
-            const generated = langResults.filter((r: any) => r.status === 'created' || r.status === 'restored' || r.status === 'updated').length;
-            results.push({ entity_id: entityId, status: 'success', languages_generated: generated });
-            successCount++;
+            // generateAllTranslationsForEntity emits per-language results with
+            // status 'success' | 'error'. (Older code looked for
+            // 'created'/'restored'/'updated', which never matched → always
+            // reported 0 generated, making AI Fill look broken.)
+            const generated = langResults.filter((r: any) => r.status === 'success' || r.status === 'created' || r.status === 'restored' || r.status === 'updated').length;
+            const allErrored = generated === 0 && langResults.every((r: any) => r.status === 'error');
+            if (allErrored) {
+              const firstErr = langResults.find((r: any) => r.status === 'error');
+              results.push({ entity_id: entityId, status: 'error', languages_generated: 0, error: firstErr?.error || 'Generation failed' });
+              errorCount++;
+            } else {
+              results.push({ entity_id: entityId, status: 'success', languages_generated: generated });
+              successCount++;
+            }
           }
         } else {
           // Promise.allSettled rejection — extract entityId from the batch

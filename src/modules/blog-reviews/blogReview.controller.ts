@@ -132,7 +132,8 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Rating must be between 1 and 5', 400);
   }
 
-  body.created_by = req.user!.id;
+  // blog_reviews has no created_by/updated_by columns — the reviewer lives in
+  // user_id. Writing created_by caused "Could not find the 'created_by' column".
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select().single();
   if (e) {
@@ -157,7 +158,7 @@ export async function update(req: Request, res: Response) {
   if (!existing) return err(res, 'Blog review not found', 404);
 
   const body = parseBody(req);
-  body.updated_by = req.user!.id;
+  // No updated_by column on blog_reviews.
   // Don't let them change user_id/blog_post_id
   delete body.user_id;
   delete body.blog_post_id;
@@ -190,7 +191,7 @@ export async function changeStatus(req: Request, res: Response) {
 
   const { data, error: e } = await supabase
     .from(TABLE)
-    .update({ status, updated_by: req.user!.id })
+    .update({ status })
     .eq('id', req.params.id)
     .select()
     .single();
@@ -211,7 +212,7 @@ export async function softDelete(req: Request, res: Response) {
 
   const { error: e } = await supabase
     .from(TABLE)
-    .update({ deleted_at: new Date().toISOString(), updated_by: req.user!.id })
+    .update({ deleted_at: new Date().toISOString() })
     .eq('id', id);
   if (e) return err(res, e.message, 500);
 
@@ -230,7 +231,7 @@ export async function restore(req: Request, res: Response) {
 
   const { error: e } = await supabase
     .from(TABLE)
-    .update({ deleted_at: null, updated_by: req.user!.id })
+    .update({ deleted_at: null })
     .eq('id', id);
   if (e) return err(res, e.message, 500);
 
