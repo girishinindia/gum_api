@@ -11,7 +11,12 @@ import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 const TABLE = 'support_tickets';
 const CACHE_KEY = 'support_tickets:all';
 
-const FK_SELECT = `*, ticket_categories(id, name), ticket_priorities(id, name, code, color, sla_hours), users!support_tickets_user_id_fkey(id, first_name, last_name, email), users!support_tickets_assigned_to_fkey(id, first_name, last_name, email)`;
+// Phase 47 — the two users embeds (requester + assignee) point at the same
+// table. Without an alias on the second, PostgREST derives the same internal
+// name for both and fails with: table name "support_tickets_users_1" specified
+// more than once. Aliasing the assignee disambiguates them; the requester stays
+// keyed as `users` so existing frontend reads (c.users) keep working.
+const FK_SELECT = `*, ticket_categories(id, name), ticket_priorities(id, name, code, color, sla_hours), users!support_tickets_user_id_fkey(id, first_name, last_name, email), assignee:users!support_tickets_assigned_to_fkey(id, first_name, last_name, email)`;
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 
