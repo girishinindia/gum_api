@@ -30,6 +30,13 @@ function parseBody(req: Request): any {
   for (const k of ['promotion_name', 'description', 'promo_code', 'discount_type', 'applicable_to', 'valid_from', 'valid_until', 'promotion_status', 'rejection_reason']) {
     if (body[k] === '') body[k] = null;
   }
+  // Phase 48 — the admin form posts back the whole enriched row, which carries
+  // computed/joined fields that are NOT real columns (instructor_name,
+  // approver_name, course_count) plus immutable ones. Strip them so the
+  // update/insert doesn't fail with "Could not find the 'approver_name' column".
+  for (const k of ['instructor_name', 'approver_name', 'course_count', 'id', 'created_at', 'updated_at']) {
+    delete body[k];
+  }
   return body;
 }
 
