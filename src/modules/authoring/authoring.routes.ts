@@ -26,6 +26,7 @@ r.patch('/courses/:id/verify', requirePermission('authoring_course', 'approve'),
 // Phase 50 — media uploads (Bunny)
 r.post('/courses/:id/thumbnail',     requirePermission('authoring_course', 'update'), fileUpload.single('file'),  ctrl.uploadCourseThumbnail);
 r.post('/courses/:id/trailer-video', requirePermission('authoring_course', 'update'), videoUpload.single('video'), ctrl.uploadCourseTrailerVideo);
+r.delete('/courses/:id/trailer-video', requirePermission('authoring_course', 'update'), ctrl.removeCourseTrailerVideo);
 r.get('/courses/:id/trailer-playback', requirePermission('authoring_course', 'read'), ctrl.courseTrailerPlayback);
 r.patch('/courses/:id/reject', requirePermission('authoring_course', 'approve'), ctrl.rejectCourse);
 r.patch('/courses/:id/restore',requirePermission('authoring_course', 'update'),  ctrl.restoreCourse);

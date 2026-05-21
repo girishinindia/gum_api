@@ -442,6 +442,28 @@ async function handleVideoUpload(req: Request, res: Response, table: 'authoring_
 export async function uploadCourseTrailerVideo(req: Request, res: Response) { return handleVideoUpload(req, res, 'authoring_courses', 'trailer_video', 'trailer'); }
 export async function uploadUnitVideo(req: Request, res: Response) { return handleVideoUpload(req, res, 'authoring_units', 'video', 'topic'); }
 
+// ── Explicit media removal (delete Bunny asset + null the column) ──
+export async function removeUnitVideo(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: row } = await supabase.from('authoring_units').select('video').eq('id', id).single();
+  if (!row) return err(res, 'Unit not found', 404);
+  const guid = extractBunnyVideoGuid(row.video);
+  if (guid) { try { await deleteVideoFromStream(guid); } catch {} }
+  const { data, error: e } = await supabase.from('authoring_units').update({ video: null, youtube_url: null, updated_by: req.user!.id }).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'Video removed');
+}
+export async function removeCourseTrailerVideo(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: row } = await supabase.from('authoring_courses').select('trailer_video').eq('id', id).single();
+  if (!row) return err(res, 'Course not found', 404);
+  const guid = extractBunnyVideoGuid(row.trailer_video);
+  if (guid) { try { await deleteVideoFromStream(guid); } catch {} }
+  const { data, error: e } = await supabase.from('authoring_courses').update({ trailer_video: null, updated_by: req.user!.id }).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'Trailer removed');
+}
+
 // ── Signed playback (Bunny library is token-gated) ──
 async function signPlayback(res: Response, url: string | null) {
   const guid = extractBunnyVideoGuid(url);
@@ -483,4 +505,18 @@ export async function uploadUnitFile(req: Request, res: Response) {
     if (e) return err(res, e.message, 500);
     return ok(res, data, 'File uploaded');
   } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
+}
+
+export async function removeUnitFile(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const kind = String(req.query.kind || '');
+  const column = FILE_KIND_COLUMN[kind];
+  if (!column) return err(res, `Invalid kind. One of: ${Object.keys(FILE_KIND_COLUMN).join(', ')}`, 400);
+  const { data: row } = await supabase.from('authoring_units').select('*').eq('id', id).single();
+  if (!row) return err(res, 'Unit not found', 404);
+  const old = (row as any)[column];
+  if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
+  const { data, error: e } = await supabase.from('authoring_units').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'File removed');
 }
