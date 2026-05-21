@@ -46,8 +46,10 @@ r.post('/units',               requirePermission('authoring_course', 'update'), 
 r.patch('/units/:id',          requirePermission('authoring_course', 'update'),  ctrl.updateUnit);
 // Phase 50 — topic media uploads (Bunny)
 r.post('/units/:id/video',     requirePermission('authoring_course', 'update'), videoUpload.single('video'), ctrl.uploadUnitVideo);
+r.delete('/units/:id/video',   requirePermission('authoring_course', 'update'), ctrl.removeUnitVideo);
 r.get('/units/:id/video-playback', requirePermission('authoring_course', 'read'), ctrl.unitVideoPlayback);
 r.post('/units/:id/file',      requirePermission('authoring_course', 'update'), fileUpload.single('file'),  ctrl.uploadUnitFile);
+r.delete('/units/:id/file',    requirePermission('authoring_course', 'update'), ctrl.removeUnitFile);
 r.delete('/units/:id/permanent', requirePermission('authoring_course', 'delete'), ctrl.removeUnit);
 r.delete('/units/:id',         requirePermission('authoring_course', 'update'),  ctrl.softDeleteUnit);
 
