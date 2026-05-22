@@ -46,6 +46,27 @@ function collectUnitSubtree(allUnits: any[], rootId: number): Set<number> {
 // courses, course_highlights, units (module/chapter/topic tree), faqs.
 // Canonical course tables are NOT touched here — only by a future publish step.
 
+// ── Re-approval guard ──
+// After ANY content mutation (course basics, highlights, curriculum, capstones,
+// mini projects, FAQs, media), a published/pending course is pushed back to
+// "draft" so a super-admin must re-verify before it goes live again.
+// Best-effort & non-blocking — a failed reset must never break the edit itself.
+async function requireReApproval(courseId: number): Promise<void> {
+  try {
+    await supabase.from('authoring_courses')
+      .update({ status: 'draft', verified_at: null, verified_by: null })
+      .eq('id', courseId)
+      .in('status', ['published', 'pending_approval']);
+  } catch { /* swallow — non-fatal */ }
+}
+// Resolve authoring_course_id from a child-table row, then call requireReApproval.
+async function requireReApprovalForChild(table: string, childId: number): Promise<void> {
+  try {
+    const { data } = await supabase.from(table).select('authoring_course_id').eq('id', childId).single();
+    if (data?.authoring_course_id) await requireReApproval(data.authoring_course_id);
+  } catch { /* swallow */ }
+}
+
 function pick(body: any, keys: readonly string[]): any {
   const out: any = {};
   for (const k of keys) if (body[k] !== undefined) out[k] = body[k];
@@ -117,6 +138,10 @@ export async function updateCourse(req: Request, res: Response) {
   const vErr = validateCourseBasics(updates, old);
   if (vErr) return err(res, vErr, 400);
   updates.updated_by = req.user!.id;
+  // Any edit on a live/pending course resets it back to draft (needs re-approval)
+  if (old.status === 'published' || old.status === 'pending_approval') {
+    updates.status = 'draft'; updates.verified_at = null; updates.verified_by = null;
+  }
   const { data, error: e } = await supabase.from('authoring_courses').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'authoring_course_updated', targetType: 'authoring_course', targetId: id, targetName: data.title, ip: getClientIp(req) });
@@ -272,6 +297,7 @@ export async function createHighlight(req: Request, res: Response) {
   if (!body.authoring_course_id || !body.kind || !body.text) return err(res, 'authoring_course_id, kind and text are required', 400);
   const { data, error: e } = await supabase.from('authoring_course_highlights').insert(body).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(body.authoring_course_id);
   return ok(res, data, 'Highlight added', 201);
 }
 
@@ -281,12 +307,17 @@ export async function updateHighlight(req: Request, res: Response) {
   delete updates.authoring_course_id;
   const { data, error: e } = await supabase.from('authoring_course_highlights').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApprovalForChild('authoring_course_highlights', id);
   return ok(res, data, 'Highlight updated');
 }
 
 export async function removeHighlight(req: Request, res: Response) {
-  const { error: e } = await supabase.from('authoring_course_highlights').delete().eq('id', parseInt(req.params.id));
+  const hId = parseInt(req.params.id);
+  // Resolve course before deleting the row (FK gone after delete)
+  const { data: hl } = await supabase.from('authoring_course_highlights').select('authoring_course_id').eq('id', hId).single();
+  const { error: e } = await supabase.from('authoring_course_highlights').delete().eq('id', hId);
   if (e) return err(res, e.message, 500);
+  if (hl?.authoring_course_id) await requireReApproval(hl.authoring_course_id);
   return ok(res, null, 'Highlight removed');
 }
 
@@ -320,6 +351,7 @@ export async function createUnit(req: Request, res: Response) {
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_units').insert(body).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(body.authoring_course_id);
   return ok(res, data, 'Unit created', 201);
 }
 
@@ -330,11 +362,14 @@ export async function updateUnit(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApprovalForChild('authoring_units', id);
   return ok(res, data, 'Unit updated');
 }
 
 export async function softDeleteUnit(req: Request, res: Response) {
-  const { error: e } = await supabase.from('authoring_units').update({ deleted_at: new Date().toISOString() }).eq('id', parseInt(req.params.id));
+  const uId = parseInt(req.params.id);
+  await requireReApprovalForChild('authoring_units', uId);
+  const { error: e } = await supabase.from('authoring_units').update({ deleted_at: new Date().toISOString() }).eq('id', uId);
   if (e) return err(res, e.message, 500);
   return ok(res, null, 'Unit removed');
 }
@@ -384,6 +419,7 @@ export async function createFaq(req: Request, res: Response) {
   if (!body.authoring_course_id || !body.question || !body.answer) return err(res, 'authoring_course_id, question and answer are required', 400);
   const { data, error: e } = await supabase.from('authoring_faqs').insert(body).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(body.authoring_course_id);
   return ok(res, data, 'FAQ added', 201);
 }
 
@@ -393,12 +429,16 @@ export async function updateFaq(req: Request, res: Response) {
   delete updates.authoring_course_id;
   const { data, error: e } = await supabase.from('authoring_faqs').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApprovalForChild('authoring_faqs', id);
   return ok(res, data, 'FAQ updated');
 }
 
 export async function removeFaq(req: Request, res: Response) {
-  const { error: e } = await supabase.from('authoring_faqs').delete().eq('id', parseInt(req.params.id));
+  const fId = parseInt(req.params.id);
+  const { data: faq } = await supabase.from('authoring_faqs').select('authoring_course_id').eq('id', fId).single();
+  const { error: e } = await supabase.from('authoring_faqs').delete().eq('id', fId);
   if (e) return err(res, e.message, 500);
+  if (faq?.authoring_course_id) await requireReApproval(faq.authoring_course_id);
   return ok(res, null, 'FAQ removed');
 }
 
@@ -419,6 +459,7 @@ export async function uploadCourseThumbnail(req: Request, res: Response) {
     const url = await processAndUploadImage(req.file.buffer, path, { width: 1280, height: 720, quality: 85 });
     const { data, error: e } = await supabase.from('authoring_courses').update({ thumbnail_url: url, updated_by: req.user!.id }).eq('id', id).select().single();
     if (e) return err(res, e.message, 500);
+    await requireReApproval(id);
     logAdmin({ actorId: req.user!.id, action: 'authoring_course_thumbnail_uploaded', targetType: 'authoring_course', targetId: id, targetName: course.title, ip: getClientIp(req) });
     return ok(res, data, 'Thumbnail uploaded');
   } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
@@ -439,6 +480,8 @@ async function handleVideoUpload(req: Request, res: Response, table: 'authoring_
     if (table === 'authoring_units') patch.youtube_url = null; // a Bunny upload supersedes any external URL
     const { data, error: e } = await supabase.from(table).update(patch).eq('id', id).select().single();
     if (e) return err(res, e.message, 500);
+    const courseIdForReset = table === 'authoring_courses' ? id : (row as any).authoring_course_id;
+    if (courseIdForReset) await requireReApproval(courseIdForReset);
     logAdmin({ actorId: req.user!.id, action: 'authoring_video_uploaded', targetType: table, targetId: id, targetName: (row as any).title, ip: getClientIp(req) });
     return ok(res, data, 'Video uploaded');
   } catch (e: any) { return err(res, e.message || 'Video upload failed', 500); }
@@ -449,12 +492,13 @@ export async function uploadUnitVideo(req: Request, res: Response) { return hand
 // ── Explicit media removal (delete Bunny asset + null the column) ──
 export async function removeUnitVideo(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: row } = await supabase.from('authoring_units').select('video').eq('id', id).single();
+  const { data: row } = await supabase.from('authoring_units').select('video, authoring_course_id').eq('id', id).single();
   if (!row) return err(res, 'Unit not found', 404);
   const guid = extractBunnyVideoGuid(row.video);
   if (guid) { try { await deleteVideoFromStream(guid); } catch {} }
   const { data, error: e } = await supabase.from('authoring_units').update({ video: null, youtube_url: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  if (row.authoring_course_id) await requireReApproval(row.authoring_course_id);
   return ok(res, data, 'Video removed');
 }
 export async function removeCourseTrailerVideo(req: Request, res: Response) {
@@ -465,6 +509,7 @@ export async function removeCourseTrailerVideo(req: Request, res: Response) {
   if (guid) { try { await deleteVideoFromStream(guid); } catch {} }
   const { data, error: e } = await supabase.from('authoring_courses').update({ trailer_video: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(id);
   return ok(res, data, 'Trailer removed');
 }
 
@@ -513,6 +558,7 @@ export async function uploadUnitFile(req: Request, res: Response) {
     const url = await uploadRawFile(req.file.buffer, path);
     const { data, error: e } = await supabase.from('authoring_units').update({ [column]: url, updated_by: req.user!.id }).eq('id', id).select().single();
     if (e) return err(res, e.message, 500);
+    if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
     return ok(res, data, 'File uploaded');
   } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
 }
@@ -528,6 +574,7 @@ export async function removeUnitFile(req: Request, res: Response) {
   if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
   const { data, error: e } = await supabase.from('authoring_units').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
   return ok(res, data, 'File removed');
 }
 
@@ -564,6 +611,7 @@ export async function createCapstoneProject(req: Request, res: Response) {
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_capstone_projects').insert(body).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(body.authoring_course_id);
   logAdmin({ actorId: req.user!.id, action: 'authoring_capstone_created', targetType: 'authoring_capstone_project', targetId: data.id, targetName: data.title, ip: getClientIp(req) });
   return ok(res, data, 'Capstone project created', 201);
 }
@@ -575,12 +623,15 @@ export async function updateCapstoneProject(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_capstone_projects').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApprovalForChild('authoring_capstone_projects', id);
   return ok(res, data, 'Capstone project updated');
 }
 
 export async function softDeleteCapstoneProject(req: Request, res: Response) {
+  const cpId = parseInt(req.params.id);
+  await requireReApprovalForChild('authoring_capstone_projects', cpId);
   const { error: e } = await supabase.from('authoring_capstone_projects')
-    .update({ deleted_at: new Date().toISOString() }).eq('id', parseInt(req.params.id));
+    .update({ deleted_at: new Date().toISOString() }).eq('id', cpId);
   if (e) return err(res, e.message, 500);
   return ok(res, null, 'Capstone project moved to trash');
 }
@@ -619,6 +670,7 @@ export async function uploadCapstoneFile(req: Request, res: Response) {
     const url = await uploadRawFile(req.file.buffer, path);
     const { data, error: e } = await supabase.from('authoring_capstone_projects').update({ [column]: url, updated_by: req.user!.id }).eq('id', id).select().single();
     if (e) return err(res, e.message, 500);
+    if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
     return ok(res, data, 'File uploaded');
   } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
 }
@@ -634,6 +686,7 @@ export async function removeCapstoneFile(req: Request, res: Response) {
   if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
   const { data, error: e } = await supabase.from('authoring_capstone_projects').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
   return ok(res, data, 'File removed');
 }
 
@@ -678,6 +731,7 @@ export async function createMiniProject(req: Request, res: Response) {
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_mini_projects').insert(body).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApproval(body.authoring_course_id);
   logAdmin({ actorId: req.user!.id, action: 'authoring_mini_project_created', targetType: 'authoring_mini_project', targetId: data.id, targetName: data.title, ip: getClientIp(req) });
   return ok(res, data, 'Mini project created', 201);
 }
@@ -690,12 +744,15 @@ export async function updateMiniProject(req: Request, res: Response) {
   updates.updated_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_mini_projects').update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  await requireReApprovalForChild('authoring_mini_projects', id);
   return ok(res, data, 'Mini project updated');
 }
 
 export async function softDeleteMiniProject(req: Request, res: Response) {
+  const mpId = parseInt(req.params.id);
+  await requireReApprovalForChild('authoring_mini_projects', mpId);
   const { error: e } = await supabase.from('authoring_mini_projects')
-    .update({ deleted_at: new Date().toISOString() }).eq('id', parseInt(req.params.id));
+    .update({ deleted_at: new Date().toISOString() }).eq('id', mpId);
   if (e) return err(res, e.message, 500);
   return ok(res, null, 'Mini project moved to trash');
 }
@@ -734,6 +791,7 @@ export async function uploadMiniProjectFile(req: Request, res: Response) {
     const url = await uploadRawFile(req.file.buffer, path);
     const { data, error: e } = await supabase.from('authoring_mini_projects').update({ [column]: url, updated_by: req.user!.id }).eq('id', id).select().single();
     if (e) return err(res, e.message, 500);
+    if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
     return ok(res, data, 'File uploaded');
   } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
 }
@@ -749,5 +807,6 @@ export async function removeMiniProjectFile(req: Request, res: Response) {
   if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
   const { data, error: e } = await supabase.from('authoring_mini_projects').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
   return ok(res, data, 'File removed');
 }
