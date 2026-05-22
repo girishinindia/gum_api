@@ -15,3 +15,15 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
     return res.status(401).json({ success: false, error: e.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token', code: e.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN' });
   }
 };
+
+/** Optional auth — sets req.user if a valid token is present, but does NOT block. */
+export const optionalAuth = (req: Request, _res: Response, next: NextFunction) => {
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ')) {
+    try {
+      const payload = verifyAccess(header.split(' ')[1]);
+      req.user = { id: payload.sub };
+    } catch { /* ignore invalid/expired tokens */ }
+  }
+  next();
+};

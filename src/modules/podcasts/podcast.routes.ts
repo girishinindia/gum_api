@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './podcast.controller';
-import { authMiddleware } from '../../middleware/auth';
+import { authMiddleware, optionalAuth } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
 
 const r = Router();
@@ -9,10 +9,10 @@ const r = Router();
 const videoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// ── Public routes (no auth — read-only) ──
-r.get('/', ctrl.list);
-r.get('/:id', ctrl.getById);
-r.get('/:id/playback', ctrl.playback);
+// ── Public routes (optionalAuth so admin panel can see all statuses) ──
+r.get('/', optionalAuth, ctrl.list);
+r.get('/:id', optionalAuth, ctrl.getById);
+r.get('/:id/playback', optionalAuth, ctrl.playback);
 
 // ── Protected routes ──
 r.use(authMiddleware, attachPermissions());
