@@ -142,12 +142,10 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
   }
   if (modules.some(m => !modulesWithTopic.has(m.id))) p.push('Every module needs at least one topic');
 
+  // Every topic must have a video (upload or YouTube). Other content types are optional.
   for (const t of topics) {
-    if (t.topic_type === 'video' && !t.video && !t.youtube_url) { p.push('A video topic has no video'); break; }
+    if (!t.video && !t.youtube_url) { p.push('Every topic must have a video (upload or YouTube URL)'); break; }
   }
-  for (const t of topics) { if (t.topic_type === 'article' && !t.article_pdf) { p.push('An article topic has no PDF'); break; } }
-  for (const t of topics) { if (t.topic_type === 'exercise' && !t.exercise_pdf) { p.push('An exercise topic has no PDF'); break; } }
-  for (const t of topics) { if (t.topic_type === 'project' && !t.project_pdf) { p.push('A project topic has no brief PDF'); break; } }
 
   if (!highlights.some(h => h.kind === 'outcome')) p.push('Add at least one outcome (what students will learn)');
   return [...new Set(p)];
@@ -157,7 +155,7 @@ async function loadReadiness(id: number) {
   const { data: course } = await supabase.from('authoring_courses').select('*').eq('id', id).single();
   if (!course) return null;
   const { data: units } = await supabase.from('authoring_units')
-    .select('id, unit_type, parent_unit_id, topic_type, video, youtube_url, article_pdf, exercise_pdf, project_pdf')
+    .select('id, unit_type, parent_unit_id, topic_type, video, youtube_url, article_pdf, exercise_pdf, assignment_pdf, project_pdf, project_solution_file_url')
     .eq('authoring_course_id', id).is('deleted_at', null);
   const { data: highlights } = await supabase.from('authoring_course_highlights').select('id, kind').eq('authoring_course_id', id);
   const problems = readinessProblems(course, units || [], highlights || []);
@@ -232,14 +230,19 @@ export async function removeCourse(req: Request, res: Response) {
   // units too (no deleted_at filter) so nothing is left orphaned on Bunny.
   const { data: course } = await supabase.from('authoring_courses').select('thumbnail_url, trailer_video').eq('id', id).single();
   const { data: units } = await supabase.from('authoring_units')
-    .select('video, article_pdf, exercise_pdf, exercise_solution_pdf, project_pdf')
+    .select('video, article_pdf, exercise_pdf, exercise_solution_pdf, assignment_pdf, project_pdf, project_solution_file_url')
     .eq('authoring_course_id', id);
   const urls: (string | null | undefined)[] = [];
   if (course) urls.push(course.thumbnail_url, course.trailer_video);
-  for (const u of units || []) urls.push(u.video, u.article_pdf, u.exercise_pdf, u.exercise_solution_pdf, u.project_pdf);
+  for (const u of units || []) urls.push(u.video, u.article_pdf, u.exercise_pdf, u.exercise_solution_pdf, u.assignment_pdf, u.project_pdf, u.project_solution_file_url);
+  // Also purge capstone + mini project files (they cascade-delete from DB but Bunny assets need explicit removal)
+  const { data: capstones } = await supabase.from('authoring_capstone_projects').select('pdf_url, solution_file_url').eq('authoring_course_id', id);
+  for (const c of capstones || []) urls.push(c.pdf_url, c.solution_file_url);
+  const { data: minis } = await supabase.from('authoring_mini_projects').select('pdf_url, solution_file_url').eq('authoring_course_id', id);
+  for (const m of minis || []) urls.push(m.pdf_url, m.solution_file_url);
   await purgeBunnyForUrls(urls);
 
-  // children (units, highlights, faqs) cascade via FK ON DELETE CASCADE
+  // children (units, highlights, faqs, capstones, mini-projects) cascade via FK ON DELETE CASCADE
   const { error: e } = await supabase.from('authoring_courses').delete().eq('id', id);
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'authoring_course_deleted', targetType: 'authoring_course', targetId: id, targetName: `#${id}`, ip: getClientIp(req) });
@@ -288,7 +291,7 @@ export async function removeHighlight(req: Request, res: Response) {
 }
 
 // ─────────────────────────── UNITS ──────────────────────────
-const UNIT_COLS = ['authoring_course_id','parent_unit_id','unit_type','title','summary','display_order','topic_type','is_free_preview','video','youtube_url','video_title','video_thumbnail','article_pdf','exercise_pdf','exercise_solution_pdf','project_pdf','project_scope','project_git_url','points'] as const;
+const UNIT_COLS = ['authoring_course_id','parent_unit_id','unit_type','title','summary','display_order','topic_type','is_free_preview','video','youtube_url','video_title','video_thumbnail','article_pdf','exercise_pdf','exercise_solution_pdf','assignment_pdf','project_pdf','project_scope','project_git_url','project_solution_file_url','points'] as const;
 function parseUnit(req: Request): any {
   const b = pick(req.body, UNIT_COLS);
   for (const k of ['authoring_course_id','parent_unit_id','display_order','points']) if (typeof b[k] === 'string') b[k] = toIntOrNull(b[k]);
@@ -312,7 +315,8 @@ export async function listUnits(req: Request, res: Response) {
 export async function createUnit(req: Request, res: Response) {
   const body = parseUnit(req);
   if (!body.authoring_course_id || !body.unit_type || !body.title) return err(res, 'authoring_course_id, unit_type and title are required', 400);
-  if (body.unit_type === 'topic' && !body.topic_type) return err(res, 'topic_type is required for a topic unit', 400);
+  // topic_type is now optional — topics can carry all content types simultaneously.
+  // When set, it indicates the *primary* content type (used for display/icons).
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_units').insert(body).select().single();
   if (e) return err(res, e.message, 500);
@@ -342,12 +346,12 @@ export async function removeUnit(req: Request, res: Response) {
   const { data: root } = await supabase.from('authoring_units').select('authoring_course_id').eq('id', id).single();
   if (root) {
     const { data: all } = await supabase.from('authoring_units')
-      .select('id, parent_unit_id, video, article_pdf, exercise_pdf, exercise_solution_pdf, project_pdf')
+      .select('id, parent_unit_id, video, article_pdf, exercise_pdf, exercise_solution_pdf, assignment_pdf, project_pdf, project_solution_file_url')
       .eq('authoring_course_id', root.authoring_course_id);
     const subtree = collectUnitSubtree(all || [], id);
     const urls: (string | null | undefined)[] = [];
     for (const u of all || []) {
-      if (subtree.has(u.id)) urls.push(u.video, u.article_pdf, u.exercise_pdf, u.exercise_solution_pdf, u.project_pdf);
+      if (subtree.has(u.id)) urls.push(u.video, u.article_pdf, u.exercise_pdf, u.exercise_solution_pdf, u.assignment_pdf, u.project_pdf, u.project_solution_file_url);
     }
     await purgeBunnyForUrls(urls);
   }
@@ -484,7 +488,8 @@ export async function unitVideoPlayback(req: Request, res: Response) {
 
 // ── Topic PDF upload (article / exercise / exercise_solution / project → Bunny storage) ──
 const FILE_KIND_COLUMN: Record<string, string> = {
-  article: 'article_pdf', exercise: 'exercise_pdf', exercise_solution: 'exercise_solution_pdf', project: 'project_pdf',
+  article: 'article_pdf', exercise: 'exercise_pdf', exercise_solution: 'exercise_solution_pdf',
+  assignment: 'assignment_pdf', project: 'project_pdf', project_solution: 'project_solution_file_url',
 };
 export async function uploadUnitFile(req: Request, res: Response) {
   const id = parseInt(req.params.id);
@@ -494,7 +499,12 @@ export async function uploadUnitFile(req: Request, res: Response) {
   const { data: row } = await supabase.from('authoring_units').select('*').eq('id', id).single();
   if (!row) return err(res, 'Unit not found', 404);
   if (!req.file) return err(res, 'No file provided', 400);
-  if (req.file.mimetype && req.file.mimetype !== 'application/pdf') return err(res, 'File must be a PDF', 400);
+  const allowedMimes = kind === 'project_solution'
+    ? ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream']
+    : ['application/pdf'];
+  if (req.file.mimetype && !allowedMimes.includes(req.file.mimetype)) {
+    return err(res, kind === 'project_solution' ? 'File must be a PDF or ZIP' : 'File must be a PDF', 400);
+  }
   try {
     const old = (row as any)[column];
     if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
@@ -517,6 +527,227 @@ export async function removeUnitFile(req: Request, res: Response) {
   const old = (row as any)[column];
   if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
   const { data, error: e } = await supabase.from('authoring_units').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'File removed');
+}
+
+// ═════════════════════ CAPSTONE PROJECTS (course-level) ═════════════════════
+const CAPSTONE_COLS = ['authoring_course_id','title','description','display_order','pdf_url','solution_file_url','solution_github_url','is_active'] as const;
+
+function parseCapstone(req: Request): any {
+  const b = pick(req.body, CAPSTONE_COLS);
+  if (typeof b.authoring_course_id === 'string') b.authoring_course_id = toIntOrNull(b.authoring_course_id);
+  if (typeof b.display_order === 'string') b.display_order = toIntOrNull(b.display_order) ?? 0;
+  if (typeof b.is_active === 'string') b.is_active = toBool(b.is_active);
+  for (const k of Object.keys(b)) if (b[k] === '') b[k] = null;
+  return b;
+}
+
+export async function listCapstoneProjects(req: Request, res: Response) {
+  if (!req.query.authoring_course_id) return err(res, 'authoring_course_id is required', 400);
+  const { data, error: e } = await supabase.from('authoring_capstone_projects').select('*')
+    .eq('authoring_course_id', parseInt(req.query.authoring_course_id as string))
+    .is('deleted_at', null).order('display_order');
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
+export async function getCapstoneProject(req: Request, res: Response) {
+  const { data, error: e } = await supabase.from('authoring_capstone_projects').select('*').eq('id', req.params.id).single();
+  if (e || !data) return err(res, 'Capstone project not found', 404);
+  return ok(res, data);
+}
+
+export async function createCapstoneProject(req: Request, res: Response) {
+  const body = parseCapstone(req);
+  if (!body.authoring_course_id || !body.title) return err(res, 'authoring_course_id and title are required', 400);
+  body.created_by = req.user!.id;
+  const { data, error: e } = await supabase.from('authoring_capstone_projects').insert(body).select().single();
+  if (e) return err(res, e.message, 500);
+  logAdmin({ actorId: req.user!.id, action: 'authoring_capstone_created', targetType: 'authoring_capstone_project', targetId: data.id, targetName: data.title, ip: getClientIp(req) });
+  return ok(res, data, 'Capstone project created', 201);
+}
+
+export async function updateCapstoneProject(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const updates = parseCapstone(req);
+  delete updates.authoring_course_id; // immutable after creation
+  updates.updated_by = req.user!.id;
+  const { data, error: e } = await supabase.from('authoring_capstone_projects').update(updates).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'Capstone project updated');
+}
+
+export async function softDeleteCapstoneProject(req: Request, res: Response) {
+  const { error: e } = await supabase.from('authoring_capstone_projects')
+    .update({ deleted_at: new Date().toISOString() }).eq('id', parseInt(req.params.id));
+  if (e) return err(res, e.message, 500);
+  return ok(res, null, 'Capstone project moved to trash');
+}
+
+export async function removeCapstoneProject(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: row } = await supabase.from('authoring_capstone_projects').select('pdf_url, solution_file_url').eq('id', id).single();
+  if (row) await purgeBunnyForUrls([row.pdf_url, row.solution_file_url]);
+  const { error: e } = await supabase.from('authoring_capstone_projects').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
+  return ok(res, null, 'Capstone project permanently deleted');
+}
+
+// ── Capstone project file uploads (PDF brief + solution ZIP) ──
+const CAPSTONE_FILE_KIND: Record<string, string> = { pdf: 'pdf_url', solution: 'solution_file_url' };
+
+export async function uploadCapstoneFile(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const kind = String(req.query.kind || '');
+  const column = CAPSTONE_FILE_KIND[kind];
+  if (!column) return err(res, `Invalid kind. One of: ${Object.keys(CAPSTONE_FILE_KIND).join(', ')}`, 400);
+  const { data: row } = await supabase.from('authoring_capstone_projects').select('*').eq('id', id).single();
+  if (!row) return err(res, 'Capstone project not found', 404);
+  if (!req.file) return err(res, 'No file provided', 400);
+  const allowedMimes = kind === 'solution'
+    ? ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream']
+    : ['application/pdf'];
+  if (req.file.mimetype && !allowedMimes.includes(req.file.mimetype)) {
+    return err(res, kind === 'solution' ? 'File must be a PDF or ZIP' : 'File must be a PDF', 400);
+  }
+  try {
+    const old = (row as any)[column];
+    if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
+    const safe = (req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `authoring/capstone-projects/${id}/${kind}-${Date.now()}-${safe}`;
+    const url = await uploadRawFile(req.file.buffer, path);
+    const { data, error: e } = await supabase.from('authoring_capstone_projects').update({ [column]: url, updated_by: req.user!.id }).eq('id', id).select().single();
+    if (e) return err(res, e.message, 500);
+    return ok(res, data, 'File uploaded');
+  } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
+}
+
+export async function removeCapstoneFile(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const kind = String(req.query.kind || '');
+  const column = CAPSTONE_FILE_KIND[kind];
+  if (!column) return err(res, `Invalid kind. One of: ${Object.keys(CAPSTONE_FILE_KIND).join(', ')}`, 400);
+  const { data: row } = await supabase.from('authoring_capstone_projects').select('*').eq('id', id).single();
+  if (!row) return err(res, 'Capstone project not found', 404);
+  const old = (row as any)[column];
+  if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
+  const { data, error: e } = await supabase.from('authoring_capstone_projects').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'File removed');
+}
+
+// ═════════════════════ MINI PROJECTS (module/chapter-level) ═════════════════════
+const MINI_PROJECT_COLS = ['authoring_course_id','unit_id','title','description','display_order','pdf_url','solution_file_url','solution_github_url','is_active'] as const;
+
+function parseMiniProject(req: Request): any {
+  const b = pick(req.body, MINI_PROJECT_COLS);
+  if (typeof b.authoring_course_id === 'string') b.authoring_course_id = toIntOrNull(b.authoring_course_id);
+  if (typeof b.unit_id === 'string') b.unit_id = toIntOrNull(b.unit_id);
+  if (typeof b.display_order === 'string') b.display_order = toIntOrNull(b.display_order) ?? 0;
+  if (typeof b.is_active === 'string') b.is_active = toBool(b.is_active);
+  for (const k of Object.keys(b)) if (b[k] === '') b[k] = null;
+  return b;
+}
+
+export async function listMiniProjects(req: Request, res: Response) {
+  if (!req.query.authoring_course_id) return err(res, 'authoring_course_id is required', 400);
+  let q = supabase.from('authoring_mini_projects').select('*')
+    .eq('authoring_course_id', parseInt(req.query.authoring_course_id as string))
+    .is('deleted_at', null);
+  if (req.query.unit_id) q = q.eq('unit_id', parseInt(req.query.unit_id as string));
+  q = q.order('display_order');
+  const { data, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
+export async function getMiniProject(req: Request, res: Response) {
+  const { data, error: e } = await supabase.from('authoring_mini_projects').select('*').eq('id', req.params.id).single();
+  if (e || !data) return err(res, 'Mini project not found', 404);
+  return ok(res, data);
+}
+
+export async function createMiniProject(req: Request, res: Response) {
+  const body = parseMiniProject(req);
+  if (!body.authoring_course_id || !body.unit_id || !body.title) return err(res, 'authoring_course_id, unit_id and title are required', 400);
+  // Validate the target unit is a module or chapter
+  const { data: unit } = await supabase.from('authoring_units').select('unit_type').eq('id', body.unit_id).single();
+  if (!unit) return err(res, 'Unit not found', 404);
+  if (unit.unit_type !== 'module' && unit.unit_type !== 'chapter') return err(res, 'Mini projects can only be attached to modules or chapters', 400);
+  body.created_by = req.user!.id;
+  const { data, error: e } = await supabase.from('authoring_mini_projects').insert(body).select().single();
+  if (e) return err(res, e.message, 500);
+  logAdmin({ actorId: req.user!.id, action: 'authoring_mini_project_created', targetType: 'authoring_mini_project', targetId: data.id, targetName: data.title, ip: getClientIp(req) });
+  return ok(res, data, 'Mini project created', 201);
+}
+
+export async function updateMiniProject(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const updates = parseMiniProject(req);
+  delete updates.authoring_course_id; // immutable
+  delete updates.unit_id;             // immutable — move = delete + re-create
+  updates.updated_by = req.user!.id;
+  const { data, error: e } = await supabase.from('authoring_mini_projects').update(updates).eq('id', id).select().single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'Mini project updated');
+}
+
+export async function softDeleteMiniProject(req: Request, res: Response) {
+  const { error: e } = await supabase.from('authoring_mini_projects')
+    .update({ deleted_at: new Date().toISOString() }).eq('id', parseInt(req.params.id));
+  if (e) return err(res, e.message, 500);
+  return ok(res, null, 'Mini project moved to trash');
+}
+
+export async function removeMiniProject(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: row } = await supabase.from('authoring_mini_projects').select('pdf_url, solution_file_url').eq('id', id).single();
+  if (row) await purgeBunnyForUrls([row.pdf_url, row.solution_file_url]);
+  const { error: e } = await supabase.from('authoring_mini_projects').delete().eq('id', id);
+  if (e) return err(res, e.message, 500);
+  return ok(res, null, 'Mini project permanently deleted');
+}
+
+// ── Mini project file uploads (PDF brief + solution ZIP) ──
+const MINI_FILE_KIND: Record<string, string> = { pdf: 'pdf_url', solution: 'solution_file_url' };
+
+export async function uploadMiniProjectFile(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const kind = String(req.query.kind || '');
+  const column = MINI_FILE_KIND[kind];
+  if (!column) return err(res, `Invalid kind. One of: ${Object.keys(MINI_FILE_KIND).join(', ')}`, 400);
+  const { data: row } = await supabase.from('authoring_mini_projects').select('*').eq('id', id).single();
+  if (!row) return err(res, 'Mini project not found', 404);
+  if (!req.file) return err(res, 'No file provided', 400);
+  const allowedMimes = kind === 'solution'
+    ? ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream']
+    : ['application/pdf'];
+  if (req.file.mimetype && !allowedMimes.includes(req.file.mimetype)) {
+    return err(res, kind === 'solution' ? 'File must be a PDF or ZIP' : 'File must be a PDF', 400);
+  }
+  try {
+    const old = (row as any)[column];
+    if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
+    const safe = (req.file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `authoring/mini-projects/${id}/${kind}-${Date.now()}-${safe}`;
+    const url = await uploadRawFile(req.file.buffer, path);
+    const { data, error: e } = await supabase.from('authoring_mini_projects').update({ [column]: url, updated_by: req.user!.id }).eq('id', id).select().single();
+    if (e) return err(res, e.message, 500);
+    return ok(res, data, 'File uploaded');
+  } catch (e: any) { return err(res, e.message || 'Upload failed', 500); }
+}
+
+export async function removeMiniProjectFile(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const kind = String(req.query.kind || '');
+  const column = MINI_FILE_KIND[kind];
+  if (!column) return err(res, `Invalid kind. One of: ${Object.keys(MINI_FILE_KIND).join(', ')}`, 400);
+  const { data: row } = await supabase.from('authoring_mini_projects').select('*').eq('id', id).single();
+  if (!row) return err(res, 'Mini project not found', 404);
+  const old = (row as any)[column];
+  if (old) { try { await deleteImage(extractBunnyPath(old), old); } catch {} }
+  const { data, error: e } = await supabase.from('authoring_mini_projects').update({ [column]: null, updated_by: req.user!.id }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
   return ok(res, data, 'File removed');
 }

@@ -59,4 +59,24 @@ r.post('/faqs',                requirePermission('authoring_course', 'update'), 
 r.patch('/faqs/:id',           requirePermission('authoring_course', 'update'),  ctrl.updateFaq);
 r.delete('/faqs/:id',          requirePermission('authoring_course', 'update'),  ctrl.removeFaq);
 
+// ── Capstone projects (course-level: PDF brief + solution ZIP/GitHub) ──
+r.get('/capstone-projects',            requirePermission('authoring_course', 'read'),   ctrl.listCapstoneProjects);
+r.get('/capstone-projects/:id',        requirePermission('authoring_course', 'read'),   ctrl.getCapstoneProject);
+r.post('/capstone-projects',           requirePermission('authoring_course', 'update'), ctrl.createCapstoneProject);
+r.patch('/capstone-projects/:id',      requirePermission('authoring_course', 'update'), ctrl.updateCapstoneProject);
+r.post('/capstone-projects/:id/file',  requirePermission('authoring_course', 'update'), fileUpload.single('file'), ctrl.uploadCapstoneFile);
+r.delete('/capstone-projects/:id/file',requirePermission('authoring_course', 'update'), ctrl.removeCapstoneFile);
+r.delete('/capstone-projects/:id/permanent', requirePermission('authoring_course', 'delete'), ctrl.removeCapstoneProject);
+r.delete('/capstone-projects/:id',     requirePermission('authoring_course', 'update'), ctrl.softDeleteCapstoneProject);
+
+// ── Mini projects (module/chapter-level: PDF brief + solution ZIP/GitHub) ──
+r.get('/mini-projects',            requirePermission('authoring_course', 'read'),   ctrl.listMiniProjects);
+r.get('/mini-projects/:id',        requirePermission('authoring_course', 'read'),   ctrl.getMiniProject);
+r.post('/mini-projects',           requirePermission('authoring_course', 'update'), ctrl.createMiniProject);
+r.patch('/mini-projects/:id',      requirePermission('authoring_course', 'update'), ctrl.updateMiniProject);
+r.post('/mini-projects/:id/file',  requirePermission('authoring_course', 'update'), fileUpload.single('file'), ctrl.uploadMiniProjectFile);
+r.delete('/mini-projects/:id/file',requirePermission('authoring_course', 'update'), ctrl.removeMiniProjectFile);
+r.delete('/mini-projects/:id/permanent', requirePermission('authoring_course', 'delete'), ctrl.removeMiniProject);
+r.delete('/mini-projects/:id',     requirePermission('authoring_course', 'update'), ctrl.softDeleteMiniProject);
+
 export default r;
