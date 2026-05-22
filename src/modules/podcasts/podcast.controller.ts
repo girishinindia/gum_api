@@ -20,7 +20,7 @@ function extractBunnyPath(cdnUrl: string): string {
 // ── Parse body helper ──
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
-  for (const k of ['category_id', 'duration_seconds', 'display_order']) {
+  for (const k of ['category_id', 'sub_category_id', 'duration_seconds', 'display_order']) {
     if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   if (typeof body.is_featured === 'string') body.is_featured = body.is_featured === 'true';
@@ -33,7 +33,7 @@ function parseBody(req: Request): any {
 }
 
 // Columns to select, with poster user join
-const FK_SELECT = '*, users!podcasts_posted_by_fkey(id, first_name, last_name, email, avatar_url), categories!podcasts_category_id_fkey(id, name)';
+const FK_SELECT = '*, users!podcasts_posted_by_fkey(id, first_name, last_name, email, avatar_url), categories!podcasts_category_id_fkey(id, name, slug), sub_categories!podcasts_sub_category_id_fkey(id, name, slug, category_id)';
 
 // ══════════════════════════════════════════════════════════════
 // PUBLIC ENDPOINTS (no auth required)
