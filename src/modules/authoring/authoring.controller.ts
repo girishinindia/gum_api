@@ -170,11 +170,12 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
   // Every topic must have at least one piece of content (video, PDF, or URL).
   // Topics can be video, exercise, article, quiz, or project type — each has
   // different valid content. We just check that SOMETHING is uploaded.
-  // Skip orphan topics (parent_unit_id=NULL) — they're not part of any module
-  // structure and shouldn't block submission. They'll show in the "Unassigned"
-  // section of the curriculum tree so the instructor can fix or delete them.
+  // Skip orphan/zombie topics — those with parent_unit_id=NULL OR whose parent
+  // was soft-deleted (parent id exists in DB but NOT in the filtered `units`
+  // array). These show in the "Unassigned" section of the curriculum tree.
+  const validUnitIds = new Set(units.map(u => u.id));
   for (const t of topics) {
-    if (!t.parent_unit_id) continue;
+    if (!t.parent_unit_id || !validUnitIds.has(t.parent_unit_id)) continue;
     const hasContent = t.video || t.youtube_url || t.exercise_pdf || t.assignment_pdf
       || t.article_pdf || t.project_pdf || t.project_solution_file_url;
     if (!hasContent) { p.push('Every topic must have at least one file or video'); break; }
