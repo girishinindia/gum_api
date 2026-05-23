@@ -167,9 +167,13 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
   }
   if (modules.some(m => !modulesWithTopic.has(m.id))) p.push('Every module needs at least one topic');
 
-  // Every topic must have a video (upload or YouTube). Other content types are optional.
+  // Every topic must have at least one piece of content (video, PDF, or URL).
+  // Topics can be video, exercise, article, quiz, or project type — each has
+  // different valid content. We just check that SOMETHING is uploaded.
   for (const t of topics) {
-    if (!t.video && !t.youtube_url) { p.push('Every topic must have a video (upload or YouTube URL)'); break; }
+    const hasContent = t.video || t.youtube_url || t.exercise_pdf || t.assignment_pdf
+      || t.article_pdf || t.project_pdf || t.project_solution_file_url;
+    if (!hasContent) { p.push('Every topic must have at least one file or video'); break; }
   }
 
   if (!highlights.some(h => h.kind === 'outcome')) p.push('Add at least one outcome (what students will learn)');
