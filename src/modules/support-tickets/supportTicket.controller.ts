@@ -73,11 +73,23 @@ export async function getById(req: Request, res: Response) {
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
-  // Auto-generate ticket_number
+  // Auto-generate ticket_number — Phase 48: use MAX suffix instead of COUNT
+  // so that permanently-deleted tickets don't cause collisions (e.g. if 001
+  // was deleted and 002 exists, COUNT=1 → generates 002 again = clash).
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const { count } = await supabase.from(TABLE).select('*', { count: 'exact', head: true }).like('ticket_number', `TKT-${today}-%`);
-  const num = String((count || 0) + 1).padStart(3, '0');
-  body.ticket_number = `TKT-${today}-${num}`;
+  const prefix = `TKT-${today}-`;
+  const { data: latest } = await supabase
+    .from(TABLE)
+    .select('ticket_number')
+    .like('ticket_number', `${prefix}%`)
+    .order('ticket_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lastNum = latest?.ticket_number
+    ? parseInt(latest.ticket_number.replace(prefix, ''), 10) || 0
+    : 0;
+  const num = String(lastNum + 1).padStart(3, '0');
+  body.ticket_number = `${prefix}${num}`;
 
   // Set user_id from body or current user. Phase 45 — support_tickets has no
   // created_by/updated_by columns; the requester lives in user_id. Writing
