@@ -8,6 +8,7 @@ import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 import { validateOwnerInstructor } from '../../utils/ownerInstructor';
+import crypto from 'crypto';
 
 const TABLE = 'webinars';
 const CACHE_KEY = 'webinars:all';
@@ -16,6 +17,8 @@ const clearCache = async (courseId?: number) => {
   await redis.del(CACHE_KEY);
   if (courseId) await redis.del(`webinars:course:${courseId}`);
 };
+
+/* ─── helpers ─── */
 
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
@@ -31,6 +34,68 @@ function parseBody(req: Request): any {
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
   return body;
+}
+
+/** Slugify a title into a URL-safe string */
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')   // remove non-word chars
+    .replace(/[\s_]+/g, '-')    // spaces/underscores → hyphens
+    .replace(/-+/g, '-')        // collapse consecutive hyphens
+    .replace(/^-|-$/g, '');     // trim leading/trailing hyphens
+}
+
+/** Generate a short random alphanumeric string */
+function shortId(len = 4): string {
+  return crypto.randomBytes(len).toString('base64url').slice(0, len).toLowerCase();
+}
+
+/** Auto-generate a unique code: WEB-YYMMDD-XXXX */
+async function generateUniqueCode(): Promise<string> {
+  const d = new Date();
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const prefix = `WEB-${yy}${mm}${dd}`;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const code = `${prefix}-${shortId(4).toUpperCase()}`;
+    const { data } = await supabase.from(TABLE).select('id').eq('code', code).maybeSingle();
+    if (!data) return code;
+  }
+  // Fallback — extremely unlikely
+  return `${prefix}-${shortId(8).toUpperCase()}`;
+}
+
+/** Auto-generate a unique slug from the title */
+async function generateUniqueSlug(title: string): Promise<string> {
+  const base = slugify(title || 'webinar') || 'webinar';
+  // Try base slug first
+  const { data: existing } = await supabase.from(TABLE).select('id').eq('slug', base).maybeSingle();
+  if (!existing) return base;
+  // Append random suffix until unique
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const slug = `${base}-${shortId(4)}`;
+    const { data } = await supabase.from(TABLE).select('id').eq('slug', slug).maybeSingle();
+    if (!data) return slug;
+  }
+  return `${base}-${shortId(8)}`;
+}
+
+/** Validate fields shared by create & update */
+function validateFields(body: any): string | null {
+  // Price
+  if (body.price != null && body.price < 0) return 'Price cannot be negative';
+  // Max attendees
+  if (body.max_attendees != null && body.max_attendees < 1) return 'Max attendees must be at least 1';
+  // Duration
+  if (body.duration_minutes != null && body.duration_minutes < 1) return 'Duration must be at least 1 minute';
+  // URL validation
+  const urlPattern = /^https?:\/\/.+/;
+  if (body.meeting_url && !urlPattern.test(body.meeting_url)) return 'Meeting URL must start with http:// or https://';
+  if (body.recording_url && !urlPattern.test(body.recording_url)) return 'Recording URL must start with http:// or https://';
+  return null;
 }
 
 const FK_SELECT = `*, courses(name, slug), users!webinars_instructor_id_fkey(id, full_name, email)`;
@@ -74,6 +139,10 @@ export async function getById(req: Request, res: Response) {
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
+  // Validate fields
+  const valErr = validateFields(body);
+  if (valErr) return err(res, valErr, 400);
+
   // Verify course exists if provided
   if (body.course_id) {
     const { data: course } = await supabase.from('courses').select('id, name').eq('id', body.course_id).single();
@@ -84,6 +153,9 @@ export async function create(req: Request, res: Response) {
   const ownerErr = await validateOwnerInstructor(body.webinar_owner, body.instructor_id);
   if (ownerErr) return err(res, ownerErr, 400);
 
+  // Auto-generate code & slug (ignore user input — always generate fresh)
+  body.code = await generateUniqueCode();
+  body.slug = await generateUniqueSlug(body.title || '');
   body.created_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
@@ -101,6 +173,14 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
   updates.updated_by = req.user!.id;
+
+  // Validate fields
+  const valErr = validateFields(updates);
+  if (valErr) return err(res, valErr, 400);
+
+  // Prevent code & slug from being changed manually — they are auto-generated
+  delete updates.code;
+  delete updates.slug;
 
   // Phase 45 — re-validate owner ↔ instructor only when either changes.
   if ('webinar_owner' in updates || 'instructor_id' in updates) {
