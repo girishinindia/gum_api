@@ -27,6 +27,10 @@ function parseBody(req: Request): any {
     if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  // Phase 48 — DB check constraint only allows: course, order, enrollment,
+  // payment, webinar, bundle (or NULL). The frontend sends 'general' when
+  // the ticket isn't linked to a specific entity — convert to NULL.
+  if (body.related_type === 'general') body.related_type = null;
   return body;
 }
 
