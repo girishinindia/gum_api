@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
+import { config } from '../../config';
+import { uploadRawFile, processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -60,7 +62,6 @@ export async function create(req: Request, res: Response) {
 
   // Set uploaded_by from current user
   body.uploaded_by = req.user!.id;
-  body.created_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select().single();
   if (e) return err(res, e.message, 500);
@@ -70,16 +71,73 @@ export async function create(req: Request, res: Response) {
   return ok(res, data, 'Attachment created', 201);
 }
 
+// POST /ticket-attachments/upload
+// Accepts multipart/form-data with field "file" + "ticket_id" (+ optional "message_id")
+export async function upload(req: Request, res: Response) {
+  const ticketId = toIntOrNull(req.body.ticket_id);
+  if (!ticketId) return err(res, 'ticket_id is required', 400);
+
+  if (!req.file) return err(res, 'No file provided', 400);
+
+  const messageId = toIntOrNull(req.body.message_id);
+
+  // Upload to Bunny CDN
+  const ext = req.file.originalname.split('.').pop() || 'bin';
+  const isImage = req.file.mimetype.startsWith('image/');
+  const path = `support-tickets/ticket-${ticketId}/${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+  let fileUrl: string;
+  try {
+    fileUrl = isImage
+      ? await processAndUploadImage(req.file.buffer, path, { width: 1600, height: 1600, quality: 85 })
+      : await uploadRawFile(req.file.buffer, path);
+  } catch (uploadErr: any) {
+    return err(res, `File upload failed: ${uploadErr.message}`, 500);
+  }
+
+  // Insert metadata into DB
+  const row: any = {
+    ticket_id: ticketId,
+    file_name: req.file.originalname,
+    file_url: fileUrl,
+    file_size: req.file.size,
+    file_type: req.file.mimetype,
+    uploaded_by: req.user!.id,
+  };
+  if (messageId) row.message_id = messageId;
+
+  const { data, error: e } = await supabase.from(TABLE).insert(row).select().single();
+  if (e) return err(res, e.message, 500);
+
+  await clearCache();
+  logAdmin({ actorId: req.user!.id, action: 'ticket_attachment_uploaded', targetType: 'ticket_attachment', targetId: data.id, targetName: data.file_name, ip: getClientIp(req) });
+  return ok(res, data, 'Attachment uploaded', 201);
+}
+
+// Helper: extract Bunny storage path from CDN URL
+function extractBunnyPath(url: string): string {
+  try {
+    const cdnBase = config.bunny.cdnUrl.replace(/\/$/, '');
+    if (url.startsWith(cdnBase)) return url.replace(cdnBase + '/', '');
+    return new URL(url).pathname.replace(/^\//, '');
+  } catch { return url; }
+}
+
 // DELETE /ticket-attachments/:id (permanent only)
 export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
-  const { data: old } = await supabase.from(TABLE).select('id, file_name').eq('id', id).single();
+  const { data: old } = await supabase.from(TABLE).select('id, file_name, file_url').eq('id', id).single();
   if (!old) return err(res, 'Ticket attachment not found', 404);
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) {
     if (e.message?.includes('violates foreign key constraint')) return err(res, 'Cannot delete — this record is in use. Remove referencing records first.', 409);
     return err(res, e.message, 500);
+  }
+
+  // Clean up file from Bunny CDN
+  if (old.file_url) {
+    try { await deleteImage(extractBunnyPath(old.file_url)); } catch {}
   }
 
   await clearCache();

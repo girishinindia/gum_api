@@ -71,7 +71,6 @@ export async function create(req: Request, res: Response) {
   // Set sender from current user
   body.sender_id = req.user!.id;
   body.sender_type = 'admin';
-  body.created_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -92,7 +91,6 @@ export async function update(req: Request, res: Response) {
 
   const updates = parseBody(req);
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
-  updates.updated_by = req.user!.id;
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
