@@ -820,34 +820,136 @@ export async function removeMiniProjectFile(req: Request, res: Response) {
   return ok(res, data, 'File removed');
 }
 
-// ───────────────────────── IMPORT COURSE STRUCTURE ─────────────────────────
+// ───────────────────────── IMPORT COURSE (FULL) ─────────────────────────
 
 /**
- * Parse a tab-indented .txt file into a module → chapter → topic tree.
+ * Full course import from a single .txt file with [SECTION] markers.
  *
- * Format:
- *   0 tabs = Module title
- *   1 tab  = Chapter title
- *   2 tabs = Topic title | topic_type
+ * Supported sections (all optional except [CURRICULUM]):
+ *   [COURSE]      — key:value pairs for course metadata
+ *   [HIGHLIGHTS]  — kind:text lines (prerequisite, outcome, skill, audience, requirement)
+ *   [FAQ]         — Q:/A: pairs
+ *   [CURRICULUM]  — tab-indented module → chapter → topic tree
  *
- * Optional property lines (extra indent below any heading):
- *   summary: text
- *   is_free_preview: true
- *   points: 10
- *   youtube_url: https://...
- *   id: 42          (for update mode)
+ * If no section markers are found, the entire file is treated as [CURRICULUM]
+ * (backwards compatible with the original import format).
  *
  * Lines starting with # are comments. Blank lines ignored.
  */
+
+// ── Parsed types ──
 interface ParsedImportTopic { title: string; topic_type: string; id?: number; summary?: string; is_free_preview?: boolean; points?: number; youtube_url?: string; line: number; }
 interface ParsedImportChapter { title: string; id?: number; summary?: string; topics: ParsedImportTopic[]; line: number; }
 interface ParsedImportModule { title: string; id?: number; summary?: string; chapters: ParsedImportChapter[]; line: number; }
-interface CourseTreeParseResult { modules: ParsedImportModule[]; errors: string[]; }
+interface ParsedHighlight { kind: string; text: string; }
+interface ParsedFaq { question: string; answer: string; }
+interface FullImportParseResult {
+  courseFields: Record<string, string>;
+  highlights: ParsedHighlight[];
+  faqs: ParsedFaq[];
+  modules: ParsedImportModule[];
+  errors: string[];
+  hasCourseSection: boolean;
+  hasHighlightsSection: boolean;
+  hasFaqSection: boolean;
+  hasCurriculumSection: boolean;
+}
 
 const VALID_TOPIC_TYPES = ['video', 'article', 'quiz', 'exercise', 'project'];
+const VALID_HIGHLIGHT_KINDS = ['prerequisite', 'outcome', 'skill', 'audience', 'requirement'];
+const VALID_COURSE_KEYS = ['title', 'subtitle', 'short_intro', 'long_intro', 'level', 'price', 'original_price', 'is_free', 'has_certificate', 'category_id', 'language_id', 'requires_verification'];
 
-function parseCourseTree(content: string): CourseTreeParseResult {
+/**
+ * Split raw file content by [SECTION] markers into named blocks.
+ * If no markers found, the entire content goes to 'CURRICULUM'.
+ */
+function splitSections(content: string): { sections: Record<string, string>; hasMarkers: boolean } {
+  const markerRe = /^\[([A-Z_]+)\]\s*$/;
   const lines = content.split(/\r?\n/);
+  const sections: Record<string, string> = {};
+  let currentSection: string | null = null;
+  let currentLines: string[] = [];
+  let hasMarkers = false;
+
+  for (const line of lines) {
+    const m = line.trim().match(markerRe);
+    if (m) {
+      hasMarkers = true;
+      if (currentSection) sections[currentSection] = currentLines.join('\n');
+      currentSection = m[1];
+      currentLines = [];
+    } else {
+      currentLines.push(line);
+    }
+  }
+  if (currentSection) sections[currentSection] = currentLines.join('\n');
+  if (!hasMarkers) sections['CURRICULUM'] = content;
+  return { sections, hasMarkers };
+}
+
+/** Parse [COURSE] section: key:value lines → record */
+function parseCourseSection(block: string): { fields: Record<string, string>; errors: string[] } {
+  const fields: Record<string, string> = {};
+  const errors: string[] = [];
+  for (const raw of block.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx <= 0) { errors.push(`[COURSE] Invalid line (expected key:value): "${trimmed}"`); continue; }
+    const key = trimmed.slice(0, colonIdx).trim().toLowerCase();
+    const val = trimmed.slice(colonIdx + 1).trim();
+    if (!VALID_COURSE_KEYS.includes(key)) { errors.push(`[COURSE] Unknown key "${key}"`); continue; }
+    fields[key] = val;
+  }
+  return { fields, errors };
+}
+
+/** Parse [HIGHLIGHTS] section: kind:text lines */
+function parseHighlightsSection(block: string): { highlights: ParsedHighlight[]; errors: string[] } {
+  const highlights: ParsedHighlight[] = [];
+  const errors: string[] = [];
+  for (const raw of block.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx <= 0) { errors.push(`[HIGHLIGHTS] Invalid line (expected kind:text): "${trimmed}"`); continue; }
+    const kind = trimmed.slice(0, colonIdx).trim().toLowerCase();
+    const text = trimmed.slice(colonIdx + 1).trim();
+    if (!VALID_HIGHLIGHT_KINDS.includes(kind)) { errors.push(`[HIGHLIGHTS] Unknown kind "${kind}". Valid: ${VALID_HIGHLIGHT_KINDS.join(', ')}`); continue; }
+    if (!text) { errors.push(`[HIGHLIGHTS] Empty text for kind "${kind}"`); continue; }
+    highlights.push({ kind, text });
+  }
+  return { highlights, errors };
+}
+
+/** Parse [FAQ] section: Q:/A: pairs */
+function parseFaqSection(block: string): { faqs: ParsedFaq[]; errors: string[] } {
+  const faqs: ParsedFaq[] = [];
+  const errors: string[] = [];
+  let currentQ: string | null = null;
+  for (const raw of block.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (/^Q\s*:\s*/i.test(trimmed)) {
+      if (currentQ !== null) errors.push(`[FAQ] Question without answer: "${currentQ}"`);
+      currentQ = trimmed.replace(/^Q\s*:\s*/i, '').trim();
+    } else if (/^A\s*:\s*/i.test(trimmed)) {
+      const answer = trimmed.replace(/^A\s*:\s*/i, '').trim();
+      if (currentQ === null) { errors.push(`[FAQ] Answer without question: "${answer}"`); continue; }
+      if (!answer) { errors.push(`[FAQ] Empty answer for question: "${currentQ}"`); currentQ = null; continue; }
+      faqs.push({ question: currentQ, answer });
+      currentQ = null;
+    } else {
+      errors.push(`[FAQ] Invalid line (expected Q: or A:): "${trimmed}"`);
+    }
+  }
+  if (currentQ !== null) errors.push(`[FAQ] Question without answer: "${currentQ}"`);
+  return { faqs, errors };
+}
+
+/** Parse [CURRICULUM] section: tab-indented module → chapter → topic tree */
+function parseCurriculumSection(block: string): { modules: ParsedImportModule[]; errors: string[] } {
+  const lines = block.split(/\r?\n/);
   const modules: ParsedImportModule[] = [];
   const errors: string[] = [];
 
@@ -880,7 +982,7 @@ function parseCourseTree(content: string): CourseTreeParseResult {
       const key = propMatch[1].toLowerCase();
       const val = propMatch[2].trim();
       const target = lastEntity === 'module' ? curMod : lastEntity === 'chapter' ? curCh : lastEntity === 'topic' ? curTopic : null;
-      if (!target) { errors.push(`Line ${lineNum}: Property "${key}" has no parent entity`); continue; }
+      if (!target) { errors.push(`[CURRICULUM] Line ${lineNum}: Property "${key}" has no parent entity`); continue; }
       if (key === 'summary') (target as any).summary = val;
       else if (key === 'is_free_preview') (target as any).is_free_preview = val === 'true' || val === '1' || val === 'yes';
       else if (key === 'points') (target as any).points = parseInt(val) || undefined;
@@ -895,12 +997,12 @@ function parseCourseTree(content: string): CourseTreeParseResult {
       curCh = null; curTopic = null; lastEntity = 'module';
       modules.push(curMod);
     } else if (tabs === 1) {
-      if (!curMod) { errors.push(`Line ${lineNum}: Chapter "${text}" has no parent module`); continue; }
+      if (!curMod) { errors.push(`[CURRICULUM] Line ${lineNum}: Chapter "${text}" has no parent module`); continue; }
       curCh = { title: text, topics: [], line: lineNum };
       curTopic = null; lastEntity = 'chapter';
       curMod.chapters.push(curCh);
     } else if (tabs === 2) {
-      if (!curCh) { errors.push(`Line ${lineNum}: Topic "${text}" has no parent chapter`); continue; }
+      if (!curCh) { errors.push(`[CURRICULUM] Line ${lineNum}: Topic "${text}" has no parent chapter`); continue; }
       const pipeIdx = text.lastIndexOf('|');
       let title = text;
       let topicType = 'video';
@@ -915,104 +1017,233 @@ function parseCourseTree(content: string): CourseTreeParseResult {
       lastEntity = 'topic';
       curCh.topics.push(curTopic);
     } else {
-      errors.push(`Line ${lineNum}: Too many indent levels (max 2 tabs). Got ${tabs} tabs for "${text}"`);
+      errors.push(`[CURRICULUM] Line ${lineNum}: Too many indent levels (max 2 tabs). Got ${tabs} tabs for "${text}"`);
     }
   }
 
-  if (modules.length === 0 && errors.length === 0) {
-    errors.push('No modules found in file. Make sure module names have no leading tabs.');
-  }
   return { modules, errors };
+}
+
+/** Master parser — splits by section markers, delegates to sub-parsers */
+function parseFullCourseImport(content: string): FullImportParseResult {
+  const { sections, hasMarkers } = splitSections(content);
+  const errors: string[] = [];
+
+  let courseFields: Record<string, string> = {};
+  let highlights: ParsedHighlight[] = [];
+  let faqs: ParsedFaq[] = [];
+  let modules: ParsedImportModule[] = [];
+
+  const hasCourseSection = !!sections['COURSE'];
+  const hasHighlightsSection = !!sections['HIGHLIGHTS'];
+  const hasFaqSection = !!sections['FAQ'];
+  const hasCurriculumSection = !!sections['CURRICULUM'];
+
+  if (hasCourseSection) {
+    const r = parseCourseSection(sections['COURSE']);
+    courseFields = r.fields;
+    errors.push(...r.errors);
+  }
+  if (hasHighlightsSection) {
+    const r = parseHighlightsSection(sections['HIGHLIGHTS']);
+    highlights = r.highlights;
+    errors.push(...r.errors);
+  }
+  if (hasFaqSection) {
+    const r = parseFaqSection(sections['FAQ']);
+    faqs = r.faqs;
+    errors.push(...r.errors);
+  }
+  if (hasCurriculumSection) {
+    const r = parseCurriculumSection(sections['CURRICULUM']);
+    modules = r.modules;
+    errors.push(...r.errors);
+    if (r.modules.length === 0 && r.errors.length === 0) {
+      errors.push('[CURRICULUM] No modules found. Module names must have no leading tabs.');
+    }
+  }
+
+  // Must have at least one meaningful section
+  if (!hasCourseSection && !hasHighlightsSection && !hasFaqSection && !hasCurriculumSection) {
+    errors.push('No valid sections found. Use [COURSE], [HIGHLIGHTS], [FAQ], or [CURRICULUM] markers.');
+  }
+
+  return { courseFields, highlights, faqs, modules, errors, hasCourseSection, hasHighlightsSection, hasFaqSection, hasCurriculumSection };
 }
 
 /**
  * POST /authoring/courses/:id/import-structure
- * Accepts multipart .txt file → parses → creates/updates units in authoring_units.
+ * Accepts multipart .txt file → parses sections → updates course metadata,
+ * syncs highlights/FAQs, creates/updates curriculum units.
  */
 export async function importStructure(req: Request, res: Response) {
   try {
     const courseId = parseInt(req.params.id);
     if (!courseId) return err(res, 'Invalid course ID', 400);
 
-    const { data: course } = await supabase.from('authoring_courses').select('id, instructor_id, status').eq('id', courseId).single();
+    const { data: course } = await supabase.from('authoring_courses').select('*').eq('id', courseId).single();
     if (!course) return err(res, 'Course not found', 404);
 
     const file = (req as any).file;
     if (!file) return err(res, '.txt file is required', 400);
 
     const content = file.buffer.toString('utf-8');
-    const parsed = parseCourseTree(content);
+    const parsed = parseFullCourseImport(content);
 
     if (parsed.errors.length > 0) {
       return err(res, `Parsing errors: ${parsed.errors.join('; ')}`, 400);
     }
-    if (parsed.modules.length === 0) {
-      return err(res, 'No modules found in file', 400);
-    }
 
     const userId = req.user!.id;
-    const report = { created: { modules: 0, chapters: 0, topics: 0 }, updated: { modules: 0, chapters: 0, topics: 0 }, errors: [] as string[] };
+    const report = {
+      course: null as null | 'updated',
+      highlights: { added: 0, removed: 0 },
+      faqs: { added: 0, removed: 0 },
+      created: { modules: 0, chapters: 0, topics: 0 },
+      updated: { modules: 0, chapters: 0, topics: 0 },
+      errors: [] as string[],
+    };
 
-    for (let mi = 0; mi < parsed.modules.length; mi++) {
-      const pm = parsed.modules[mi];
-      let moduleId: number;
+    // ── 1. [COURSE] — PATCH course metadata ──
+    if (parsed.hasCourseSection && Object.keys(parsed.courseFields).length > 0) {
+      const f = parsed.courseFields;
+      const upd: any = { updated_by: userId };
+      if (f.title) upd.title = f.title;
+      if (f.subtitle) upd.subtitle = f.subtitle;
+      if (f.short_intro) upd.short_intro = f.short_intro;
+      if (f.long_intro) upd.long_intro = f.long_intro;
+      if (f.level) upd.level = f.level;
+      if (f.price !== undefined) upd.price = toNumOrNull(f.price);
+      if (f.original_price !== undefined) upd.original_price = toNumOrNull(f.original_price);
+      if (f.is_free !== undefined) upd.is_free = f.is_free === 'true' || f.is_free === '1' || f.is_free === 'yes';
+      if (f.has_certificate !== undefined) upd.has_certificate = f.has_certificate === 'true' || f.has_certificate === '1' || f.has_certificate === 'yes';
+      if (f.requires_verification !== undefined) upd.requires_verification = f.requires_verification === 'true' || f.requires_verification === '1' || f.requires_verification === 'yes';
+      if (f.category_id) upd.category_id = toIntOrNull(f.category_id);
+      if (f.language_id) upd.language_id = toIntOrNull(f.language_id);
 
-      if (pm.id) {
-        const updates: any = { title: pm.title, display_order: mi + 1, updated_by: userId };
-        if (pm.summary !== undefined) updates.summary = pm.summary;
-        const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pm.id).eq('authoring_course_id', courseId).eq('unit_type', 'module').select('id').single();
-        if (e || !data) { report.errors.push(`Module "${pm.title}" (id:${pm.id}) update failed: ${e?.message || 'not found'}`); continue; }
-        moduleId = data.id;
-        report.updated.modules++;
-      } else {
-        const row: any = { authoring_course_id: courseId, unit_type: 'module', title: pm.title, display_order: mi + 1, created_by: userId };
-        if (pm.summary) row.summary = pm.summary;
-        const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
-        if (e || !data) { report.errors.push(`Module "${pm.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
-        moduleId = data.id;
-        report.created.modules++;
+      // Validate basics
+      const valErr = validateCourseBasics(upd, course);
+      if (valErr) { report.errors.push(`[COURSE] ${valErr}`); } else {
+        const { error: e } = await supabase.from('authoring_courses').update(upd).eq('id', courseId);
+        if (e) report.errors.push(`[COURSE] Update failed: ${e.message}`);
+        else report.course = 'updated';
       }
+    }
 
-      for (let ci = 0; ci < pm.chapters.length; ci++) {
-        const pc = pm.chapters[ci];
-        let chapterId: number;
+    // ── 2. [HIGHLIGHTS] — Replace all existing → insert new ──
+    if (parsed.hasHighlightsSection) {
+      // Count existing for reporting
+      const { data: existing } = await supabase.from('authoring_course_highlights').select('id').eq('authoring_course_id', courseId);
+      const oldCount = existing?.length || 0;
 
-        if (pc.id) {
-          const updates: any = { title: pc.title, display_order: ci + 1, updated_by: userId };
-          if (pc.summary !== undefined) updates.summary = pc.summary;
-          const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pc.id).eq('authoring_course_id', courseId).eq('unit_type', 'chapter').select('id').single();
-          if (e || !data) { report.errors.push(`Chapter "${pc.title}" (id:${pc.id}) update failed: ${e?.message || 'not found'}`); continue; }
-          chapterId = data.id;
-          report.updated.chapters++;
+      // Delete all existing highlights for this course
+      if (oldCount > 0) {
+        const { error: de } = await supabase.from('authoring_course_highlights').delete().eq('authoring_course_id', courseId);
+        if (de) report.errors.push(`[HIGHLIGHTS] Failed to clear old highlights: ${de.message}`);
+      }
+      report.highlights.removed = oldCount;
+
+      // Insert new highlights
+      if (parsed.highlights.length > 0) {
+        const rows = parsed.highlights.map((h, i) => ({
+          authoring_course_id: courseId,
+          kind: h.kind,
+          text: h.text,
+          display_order: i + 1,
+        }));
+        const { error: ie } = await supabase.from('authoring_course_highlights').insert(rows);
+        if (ie) report.errors.push(`[HIGHLIGHTS] Insert failed: ${ie.message}`);
+        else report.highlights.added = rows.length;
+      }
+    }
+
+    // ── 3. [FAQ] — Replace all existing → insert new ──
+    if (parsed.hasFaqSection) {
+      const { data: existing } = await supabase.from('authoring_faqs').select('id').eq('authoring_course_id', courseId);
+      const oldCount = existing?.length || 0;
+
+      if (oldCount > 0) {
+        const { error: de } = await supabase.from('authoring_faqs').delete().eq('authoring_course_id', courseId);
+        if (de) report.errors.push(`[FAQ] Failed to clear old FAQs: ${de.message}`);
+      }
+      report.faqs.removed = oldCount;
+
+      if (parsed.faqs.length > 0) {
+        const rows = parsed.faqs.map((f, i) => ({
+          authoring_course_id: courseId,
+          question: f.question,
+          answer: f.answer,
+          display_order: i + 1,
+        }));
+        const { error: ie } = await supabase.from('authoring_faqs').insert(rows);
+        if (ie) report.errors.push(`[FAQ] Insert failed: ${ie.message}`);
+        else report.faqs.added = rows.length;
+      }
+    }
+
+    // ── 4. [CURRICULUM] — Create/update modules → chapters → topics ──
+    if (parsed.hasCurriculumSection && parsed.modules.length > 0) {
+      for (let mi = 0; mi < parsed.modules.length; mi++) {
+        const pm = parsed.modules[mi];
+        let moduleId: number;
+
+        if (pm.id) {
+          const updates: any = { title: pm.title, display_order: mi + 1, updated_by: userId };
+          if (pm.summary !== undefined) updates.summary = pm.summary;
+          const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pm.id).eq('authoring_course_id', courseId).eq('unit_type', 'module').select('id').single();
+          if (e || !data) { report.errors.push(`Module "${pm.title}" (id:${pm.id}) update failed: ${e?.message || 'not found'}`); continue; }
+          moduleId = data.id;
+          report.updated.modules++;
         } else {
-          const row: any = { authoring_course_id: courseId, parent_unit_id: moduleId, unit_type: 'chapter', title: pc.title, display_order: ci + 1, created_by: userId };
-          if (pc.summary) row.summary = pc.summary;
+          const row: any = { authoring_course_id: courseId, unit_type: 'module', title: pm.title, display_order: mi + 1, created_by: userId };
+          if (pm.summary) row.summary = pm.summary;
           const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
-          if (e || !data) { report.errors.push(`Chapter "${pc.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
-          chapterId = data.id;
-          report.created.chapters++;
+          if (e || !data) { report.errors.push(`Module "${pm.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
+          moduleId = data.id;
+          report.created.modules++;
         }
 
-        for (let ti = 0; ti < pc.topics.length; ti++) {
-          const pt = pc.topics[ti];
+        for (let ci = 0; ci < pm.chapters.length; ci++) {
+          const pc = pm.chapters[ci];
+          let chapterId: number;
 
-          if (pt.id) {
-            const updates: any = { title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, updated_by: userId };
-            if (pt.summary !== undefined) updates.summary = pt.summary;
-            if (pt.is_free_preview !== undefined) updates.is_free_preview = pt.is_free_preview;
-            if (pt.points !== undefined) updates.points = pt.points;
-            if (pt.youtube_url !== undefined) updates.youtube_url = pt.youtube_url;
-            const { error: e } = await supabase.from('authoring_units').update(updates).eq('id', pt.id).eq('authoring_course_id', courseId).eq('unit_type', 'topic');
-            if (e) { report.errors.push(`Topic "${pt.title}" (id:${pt.id}) update failed: ${e.message}`); continue; }
-            report.updated.topics++;
+          if (pc.id) {
+            const updates: any = { title: pc.title, display_order: ci + 1, updated_by: userId };
+            if (pc.summary !== undefined) updates.summary = pc.summary;
+            const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pc.id).eq('authoring_course_id', courseId).eq('unit_type', 'chapter').select('id').single();
+            if (e || !data) { report.errors.push(`Chapter "${pc.title}" (id:${pc.id}) update failed: ${e?.message || 'not found'}`); continue; }
+            chapterId = data.id;
+            report.updated.chapters++;
           } else {
-            const row: any = { authoring_course_id: courseId, parent_unit_id: chapterId, unit_type: 'topic', title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, created_by: userId, is_free_preview: pt.is_free_preview || false };
-            if (pt.summary) row.summary = pt.summary;
-            if (pt.points) row.points = pt.points;
-            if (pt.youtube_url) row.youtube_url = pt.youtube_url;
-            const { error: e } = await supabase.from('authoring_units').insert(row);
-            if (e) { report.errors.push(`Topic "${pt.title}" creation failed: ${e.message}`); continue; }
-            report.created.topics++;
+            const row: any = { authoring_course_id: courseId, parent_unit_id: moduleId, unit_type: 'chapter', title: pc.title, display_order: ci + 1, created_by: userId };
+            if (pc.summary) row.summary = pc.summary;
+            const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
+            if (e || !data) { report.errors.push(`Chapter "${pc.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
+            chapterId = data.id;
+            report.created.chapters++;
+          }
+
+          for (let ti = 0; ti < pc.topics.length; ti++) {
+            const pt = pc.topics[ti];
+
+            if (pt.id) {
+              const updates: any = { title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, updated_by: userId };
+              if (pt.summary !== undefined) updates.summary = pt.summary;
+              if (pt.is_free_preview !== undefined) updates.is_free_preview = pt.is_free_preview;
+              if (pt.points !== undefined) updates.points = pt.points;
+              if (pt.youtube_url !== undefined) updates.youtube_url = pt.youtube_url;
+              const { error: e } = await supabase.from('authoring_units').update(updates).eq('id', pt.id).eq('authoring_course_id', courseId).eq('unit_type', 'topic');
+              if (e) { report.errors.push(`Topic "${pt.title}" (id:${pt.id}) update failed: ${e.message}`); continue; }
+              report.updated.topics++;
+            } else {
+              const row: any = { authoring_course_id: courseId, parent_unit_id: chapterId, unit_type: 'topic', title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, created_by: userId, is_free_preview: pt.is_free_preview || false };
+              if (pt.summary) row.summary = pt.summary;
+              if (pt.points) row.points = pt.points;
+              if (pt.youtube_url) row.youtube_url = pt.youtube_url;
+              const { error: e } = await supabase.from('authoring_units').insert(row);
+              if (e) { report.errors.push(`Topic "${pt.title}" creation failed: ${e.message}`); continue; }
+              report.created.topics++;
+            }
           }
         }
       }
@@ -1020,11 +1251,18 @@ export async function importStructure(req: Request, res: Response) {
 
     await requireReApproval(courseId);
 
+    // Build summary message
+    const parts: string[] = [];
+    if (report.course) parts.push('Course details updated');
+    if (parsed.hasHighlightsSection) parts.push(`Highlights: ${report.highlights.added} added, ${report.highlights.removed} old removed`);
+    if (parsed.hasFaqSection) parts.push(`FAQs: ${report.faqs.added} added, ${report.faqs.removed} old removed`);
     const totalCreated = report.created.modules + report.created.chapters + report.created.topics;
     const totalUpdated = report.updated.modules + report.updated.chapters + report.updated.topics;
-    const msg = `Imported: ${totalCreated} created, ${totalUpdated} updated${report.errors.length ? `, ${report.errors.length} errors` : ''}`;
+    if (totalCreated || totalUpdated) parts.push(`Curriculum: ${totalCreated} created, ${totalUpdated} updated`);
+    if (report.errors.length) parts.push(`${report.errors.length} errors`);
+    const msg = parts.join('. ') || 'No changes made';
 
-    logAdmin({ actorId: userId, action: 'course_structure_imported', targetType: 'authoring_course', targetId: courseId, targetName: `Course #${courseId}`, ip: getClientIp(req), metadata: { created: report.created, updated: report.updated } });
+    logAdmin({ actorId: userId, action: 'course_structure_imported', targetType: 'authoring_course', targetId: courseId, targetName: `Course #${courseId}`, ip: getClientIp(req), metadata: { course: report.course, highlights: report.highlights, faqs: report.faqs, created: report.created, updated: report.updated } });
 
     return ok(res, { report }, msg);
   } catch (e: any) {
