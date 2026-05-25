@@ -178,9 +178,7 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
     const hasVideo = t.video || t.youtube_url;
     const hasFile = t.exercise_pdf || t.assignment_pdf || t.article_pdf
       || t.project_pdf || t.project_solution_file_url;
-    if (t.topic_type === 'video' && !hasVideo) {
-      p.push(`Topic "${t.title}" needs a video or YouTube URL`);
-    } else if (!hasVideo && !hasFile) {
+    if (!hasVideo && !hasFile) {
       p.push(`Topic "${t.title}" has no content uploaded`);
     }
   }
