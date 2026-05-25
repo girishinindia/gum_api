@@ -838,9 +838,9 @@ export async function removeMiniProjectFile(req: Request, res: Response) {
  */
 
 // ── Parsed types ──
-interface ParsedImportTopic { title: string; topic_type: string; id?: number; summary?: string; is_free_preview?: boolean; points?: number; youtube_url?: string; line: number; }
-interface ParsedImportChapter { title: string; id?: number; summary?: string; topics: ParsedImportTopic[]; line: number; }
-interface ParsedImportModule { title: string; id?: number; summary?: string; chapters: ParsedImportChapter[]; line: number; }
+interface ParsedImportTopic { title: string; topic_type: string; summary?: string; is_free_preview?: boolean; points?: number; youtube_url?: string; line: number; }
+interface ParsedImportChapter { title: string; summary?: string; topics: ParsedImportTopic[]; line: number; }
+interface ParsedImportModule { title: string; summary?: string; chapters: ParsedImportChapter[]; line: number; }
 interface ParsedHighlight { kind: string; text: string; }
 interface ParsedFaq { question: string; answer: string; }
 interface FullImportParseResult {
@@ -977,7 +977,7 @@ function parseCurriculumSection(block: string): { modules: ParsedImportModule[];
     if (!text) continue;
 
     // Check if this is a property line (key: value)
-    const propMatch = text.match(/^(summary|is_free_preview|points|youtube_url|id)\s*:\s*(.*)$/i);
+    const propMatch = text.match(/^(summary|is_free_preview|points|youtube_url)\s*:\s*(.*)$/i);
     if (propMatch) {
       const key = propMatch[1].toLowerCase();
       const val = propMatch[2].trim();
@@ -987,7 +987,6 @@ function parseCurriculumSection(block: string): { modules: ParsedImportModule[];
       else if (key === 'is_free_preview') (target as any).is_free_preview = val === 'true' || val === '1' || val === 'yes';
       else if (key === 'points') (target as any).points = parseInt(val) || undefined;
       else if (key === 'youtube_url') (target as any).youtube_url = val;
-      else if (key === 'id') (target as any).id = parseInt(val) || undefined;
       continue;
     }
 
@@ -1100,7 +1099,6 @@ export async function importStructure(req: Request, res: Response) {
       highlights: { added: 0, removed: 0 },
       faqs: { added: 0, removed: 0 },
       created: { modules: 0, chapters: 0, topics: 0 },
-      updated: { modules: 0, chapters: 0, topics: 0 },
       errors: [] as string[],
     };
 
@@ -1181,69 +1179,33 @@ export async function importStructure(req: Request, res: Response) {
       }
     }
 
-    // ── 4. [CURRICULUM] — Create/update modules → chapters → topics ──
+    // ── 4. [CURRICULUM] — Create modules → chapters → topics (create-only, no updates) ──
     if (parsed.hasCurriculumSection && parsed.modules.length > 0) {
       for (let mi = 0; mi < parsed.modules.length; mi++) {
         const pm = parsed.modules[mi];
-        let moduleId: number;
-
-        if (pm.id) {
-          const updates: any = { title: pm.title, display_order: mi + 1, updated_by: userId };
-          if (pm.summary !== undefined) updates.summary = pm.summary;
-          const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pm.id).eq('authoring_course_id', courseId).eq('unit_type', 'module').select('id').single();
-          if (e || !data) { report.errors.push(`Module "${pm.title}" (id:${pm.id}) update failed: ${e?.message || 'not found'}`); continue; }
-          moduleId = data.id;
-          report.updated.modules++;
-        } else {
-          const row: any = { authoring_course_id: courseId, unit_type: 'module', title: pm.title, display_order: mi + 1, created_by: userId };
-          if (pm.summary) row.summary = pm.summary;
-          const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
-          if (e || !data) { report.errors.push(`Module "${pm.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
-          moduleId = data.id;
-          report.created.modules++;
-        }
+        const modRow: any = { authoring_course_id: courseId, unit_type: 'module', title: pm.title, display_order: mi + 1, created_by: userId };
+        if (pm.summary) modRow.summary = pm.summary;
+        const { data: modData, error: modErr } = await supabase.from('authoring_units').insert(modRow).select('id').single();
+        if (modErr || !modData) { report.errors.push(`Module "${pm.title}" creation failed: ${modErr?.message || 'unknown'}`); continue; }
+        report.created.modules++;
 
         for (let ci = 0; ci < pm.chapters.length; ci++) {
           const pc = pm.chapters[ci];
-          let chapterId: number;
-
-          if (pc.id) {
-            const updates: any = { title: pc.title, display_order: ci + 1, updated_by: userId };
-            if (pc.summary !== undefined) updates.summary = pc.summary;
-            const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pc.id).eq('authoring_course_id', courseId).eq('unit_type', 'chapter').select('id').single();
-            if (e || !data) { report.errors.push(`Chapter "${pc.title}" (id:${pc.id}) update failed: ${e?.message || 'not found'}`); continue; }
-            chapterId = data.id;
-            report.updated.chapters++;
-          } else {
-            const row: any = { authoring_course_id: courseId, parent_unit_id: moduleId, unit_type: 'chapter', title: pc.title, display_order: ci + 1, created_by: userId };
-            if (pc.summary) row.summary = pc.summary;
-            const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
-            if (e || !data) { report.errors.push(`Chapter "${pc.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
-            chapterId = data.id;
-            report.created.chapters++;
-          }
+          const chRow: any = { authoring_course_id: courseId, parent_unit_id: modData.id, unit_type: 'chapter', title: pc.title, display_order: ci + 1, created_by: userId };
+          if (pc.summary) chRow.summary = pc.summary;
+          const { data: chData, error: chErr } = await supabase.from('authoring_units').insert(chRow).select('id').single();
+          if (chErr || !chData) { report.errors.push(`Chapter "${pc.title}" creation failed: ${chErr?.message || 'unknown'}`); continue; }
+          report.created.chapters++;
 
           for (let ti = 0; ti < pc.topics.length; ti++) {
             const pt = pc.topics[ti];
-
-            if (pt.id) {
-              const updates: any = { title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, updated_by: userId };
-              if (pt.summary !== undefined) updates.summary = pt.summary;
-              if (pt.is_free_preview !== undefined) updates.is_free_preview = pt.is_free_preview;
-              if (pt.points !== undefined) updates.points = pt.points;
-              if (pt.youtube_url !== undefined) updates.youtube_url = pt.youtube_url;
-              const { error: e } = await supabase.from('authoring_units').update(updates).eq('id', pt.id).eq('authoring_course_id', courseId).eq('unit_type', 'topic');
-              if (e) { report.errors.push(`Topic "${pt.title}" (id:${pt.id}) update failed: ${e.message}`); continue; }
-              report.updated.topics++;
-            } else {
-              const row: any = { authoring_course_id: courseId, parent_unit_id: chapterId, unit_type: 'topic', title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, created_by: userId, is_free_preview: pt.is_free_preview || false };
-              if (pt.summary) row.summary = pt.summary;
-              if (pt.points) row.points = pt.points;
-              if (pt.youtube_url) row.youtube_url = pt.youtube_url;
-              const { error: e } = await supabase.from('authoring_units').insert(row);
-              if (e) { report.errors.push(`Topic "${pt.title}" creation failed: ${e.message}`); continue; }
-              report.created.topics++;
-            }
+            const tRow: any = { authoring_course_id: courseId, parent_unit_id: chData.id, unit_type: 'topic', title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, created_by: userId, is_free_preview: pt.is_free_preview || false };
+            if (pt.summary) tRow.summary = pt.summary;
+            if (pt.points) tRow.points = pt.points;
+            if (pt.youtube_url) tRow.youtube_url = pt.youtube_url;
+            const { error: tErr } = await supabase.from('authoring_units').insert(tRow);
+            if (tErr) { report.errors.push(`Topic "${pt.title}" creation failed: ${tErr.message}`); continue; }
+            report.created.topics++;
           }
         }
       }
@@ -1257,12 +1219,11 @@ export async function importStructure(req: Request, res: Response) {
     if (parsed.hasHighlightsSection) parts.push(`Highlights: ${report.highlights.added} added, ${report.highlights.removed} old removed`);
     if (parsed.hasFaqSection) parts.push(`FAQs: ${report.faqs.added} added, ${report.faqs.removed} old removed`);
     const totalCreated = report.created.modules + report.created.chapters + report.created.topics;
-    const totalUpdated = report.updated.modules + report.updated.chapters + report.updated.topics;
-    if (totalCreated || totalUpdated) parts.push(`Curriculum: ${totalCreated} created, ${totalUpdated} updated`);
+    if (totalCreated) parts.push(`Curriculum: ${totalCreated} created`);
     if (report.errors.length) parts.push(`${report.errors.length} errors`);
     const msg = parts.join('. ') || 'No changes made';
 
-    logAdmin({ actorId: userId, action: 'course_structure_imported', targetType: 'authoring_course', targetId: courseId, targetName: `Course #${courseId}`, ip: getClientIp(req), metadata: { course: report.course, highlights: report.highlights, faqs: report.faqs, created: report.created, updated: report.updated } });
+    logAdmin({ actorId: userId, action: 'course_structure_imported', targetType: 'authoring_course', targetId: courseId, targetName: `Course #${courseId}`, ip: getClientIp(req), metadata: { course: report.course, highlights: report.highlights, faqs: report.faqs, created: report.created } });
 
     return ok(res, { report }, msg);
   } catch (e: any) {
