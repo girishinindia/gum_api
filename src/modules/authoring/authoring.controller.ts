@@ -167,18 +167,22 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
   }
   if (modules.some(m => !modulesWithTopic.has(m.id))) p.push('Every module needs at least one topic');
 
-  // Every topic must have at least one piece of content (video, PDF, or URL).
-  // Topics can be video, exercise, article, quiz, or project type — each has
-  // different valid content. We just check that SOMETHING is uploaded.
+  // Every topic must have content. Report EACH topic that is missing content
+  // by name so the instructor knows exactly what to fix.
   // Skip orphan/zombie topics — those with parent_unit_id=NULL OR whose parent
   // was soft-deleted (parent id exists in DB but NOT in the filtered `units`
   // array). These show in the "Unassigned" section of the curriculum tree.
   const validUnitIds = new Set(units.map(u => u.id));
   for (const t of topics) {
     if (!t.parent_unit_id || !validUnitIds.has(t.parent_unit_id)) continue;
-    const hasContent = t.video || t.youtube_url || t.exercise_pdf || t.assignment_pdf
-      || t.article_pdf || t.project_pdf || t.project_solution_file_url;
-    if (!hasContent) { p.push('Every topic must have at least one file or video'); break; }
+    const hasVideo = t.video || t.youtube_url;
+    const hasFile = t.exercise_pdf || t.assignment_pdf || t.article_pdf
+      || t.project_pdf || t.project_solution_file_url;
+    if (t.topic_type === 'video' && !hasVideo) {
+      p.push(`Topic "${t.title}" needs a video or YouTube URL`);
+    } else if (!hasVideo && !hasFile) {
+      p.push(`Topic "${t.title}" has no content uploaded`);
+    }
   }
 
   if (!highlights.some(h => h.kind === 'outcome')) p.push('Add at least one outcome (what students will learn)');
