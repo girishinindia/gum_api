@@ -819,3 +819,215 @@ export async function removeMiniProjectFile(req: Request, res: Response) {
   if ((row as any).authoring_course_id) await requireReApproval((row as any).authoring_course_id);
   return ok(res, data, 'File removed');
 }
+
+// ───────────────────────── IMPORT COURSE STRUCTURE ─────────────────────────
+
+/**
+ * Parse a tab-indented .txt file into a module → chapter → topic tree.
+ *
+ * Format:
+ *   0 tabs = Module title
+ *   1 tab  = Chapter title
+ *   2 tabs = Topic title | topic_type
+ *
+ * Optional property lines (extra indent below any heading):
+ *   summary: text
+ *   is_free_preview: true
+ *   points: 10
+ *   youtube_url: https://...
+ *   id: 42          (for update mode)
+ *
+ * Lines starting with # are comments. Blank lines ignored.
+ */
+interface ParsedImportTopic { title: string; topic_type: string; id?: number; summary?: string; is_free_preview?: boolean; points?: number; youtube_url?: string; line: number; }
+interface ParsedImportChapter { title: string; id?: number; summary?: string; topics: ParsedImportTopic[]; line: number; }
+interface ParsedImportModule { title: string; id?: number; summary?: string; chapters: ParsedImportChapter[]; line: number; }
+interface CourseTreeParseResult { modules: ParsedImportModule[]; errors: string[]; }
+
+const VALID_TOPIC_TYPES = ['video', 'article', 'quiz', 'exercise', 'project'];
+
+function parseCourseTree(content: string): CourseTreeParseResult {
+  const lines = content.split(/\r?\n/);
+  const modules: ParsedImportModule[] = [];
+  const errors: string[] = [];
+
+  let curMod: ParsedImportModule | null = null;
+  let curCh: ParsedImportChapter | null = null;
+  let curTopic: ParsedImportTopic | null = null;
+  let lastEntity: 'module' | 'chapter' | 'topic' | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const lineNum = i + 1;
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+
+    // Count leading tabs (also support 4 spaces = 1 tab)
+    let tabs = 0;
+    let j = 0;
+    while (j < raw.length && raw[j] === '\t') { tabs++; j++; }
+    if (tabs === 0 && raw[0] === ' ') {
+      let spaces = 0; let k = 0;
+      while (k < raw.length && raw[k] === ' ') { spaces++; k++; }
+      if (spaces >= 8) tabs = 2; else if (spaces >= 4) tabs = 1;
+      j = k;
+    }
+    const text = raw.slice(j).trim();
+    if (!text) continue;
+
+    // Check if this is a property line (key: value)
+    const propMatch = text.match(/^(summary|is_free_preview|points|youtube_url|id)\s*:\s*(.*)$/i);
+    if (propMatch) {
+      const key = propMatch[1].toLowerCase();
+      const val = propMatch[2].trim();
+      const target = lastEntity === 'module' ? curMod : lastEntity === 'chapter' ? curCh : lastEntity === 'topic' ? curTopic : null;
+      if (!target) { errors.push(`Line ${lineNum}: Property "${key}" has no parent entity`); continue; }
+      if (key === 'summary') (target as any).summary = val;
+      else if (key === 'is_free_preview') (target as any).is_free_preview = val === 'true' || val === '1' || val === 'yes';
+      else if (key === 'points') (target as any).points = parseInt(val) || undefined;
+      else if (key === 'youtube_url') (target as any).youtube_url = val;
+      else if (key === 'id') (target as any).id = parseInt(val) || undefined;
+      continue;
+    }
+
+    // Heading line
+    if (tabs === 0) {
+      curMod = { title: text, chapters: [], line: lineNum };
+      curCh = null; curTopic = null; lastEntity = 'module';
+      modules.push(curMod);
+    } else if (tabs === 1) {
+      if (!curMod) { errors.push(`Line ${lineNum}: Chapter "${text}" has no parent module`); continue; }
+      curCh = { title: text, topics: [], line: lineNum };
+      curTopic = null; lastEntity = 'chapter';
+      curMod.chapters.push(curCh);
+    } else if (tabs === 2) {
+      if (!curCh) { errors.push(`Line ${lineNum}: Topic "${text}" has no parent chapter`); continue; }
+      const pipeIdx = text.lastIndexOf('|');
+      let title = text;
+      let topicType = 'video';
+      if (pipeIdx > 0) {
+        const maybeType = text.slice(pipeIdx + 1).trim().toLowerCase();
+        if (VALID_TOPIC_TYPES.includes(maybeType)) {
+          title = text.slice(0, pipeIdx).trim();
+          topicType = maybeType;
+        }
+      }
+      curTopic = { title, topic_type: topicType, line: lineNum };
+      lastEntity = 'topic';
+      curCh.topics.push(curTopic);
+    } else {
+      errors.push(`Line ${lineNum}: Too many indent levels (max 2 tabs). Got ${tabs} tabs for "${text}"`);
+    }
+  }
+
+  if (modules.length === 0 && errors.length === 0) {
+    errors.push('No modules found in file. Make sure module names have no leading tabs.');
+  }
+  return { modules, errors };
+}
+
+/**
+ * POST /authoring/courses/:id/import-structure
+ * Accepts multipart .txt file → parses → creates/updates units in authoring_units.
+ */
+export async function importStructure(req: Request, res: Response) {
+  try {
+    const courseId = parseInt(req.params.id);
+    if (!courseId) return err(res, 'Invalid course ID', 400);
+
+    const { data: course } = await supabase.from('authoring_courses').select('id, instructor_id, status').eq('id', courseId).single();
+    if (!course) return err(res, 'Course not found', 404);
+
+    const file = (req as any).file;
+    if (!file) return err(res, '.txt file is required', 400);
+
+    const content = file.buffer.toString('utf-8');
+    const parsed = parseCourseTree(content);
+
+    if (parsed.errors.length > 0) {
+      return err(res, `Parsing errors: ${parsed.errors.join('; ')}`, 400);
+    }
+    if (parsed.modules.length === 0) {
+      return err(res, 'No modules found in file', 400);
+    }
+
+    const userId = req.user!.id;
+    const report = { created: { modules: 0, chapters: 0, topics: 0 }, updated: { modules: 0, chapters: 0, topics: 0 }, errors: [] as string[] };
+
+    for (let mi = 0; mi < parsed.modules.length; mi++) {
+      const pm = parsed.modules[mi];
+      let moduleId: number;
+
+      if (pm.id) {
+        const updates: any = { title: pm.title, display_order: mi + 1, updated_by: userId };
+        if (pm.summary !== undefined) updates.summary = pm.summary;
+        const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pm.id).eq('authoring_course_id', courseId).eq('unit_type', 'module').select('id').single();
+        if (e || !data) { report.errors.push(`Module "${pm.title}" (id:${pm.id}) update failed: ${e?.message || 'not found'}`); continue; }
+        moduleId = data.id;
+        report.updated.modules++;
+      } else {
+        const row: any = { authoring_course_id: courseId, unit_type: 'module', title: pm.title, display_order: mi + 1, created_by: userId };
+        if (pm.summary) row.summary = pm.summary;
+        const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
+        if (e || !data) { report.errors.push(`Module "${pm.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
+        moduleId = data.id;
+        report.created.modules++;
+      }
+
+      for (let ci = 0; ci < pm.chapters.length; ci++) {
+        const pc = pm.chapters[ci];
+        let chapterId: number;
+
+        if (pc.id) {
+          const updates: any = { title: pc.title, display_order: ci + 1, updated_by: userId };
+          if (pc.summary !== undefined) updates.summary = pc.summary;
+          const { data, error: e } = await supabase.from('authoring_units').update(updates).eq('id', pc.id).eq('authoring_course_id', courseId).eq('unit_type', 'chapter').select('id').single();
+          if (e || !data) { report.errors.push(`Chapter "${pc.title}" (id:${pc.id}) update failed: ${e?.message || 'not found'}`); continue; }
+          chapterId = data.id;
+          report.updated.chapters++;
+        } else {
+          const row: any = { authoring_course_id: courseId, parent_unit_id: moduleId, unit_type: 'chapter', title: pc.title, display_order: ci + 1, created_by: userId };
+          if (pc.summary) row.summary = pc.summary;
+          const { data, error: e } = await supabase.from('authoring_units').insert(row).select('id').single();
+          if (e || !data) { report.errors.push(`Chapter "${pc.title}" creation failed: ${e?.message || 'unknown'}`); continue; }
+          chapterId = data.id;
+          report.created.chapters++;
+        }
+
+        for (let ti = 0; ti < pc.topics.length; ti++) {
+          const pt = pc.topics[ti];
+
+          if (pt.id) {
+            const updates: any = { title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, updated_by: userId };
+            if (pt.summary !== undefined) updates.summary = pt.summary;
+            if (pt.is_free_preview !== undefined) updates.is_free_preview = pt.is_free_preview;
+            if (pt.points !== undefined) updates.points = pt.points;
+            if (pt.youtube_url !== undefined) updates.youtube_url = pt.youtube_url;
+            const { error: e } = await supabase.from('authoring_units').update(updates).eq('id', pt.id).eq('authoring_course_id', courseId).eq('unit_type', 'topic');
+            if (e) { report.errors.push(`Topic "${pt.title}" (id:${pt.id}) update failed: ${e.message}`); continue; }
+            report.updated.topics++;
+          } else {
+            const row: any = { authoring_course_id: courseId, parent_unit_id: chapterId, unit_type: 'topic', title: pt.title, topic_type: pt.topic_type, display_order: ti + 1, created_by: userId, is_free_preview: pt.is_free_preview || false };
+            if (pt.summary) row.summary = pt.summary;
+            if (pt.points) row.points = pt.points;
+            if (pt.youtube_url) row.youtube_url = pt.youtube_url;
+            const { error: e } = await supabase.from('authoring_units').insert(row);
+            if (e) { report.errors.push(`Topic "${pt.title}" creation failed: ${e.message}`); continue; }
+            report.created.topics++;
+          }
+        }
+      }
+    }
+
+    await requireReApproval(courseId);
+
+    const totalCreated = report.created.modules + report.created.chapters + report.created.topics;
+    const totalUpdated = report.updated.modules + report.updated.chapters + report.updated.topics;
+    const msg = `Imported: ${totalCreated} created, ${totalUpdated} updated${report.errors.length ? `, ${report.errors.length} errors` : ''}`;
+
+    logAdmin({ actorId: userId, action: 'course_structure_imported', targetType: 'authoring_course', targetId: courseId, targetName: `Course #${courseId}`, ip: getClientIp(req), metadata: { created: report.created, updated: report.updated } });
+
+    return ok(res, { report }, msg);
+  } catch (e: any) {
+    return err(res, e.message || 'Import failed', 500);
+  }
+}

@@ -13,6 +13,7 @@ const r = Router();
 // up to 500 MB (matches sub-topics/courses), images & PDFs up to 50 MB.
 const videoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 const fileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const txtUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: (_req, file, cb) => { if (file.mimetype === 'text/plain' || file.originalname.endsWith('.txt')) cb(null, true); else cb(new Error('Only .txt files are allowed')); } });
 
 r.use(authMiddleware, attachPermissions());
 
@@ -28,6 +29,8 @@ r.post('/courses/:id/thumbnail',     requirePermission('authoring_course', 'upda
 r.post('/courses/:id/trailer-video', requirePermission('authoring_course', 'update'), videoUpload.single('video'), ctrl.uploadCourseTrailerVideo);
 r.delete('/courses/:id/trailer-video', requirePermission('authoring_course', 'update'), ctrl.removeCourseTrailerVideo);
 r.get('/courses/:id/trailer-playback', requirePermission('authoring_course', 'read'), ctrl.courseTrailerPlayback);
+// ── Import course structure from .txt file ──
+r.post('/courses/:id/import-structure', requirePermission('authoring_course', 'update'), txtUpload.single('file'), ctrl.importStructure);
 r.patch('/courses/:id/reject', requirePermission('authoring_course', 'approve'), ctrl.rejectCourse);
 r.patch('/courses/:id/restore',requirePermission('authoring_course', 'update'),  ctrl.restoreCourse);
 r.patch('/courses/:id',        requirePermission('authoring_course', 'update'),  ctrl.updateCourse);
