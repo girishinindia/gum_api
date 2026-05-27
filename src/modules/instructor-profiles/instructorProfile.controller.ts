@@ -57,6 +57,28 @@ function parseBody(req: Request): any {
   return body;
 }
 
+// GET /instructor-profiles/public — no auth, returns featured active instructors with user info
+export async function listPublic(req: Request, res: Response) {
+  const { page, limit, offset, sort, ascending } = parseListParams(req, { sort: 'created_at' });
+
+  let q = supabase
+    .from('instructor_profiles')
+    .select('*, users!instructor_profiles_user_id_fkey(id, full_name, avatar_url)', { count: 'exact' })
+    .is('deleted_at', null)
+    .eq('is_active', true);
+
+  // Optional filters
+  if (req.query.is_featured === 'true')  q = q.eq('is_featured', true);
+  if (req.query.is_verified === 'true')  q = q.eq('is_verified', true);
+  if (req.query.instructor_type)         q = q.eq('instructor_type', req.query.instructor_type);
+
+  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+
+  const { data, count, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  return paginated(res, data || [], count || 0, page, limit);
+}
+
 // GET /instructor-profiles?page=1&limit=20&search=foo&sort=instructor_code&order=asc
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'instructor_code' });

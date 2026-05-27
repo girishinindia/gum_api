@@ -5,7 +5,10 @@ import * as ctrl from './instructorProfile.controller';
 
 const r = Router();
 
-// ── All routes require auth for profile modules ──
+// ── Public routes (no auth) ──
+r.get('/public', ctrl.listPublic);
+
+// ── All remaining routes require auth ──
 r.use(authMiddleware, attachPermissions());
 
 // ── Own-profile routes (user can always access their own) ──
