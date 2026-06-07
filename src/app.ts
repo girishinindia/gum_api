@@ -177,6 +177,7 @@ import adminQueueRoutes from './modules/admin-queues/adminQueue.routes';
 import verifyRoutes from './modules/verify/verify.routes';
 import bankAccountRoutes from './modules/bank-accounts/bankAccount.routes';
 import instructorPayoutRoutes from './modules/instructor-payouts/instructorPayout.routes';
+import siteSettingsRoutes from './modules/site-settings/siteSettings.routes';
 import adminRevenueRoutes from './modules/admin-revenue/adminRevenue.routes';
 import adminDashboardsRoutes from './modules/admin-dashboards/adminDashboards.routes';
 import searchRoutes from './modules/search/search.routes';
@@ -452,6 +453,7 @@ app.use(`${api}/admin/dashboards`,                         adminDashboardsRoutes
 app.use(`${api}/search`,                                   searchRoutes);
 app.use(`${api}/push`,                                     pushPublicRoutes);
 app.use(`${api}/push-devices`,                             pushDeviceRoutes);
+app.use(`${api}/site-settings`,                            siteSettingsRoutes);
 
 // ── 404 ──
 app.use((_req, res) => res.status(404).json({ success: false, error: 'Route not found' }));
