@@ -288,6 +288,37 @@ export async function list(req: Request, res: Response) {
   if (req.query.is_free === 'true') q = q.eq('is_free', true);
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
 
+  // ── Extended filters (Phase 1 — filter page support) ──────────────
+  if (req.query.course_language_id) q = q.eq('course_language_id', parseInt(req.query.course_language_id as string));
+  if (req.query.instructor_id)     q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
+  if (req.query.is_bestseller === 'true')    q = q.eq('is_bestseller', true);
+  if (req.query.is_new === 'true')           q = q.eq('is_new', true);
+  if (req.query.has_certificate === 'true')  q = q.eq('has_certificate', true);
+
+  // Price range
+  if (req.query.price_min) q = q.gte('price', parseFloat(req.query.price_min as string));
+  if (req.query.price_max) q = q.lte('price', parseFloat(req.query.price_max as string));
+
+  // Category / sub-category filter — pre-query course IDs from junction table
+  const catId = req.query.category_id ? parseInt(req.query.category_id as string) : null;
+  const subCatId = req.query.sub_category_id ? parseInt(req.query.sub_category_id as string) : null;
+  if (catId || subCatId) {
+    // Look up course_sub_categories to find matching course IDs
+    let jq = supabase.from('course_sub_categories')
+      .select('course_id, sub_categories!inner(category_id)')
+      .is('deleted_at', null)
+      .eq('is_active', true);
+    if (subCatId) jq = jq.eq('sub_category_id', subCatId);
+    if (catId && !subCatId) jq = (jq as any).eq('sub_categories.category_id', catId);
+    const { data: junctionRows } = await jq;
+    const matchedCourseIds = [...new Set((junctionRows || []).map((r: any) => r.course_id))];
+    if (matchedCourseIds.length === 0) {
+      // No courses match this category/sub-category — return empty
+      return paginated(res, [], 0, page, limit);
+    }
+    q = q.in('id', matchedCourseIds);
+  }
+
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;
@@ -329,11 +360,56 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fetch primary category + sub-category for each course (filter page enrichment)
+  let categoryMap: Record<number, { category_name: string; sub_category_name: string; category_id: number; sub_category_id: number } | null> = {};
+  if (courseIds.length > 0) {
+    const { data: cscRows } = await supabase
+      .from('course_sub_categories')
+      .select('course_id, sub_category_id, sub_categories(id, slug, category_id, categories:category_id(id, name))')
+      .in('course_id', courseIds)
+      .eq('is_primary', true)
+      .eq('is_active', true)
+      .is('deleted_at', null);
+    if (cscRows) {
+      // Also fetch sub-category English names from translations
+      const scIds = [...new Set(cscRows.map((r: any) => r.sub_category_id))];
+      let scNameMap: Record<number, string> = {};
+      if (scIds.length > 0) {
+        const { data: enLangRow } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+        if (enLangRow) {
+          const { data: scTrans } = await supabase
+            .from('sub_category_translations')
+            .select('sub_category_id, name')
+            .in('sub_category_id', scIds)
+            .eq('language_id', enLangRow.id)
+            .is('deleted_at', null);
+          if (scTrans) {
+            for (const t of scTrans) scNameMap[t.sub_category_id] = t.name;
+          }
+        }
+      }
+      for (const r of cscRows) {
+        const sc = r.sub_categories as any;
+        const cat = sc?.categories as any;
+        categoryMap[r.course_id] = {
+          category_id: cat?.id || sc?.category_id || 0,
+          category_name: cat?.name || '',
+          sub_category_id: r.sub_category_id,
+          sub_category_name: scNameMap[r.sub_category_id] || sc?.slug || '',
+        };
+      }
+    }
+  }
+
   const enriched = (data || []).map((c: any) => ({
     ...c,
     english_title: englishTitleMap[c.id] || null,
     instructor_name: c.instructor_id ? instructorMap[c.instructor_id] || null : null,
     language_name: c.course_language_id ? langMap[c.course_language_id] || null : null,
+    category_name: categoryMap[c.id]?.category_name || null,
+    sub_category_name: categoryMap[c.id]?.sub_category_name || null,
+    category_id: categoryMap[c.id]?.category_id || null,
+    sub_category_id: categoryMap[c.id]?.sub_category_id || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);

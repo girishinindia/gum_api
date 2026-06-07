@@ -62,6 +62,11 @@ export async function list(req: Request, res: Response) {
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
 
+  // ── Extended filters (Phase 3 — filter page support) ──────────────
+  if (req.query.price_min) q = q.gte('price', parseFloat(req.query.price_min as string));
+  if (req.query.price_max) q = q.lte('price', parseFloat(req.query.price_max as string));
+  if (req.query.is_free === 'true') q = q.eq('price', 0);
+
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;

@@ -59,13 +59,16 @@ function parseBody(req: Request): any {
 
 // GET /instructor-profiles/public — no auth, returns featured active instructors with user info
 export async function listPublic(req: Request, res: Response) {
-  const { page, limit, offset, sort, ascending } = parseListParams(req, { sort: 'created_at' });
+  const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });
 
   let q = supabase
     .from('instructor_profiles')
     .select('*, users!instructor_profiles_user_id_fkey(id, full_name, avatar_url)', { count: 'exact' })
     .is('deleted_at', null)
     .eq('is_active', true);
+
+  // ── Search (by instructor code — user name search requires separate approach)
+  if (search) q = q.ilike('instructor_code', `%${search}%`);
 
   // Optional filters
   if (req.query.is_featured === 'true')  q = q.eq('is_featured', true);
