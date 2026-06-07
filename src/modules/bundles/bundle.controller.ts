@@ -67,6 +67,9 @@ export async function list(req: Request, res: Response) {
   if (req.query.price_max) q = q.lte('price', parseFloat(req.query.price_max as string));
   if (req.query.is_free === 'true') q = q.eq('price', 0);
 
+  // Minimum rating filter
+  if (req.query.rating_min) q = q.gte('rating_average', parseFloat(req.query.rating_min as string));
+
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;

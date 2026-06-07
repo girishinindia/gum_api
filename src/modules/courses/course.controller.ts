@@ -283,7 +283,12 @@ export async function list(req: Request, res: Response) {
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
-  if (req.query.difficulty_level) q = q.eq('difficulty_level', req.query.difficulty_level as string);
+  // Difficulty level — supports single value or comma-separated list
+  if (req.query.difficulty_level) {
+    const levels = (req.query.difficulty_level as string).split(',').filter(Boolean);
+    if (levels.length === 1) q = q.eq('difficulty_level', levels[0]);
+    else if (levels.length > 1) q = q.in('difficulty_level', levels);
+  }
   if (req.query.course_status) q = q.eq('course_status', req.query.course_status as string);
   if (req.query.is_free === 'true') q = q.eq('is_free', true);
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
@@ -299,17 +304,28 @@ export async function list(req: Request, res: Response) {
   if (req.query.price_min) q = q.gte('price', parseFloat(req.query.price_min as string));
   if (req.query.price_max) q = q.lte('price', parseFloat(req.query.price_max as string));
 
-  // Category / sub-category filter — pre-query course IDs from junction table
-  const catId = req.query.category_id ? parseInt(req.query.category_id as string) : null;
-  const subCatId = req.query.sub_category_id ? parseInt(req.query.sub_category_id as string) : null;
-  if (catId || subCatId) {
+  // Minimum rating filter
+  if (req.query.rating_min) q = q.gte('rating_average', parseFloat(req.query.rating_min as string));
+
+  // Category / sub-category filter — supports single ID or comma-separated list
+  const catIds = req.query.category_id
+    ? (req.query.category_id as string).split(',').map(Number).filter((n) => !isNaN(n))
+    : [];
+  const subCatIds = req.query.sub_category_id
+    ? (req.query.sub_category_id as string).split(',').map(Number).filter((n) => !isNaN(n))
+    : [];
+  if (catIds.length > 0 || subCatIds.length > 0) {
     // Look up course_sub_categories to find matching course IDs
     let jq = supabase.from('course_sub_categories')
       .select('course_id, sub_categories!inner(category_id)')
       .is('deleted_at', null)
       .eq('is_active', true);
-    if (subCatId) jq = jq.eq('sub_category_id', subCatId);
-    if (catId && !subCatId) jq = (jq as any).eq('sub_categories.category_id', catId);
+    if (subCatIds.length === 1) jq = jq.eq('sub_category_id', subCatIds[0]);
+    else if (subCatIds.length > 1) jq = jq.in('sub_category_id', subCatIds);
+    if (catIds.length > 0 && subCatIds.length === 0) {
+      if (catIds.length === 1) jq = (jq as any).eq('sub_categories.category_id', catIds[0]);
+      else jq = (jq as any).in('sub_categories.category_id', catIds);
+    }
     const { data: junctionRows } = await jq;
     const matchedCourseIds = [...new Set((junctionRows || []).map((r: any) => r.course_id))];
     if (matchedCourseIds.length === 0) {
