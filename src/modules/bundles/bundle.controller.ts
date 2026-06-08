@@ -100,15 +100,16 @@ export async function list(req: Request, res: Response) {
     }
   }
 
-  // Fetch translated title + description for the requested language
+  // Fetch translated title + description + thumbnail for the requested language
   let translatedTitleMap: Record<number, string> = {};
   let translatedDescMap: Record<number, string> = {};
+  let translatedThumbMap: Record<number, string> = {};
   if (req.query.language_id && bundleIds.length > 0) {
     const langId = parseInt(req.query.language_id as string);
     if (langId) {
       let ltQ = supabase
         .from('bundle_translations')
-        .select('bundle_id, title, short_description')
+        .select('bundle_id, title, short_description, thumbnail_url')
         .in('bundle_id', bundleIds)
         .eq('language_id', langId);
       if (!isTrash) ltQ = ltQ.is('deleted_at', null);
@@ -117,6 +118,7 @@ export async function list(req: Request, res: Response) {
         for (const t of langTrans) {
           if (t.title) translatedTitleMap[t.bundle_id] = t.title;
           if (t.short_description) translatedDescMap[t.bundle_id] = t.short_description;
+          if (t.thumbnail_url) translatedThumbMap[t.bundle_id] = t.thumbnail_url;
         }
       }
     }
@@ -128,6 +130,7 @@ export async function list(req: Request, res: Response) {
     translation_count: translationCountMap[b.id] || 0,
     translated_title: translatedTitleMap[b.id] || null,
     translated_description: translatedDescMap[b.id] || null,
+    translated_thumbnail: translatedThumbMap[b.id] || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);

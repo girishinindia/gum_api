@@ -361,15 +361,16 @@ export async function list(req: Request, res: Response) {
     }
   }
 
-  // Fetch translated title + description for the requested language
+  // Fetch translated title + description + thumbnail for the requested language
   let translatedTitleMap: Record<number, string> = {};
   let translatedDescMap: Record<number, string> = {};
+  let translatedThumbMap: Record<number, string> = {};
   if (req.query.language_id && courseIds.length > 0) {
     const langId = parseInt(req.query.language_id as string);
     if (langId) {
       let tQ = supabase
         .from('course_translations')
-        .select('course_id, title, short_intro')
+        .select('course_id, title, short_intro, web_thumbnail')
         .in('course_id', courseIds)
         .eq('language_id', langId);
       if (!isTrash) tQ = tQ.is('deleted_at', null);
@@ -378,6 +379,7 @@ export async function list(req: Request, res: Response) {
         for (const t of translations) {
           if (t.title) translatedTitleMap[t.course_id] = t.title;
           if (t.short_intro) translatedDescMap[t.course_id] = t.short_intro;
+          if (t.web_thumbnail) translatedThumbMap[t.course_id] = t.web_thumbnail;
         }
       }
     }
@@ -449,6 +451,7 @@ export async function list(req: Request, res: Response) {
     english_title: englishTitleMap[c.id] || null,
     translated_title: translatedTitleMap[c.id] || null,
     translated_description: translatedDescMap[c.id] || null,
+    translated_thumbnail: translatedThumbMap[c.id] || null,
     instructor_name: c.instructor_id ? instructorMap[c.instructor_id] || null : null,
     language_name: c.course_language_id ? langMap[c.course_language_id] || null : null,
     category_name: categoryMap[c.id]?.category_name || null,

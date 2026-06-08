@@ -70,17 +70,18 @@ export async function list(req: Request, res: Response) {
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
 
-  // Fetch translated title + description for the requested language
+  // Fetch translated title + description + thumbnail for the requested language
   const batchIds = (data || []).map((b: any) => b.id);
   const isTrash = req.query.show_deleted === 'true';
   let translatedTitleMap: Record<number, string> = {};
   let translatedDescMap: Record<number, string> = {};
+  let translatedThumbMap: Record<number, string> = {};
   if (req.query.language_id && batchIds.length > 0) {
     const langId = parseInt(req.query.language_id as string);
     if (langId) {
       let tQ = supabase
         .from('batch_translations')
-        .select('batch_id, title, short_description')
+        .select('batch_id, title, short_description, thumbnail_url')
         .in('batch_id', batchIds)
         .eq('language_id', langId);
       if (!isTrash) tQ = tQ.is('deleted_at', null);
@@ -89,6 +90,7 @@ export async function list(req: Request, res: Response) {
         for (const t of translations) {
           if (t.title) translatedTitleMap[t.batch_id] = t.title;
           if (t.short_description) translatedDescMap[t.batch_id] = t.short_description;
+          if (t.thumbnail_url) translatedThumbMap[t.batch_id] = t.thumbnail_url;
         }
       }
     }
@@ -98,6 +100,7 @@ export async function list(req: Request, res: Response) {
     ...b,
     translated_title: translatedTitleMap[b.id] || null,
     translated_description: translatedDescMap[b.id] || null,
+    translated_thumbnail: translatedThumbMap[b.id] || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
