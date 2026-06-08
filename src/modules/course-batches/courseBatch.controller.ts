@@ -96,6 +96,26 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fallback: course_batches table has NO image column — fetch any available
+  // thumbnail from translations for items still missing one
+  const missingThumbBatchIds = batchIds.filter((id: number) => !translatedThumbMap[id]);
+  if (missingThumbBatchIds.length > 0) {
+    let fbQ = supabase
+      .from('batch_translations')
+      .select('batch_id, thumbnail_url')
+      .in('batch_id', missingThumbBatchIds)
+      .not('thumbnail_url', 'is', null);
+    if (!isTrash) fbQ = fbQ.is('deleted_at', null);
+    const { data: fbTrans } = await fbQ;
+    if (fbTrans) {
+      for (const t of fbTrans) {
+        if (t.thumbnail_url && !translatedThumbMap[t.batch_id]) {
+          translatedThumbMap[t.batch_id] = t.thumbnail_url;
+        }
+      }
+    }
+  }
+
   const enriched = (data || []).map((b: any) => ({
     ...b,
     translated_title: translatedTitleMap[b.id] || null,

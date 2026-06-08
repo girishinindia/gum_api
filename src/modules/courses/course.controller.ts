@@ -385,6 +385,30 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fallback: for courses where trailer_thumbnail_url is null AND
+  // the language-specific translation didn't have web_thumbnail,
+  // fetch any available web_thumbnail from translations
+  const missingThumbCourseIds = courseIds.filter((id: number) => {
+    const course = (data || []).find((c: any) => c.id === id);
+    return !translatedThumbMap[id] && !(course && course.trailer_thumbnail_url);
+  });
+  if (missingThumbCourseIds.length > 0) {
+    let fbQ = supabase
+      .from('course_translations')
+      .select('course_id, web_thumbnail')
+      .in('course_id', missingThumbCourseIds)
+      .not('web_thumbnail', 'is', null);
+    if (!isTrash) fbQ = fbQ.is('deleted_at', null);
+    const { data: fbTrans } = await fbQ;
+    if (fbTrans) {
+      for (const t of fbTrans) {
+        if (t.web_thumbnail && !translatedThumbMap[t.course_id]) {
+          translatedThumbMap[t.course_id] = t.web_thumbnail;
+        }
+      }
+    }
+  }
+
   // Fetch instructor names
   const instructorIds = [...new Set((data || []).filter((c: any) => c.instructor_id).map((c: any) => c.instructor_id))];
   let instructorMap: Record<number, string> = {};

@@ -124,6 +124,26 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fallback: bundles table has NO image column — fetch any available
+  // thumbnail from translations for items still missing one
+  const missingThumbBundleIds = bundleIds.filter((id: number) => !translatedThumbMap[id]);
+  if (missingThumbBundleIds.length > 0) {
+    let fbQ = supabase
+      .from('bundle_translations')
+      .select('bundle_id, thumbnail_url')
+      .in('bundle_id', missingThumbBundleIds)
+      .not('thumbnail_url', 'is', null);
+    if (!isTrash) fbQ = fbQ.is('deleted_at', null);
+    const { data: fbTrans } = await fbQ;
+    if (fbTrans) {
+      for (const t of fbTrans) {
+        if (t.thumbnail_url && !translatedThumbMap[t.bundle_id]) {
+          translatedThumbMap[t.bundle_id] = t.thumbnail_url;
+        }
+      }
+    }
+  }
+
   const enriched = (data || []).map((b: any) => ({
     ...b,
     instructor_name: b.instructor_id ? instructorMap[b.instructor_id] || null : null,

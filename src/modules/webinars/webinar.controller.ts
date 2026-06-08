@@ -154,6 +154,26 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fallback: webinars table has NO image column — fetch any available
+  // thumbnail from translations for items still missing one
+  const missingThumbWebinarIds = webinarIds.filter((id: number) => !translatedThumbMap[id]);
+  if (missingThumbWebinarIds.length > 0) {
+    let fbQ = supabase
+      .from('webinar_translations')
+      .select('webinar_id, thumbnail')
+      .in('webinar_id', missingThumbWebinarIds)
+      .not('thumbnail', 'is', null);
+    if (!isTrash) fbQ = fbQ.is('deleted_at', null);
+    const { data: fbTrans } = await fbQ;
+    if (fbTrans) {
+      for (const t of fbTrans) {
+        if (t.thumbnail && !translatedThumbMap[t.webinar_id]) {
+          translatedThumbMap[t.webinar_id] = t.thumbnail;
+        }
+      }
+    }
+  }
+
   const enriched = (data || []).map((w: any) => ({
     ...w,
     translated_title: translatedTitleMap[w.id] || null,
