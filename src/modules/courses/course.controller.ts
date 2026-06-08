@@ -294,7 +294,12 @@ export async function list(req: Request, res: Response) {
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
 
   // ── Extended filters (Phase 1 — filter page support) ──────────────
-  if (req.query.course_language_id) q = q.eq('course_language_id', parseInt(req.query.course_language_id as string));
+  // S9 — multi-value language filter: "1,2,3" → .in(), single value → .eq()
+  if (req.query.course_language_id) {
+    const langIds = (req.query.course_language_id as string).split(',').map(Number).filter(Boolean);
+    if (langIds.length === 1) q = q.eq('course_language_id', langIds[0]);
+    else if (langIds.length > 1) q = q.in('course_language_id', langIds);
+  }
   if (req.query.instructor_id)     q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_bestseller === 'true')    q = q.eq('is_bestseller', true);
   if (req.query.is_new === 'true')           q = q.eq('is_new', true);
@@ -429,6 +434,31 @@ export async function list(req: Request, res: Response) {
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
+}
+
+// ── S9: GET /courses/languages — languages that have at least one published course ──
+export async function courseLanguages(_req: Request, res: Response) {
+  // Get distinct course_language_id values from published courses
+  const { data: courses, error: e1 } = await supabase
+    .from('courses')
+    .select('course_language_id')
+    .eq('course_status', 'published')
+    .not('course_language_id', 'is', null);
+  if (e1) return err(res, e1.message, 500);
+
+  const langIds = [...new Set((courses || []).map((c: any) => c.course_language_id))];
+  if (langIds.length === 0) return ok(res, []);
+
+  const { data: langs, error: e2 } = await supabase
+    .from('languages')
+    .select('id, name, native_name, iso_code')
+    .in('id', langIds)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('name', { ascending: true });
+  if (e2) return err(res, e2.message, 500);
+
+  return ok(res, langs || []);
 }
 
 export async function getById(req: Request, res: Response) {

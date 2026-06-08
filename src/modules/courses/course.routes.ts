@@ -30,6 +30,8 @@ const mediaUpload = upload.fields([
 const videoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 r.get('/',     ctrl.list);
+// S9 — languages that have at least one published course (for filter dropdown)
+r.get('/languages', ctrl.courseLanguages);
 // Phase 44.10 Probe B — Bunny Stream diagnostic. MUST be before /:id so it
 // isn't swallowed by the param route. Auth-gated below via the middleware
 // block is too late, so gate it inline. REMOVE after the video bug is fixed.
