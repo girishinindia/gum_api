@@ -127,7 +127,38 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+
+  // Fetch translated title + description for the requested language
+  const webinarIds = (data || []).map((w: any) => w.id);
+  const isTrash = req.query.show_deleted === 'true';
+  let translatedTitleMap: Record<number, string> = {};
+  let translatedDescMap: Record<number, string> = {};
+  if (req.query.language_id && webinarIds.length > 0) {
+    const langId = parseInt(req.query.language_id as string);
+    if (langId) {
+      let tQ = supabase
+        .from('webinar_translations')
+        .select('webinar_id, title, short_description')
+        .in('webinar_id', webinarIds)
+        .eq('language_id', langId);
+      if (!isTrash) tQ = tQ.is('deleted_at', null);
+      const { data: translations } = await tQ;
+      if (translations) {
+        for (const t of translations) {
+          if (t.title) translatedTitleMap[t.webinar_id] = t.title;
+          if (t.short_description) translatedDescMap[t.webinar_id] = t.short_description;
+        }
+      }
+    }
+  }
+
+  const enriched = (data || []).map((w: any) => ({
+    ...w,
+    translated_title: translatedTitleMap[w.id] || null,
+    translated_description: translatedDescMap[w.id] || null,
+  }));
+
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

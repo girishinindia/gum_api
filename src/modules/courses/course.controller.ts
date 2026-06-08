@@ -361,6 +361,28 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fetch translated title + description for the requested language
+  let translatedTitleMap: Record<number, string> = {};
+  let translatedDescMap: Record<number, string> = {};
+  if (req.query.language_id && courseIds.length > 0) {
+    const langId = parseInt(req.query.language_id as string);
+    if (langId) {
+      let tQ = supabase
+        .from('course_translations')
+        .select('course_id, title, short_intro')
+        .in('course_id', courseIds)
+        .eq('language_id', langId);
+      if (!isTrash) tQ = tQ.is('deleted_at', null);
+      const { data: translations } = await tQ;
+      if (translations) {
+        for (const t of translations) {
+          if (t.title) translatedTitleMap[t.course_id] = t.title;
+          if (t.short_intro) translatedDescMap[t.course_id] = t.short_intro;
+        }
+      }
+    }
+  }
+
   // Fetch instructor names
   const instructorIds = [...new Set((data || []).filter((c: any) => c.instructor_id).map((c: any) => c.instructor_id))];
   let instructorMap: Record<number, string> = {};
@@ -425,6 +447,8 @@ export async function list(req: Request, res: Response) {
   const enriched = (data || []).map((c: any) => ({
     ...c,
     english_title: englishTitleMap[c.id] || null,
+    translated_title: translatedTitleMap[c.id] || null,
+    translated_description: translatedDescMap[c.id] || null,
     instructor_name: c.instructor_id ? instructorMap[c.instructor_id] || null : null,
     language_name: c.course_language_id ? langMap[c.course_language_id] || null : null,
     category_name: categoryMap[c.id]?.category_name || null,

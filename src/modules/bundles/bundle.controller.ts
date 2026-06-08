@@ -100,10 +100,34 @@ export async function list(req: Request, res: Response) {
     }
   }
 
+  // Fetch translated title + description for the requested language
+  let translatedTitleMap: Record<number, string> = {};
+  let translatedDescMap: Record<number, string> = {};
+  if (req.query.language_id && bundleIds.length > 0) {
+    const langId = parseInt(req.query.language_id as string);
+    if (langId) {
+      let ltQ = supabase
+        .from('bundle_translations')
+        .select('bundle_id, title, short_description')
+        .in('bundle_id', bundleIds)
+        .eq('language_id', langId);
+      if (!isTrash) ltQ = ltQ.is('deleted_at', null);
+      const { data: langTrans } = await ltQ;
+      if (langTrans) {
+        for (const t of langTrans) {
+          if (t.title) translatedTitleMap[t.bundle_id] = t.title;
+          if (t.short_description) translatedDescMap[t.bundle_id] = t.short_description;
+        }
+      }
+    }
+  }
+
   const enriched = (data || []).map((b: any) => ({
     ...b,
     instructor_name: b.instructor_id ? instructorMap[b.instructor_id] || null : null,
     translation_count: translationCountMap[b.id] || 0,
+    translated_title: translatedTitleMap[b.id] || null,
+    translated_description: translatedDescMap[b.id] || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
