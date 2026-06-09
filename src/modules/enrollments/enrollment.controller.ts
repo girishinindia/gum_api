@@ -9,6 +9,7 @@ import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { signEmbedUrl } from '../../services/bunnyToken.service';
 import { hasPermission } from '../../middleware/rbac';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { attachItems, isItemFree } from '../../utils/itemEnrich';
 
 const TABLE = 'enrollments';
 const CACHE_KEY = 'enrollments:all';
@@ -68,11 +69,35 @@ export async function getById(req: Request, res: Response) {
 
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
-  if (!body.user_id) return err(res, 'user_id is required', 400);
   if (!body.item_type) return err(res, 'item_type is required', 400);
   if (!body.item_id) return err(res, 'item_id is required', 400);
 
+  // Self-service enrollment (no order_id): force the caller as the user and
+  // only allow it for FREE items. Paid items must go through checkout, which
+  // sets order_id and creates the enrollment server-side after payment.
+  if (!body.order_id) {
+    body.user_id = req.user!.id;
+    const free = await isItemFree(body.item_type, Number(body.item_id));
+    if (!free) return err(res, 'This item requires purchase. Please checkout.', 402);
+  }
+  if (!body.user_id) return err(res, 'user_id is required', 400);
   body.created_by = req.user!.id;
+  if (!body.enrollment_status) body.enrollment_status = 'active';
+  if (!body.enrolled_at) body.enrolled_at = new Date().toISOString();
+
+  // Idempotent on (user_id, item_type, item_id) — restore/return instead of erroring.
+  const { data: existing } = await supabase.from(TABLE).select('*')
+    .eq('user_id', body.user_id).eq('item_type', body.item_type).eq('item_id', body.item_id).maybeSingle();
+  if (existing) {
+    if (existing.deleted_at) {
+      const { data: restored } = await supabase.from(TABLE)
+        .update({ deleted_at: null, is_active: true, enrollment_status: 'active', updated_by: req.user!.id })
+        .eq('id', existing.id).select(FK_SELECT).single();
+      await clearCache();
+      return ok(res, restored, 'Re-enrolled', 200);
+    }
+    return ok(res, existing, 'Already enrolled', 200);
+  }
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
@@ -156,7 +181,8 @@ export async function getByUser(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+  const enriched = await attachItems(data || []);
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getProgress(req: Request, res: Response) {

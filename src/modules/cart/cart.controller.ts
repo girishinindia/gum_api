@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { attachItems } from '../../utils/itemEnrich';
 
 const TABLE = 'cart_items';
 const CACHE_KEY = 'cart_items:all';
@@ -185,7 +186,8 @@ export async function getByUser(req: Request, res: Response) {
       .order('created_at', { ascending: false });
 
     if (e) return err(res, e.message, 500);
-    return ok(res, data || []);
+    const enriched = await attachItems(data || []);
+    return ok(res, enriched);
   } catch (e: any) {
     return err(res, e.message, 500);
   }
