@@ -55,6 +55,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+  else q = q.eq('is_active', true); // public list defaults to active
   if (req.query.is_free === 'true') q = q.eq('is_free', true);
   else if (req.query.is_free === 'false') q = q.eq('is_free', false);
 

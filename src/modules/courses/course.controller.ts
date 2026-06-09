@@ -279,9 +279,12 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
-  // Filters
+  // Filters — public list defaults to active + published. Override with
+  // is_active=false, course_status=<x>, course_status=all, or include_unpublished=true.
+  const showUnpublished = req.query.course_status === 'all' || req.query.include_unpublished === 'true';
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+  else if (!showUnpublished) q = q.eq('is_active', true);
 
   // Difficulty level — supports single value or comma-separated list
   if (req.query.difficulty_level) {
@@ -289,7 +292,11 @@ export async function list(req: Request, res: Response) {
     if (levels.length === 1) q = q.eq('difficulty_level', levels[0]);
     else if (levels.length > 1) q = q.in('difficulty_level', levels);
   }
-  if (req.query.course_status) q = q.eq('course_status', req.query.course_status as string);
+  if (req.query.course_status && req.query.course_status !== 'all') {
+    q = q.eq('course_status', req.query.course_status as string);
+  } else if (!showUnpublished) {
+    q = q.eq('course_status', 'published');
+  }
   if (req.query.is_free === 'true') q = q.eq('is_free', true);
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
 
@@ -331,6 +338,9 @@ export async function list(req: Request, res: Response) {
       if (catIds.length === 1) jq = (jq as any).eq('sub_categories.category_id', catIds[0]);
       else jq = (jq as any).in('sub_categories.category_id', catIds);
     }
+    // Raise PostgREST's default 1000-row cap so large categories aren't silently
+    // truncated (which would drop courses from BOTH the results and the count).
+    jq = jq.range(0, 99999);
     const { data: junctionRows } = await jq;
     const matchedCourseIds = [...new Set((junctionRows || []).map((r: any) => r.course_id))];
     if (matchedCourseIds.length === 0) {

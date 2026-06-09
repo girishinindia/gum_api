@@ -54,9 +54,10 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
-  // Filters
+  // Filters — public list defaults to active. Pass is_active=false to override.
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+  else q = q.eq('is_active', true);
 
   if (req.query.bundle_owner) q = q.eq('bundle_owner', req.query.bundle_owner as string);
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
