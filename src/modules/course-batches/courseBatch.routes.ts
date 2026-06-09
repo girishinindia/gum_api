@@ -7,6 +7,7 @@ const r = Router();
 
 // Public routes (read-only)
 r.get('/', ctrl.list);
+r.get('/by-slug/:slug', ctrl.getBySlug);
 r.get('/:id', ctrl.getById);
 
 // Protected routes

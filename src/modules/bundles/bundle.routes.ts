@@ -6,6 +6,7 @@ import * as ctrl from './bundle.controller';
 const r = Router();
 
 r.get('/',     ctrl.list);
+r.get('/by-slug/:slug', ctrl.getBySlug);
 r.get('/:id',  ctrl.getById);
 
 r.use(authMiddleware, attachPermissions());

@@ -162,6 +162,121 @@ export async function getById(req: Request, res: Response) {
   return ok(res, data);
 }
 
+/**
+ * Public detail endpoint — returns a full bundle by slug with:
+ *   • full translation row (requested language, fallback to English id=7)
+ *   • included courses (via bundle_courses → courses with translations)
+ *   • instructor profile
+ *
+ * GET /bundles/by-slug/:slug?language_id=7
+ */
+export async function getBySlug(req: Request, res: Response) {
+  const slug = req.params.slug;
+
+  // 1. Fetch the bundle row
+  const { data: bundle, error: e1 } = await supabase
+    .from('bundles')
+    .select('*')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .single();
+  if (e1 || !bundle) return err(res, 'Bundle not found', 404);
+
+  // 2. Fetch translation — prefer requested language, fallback to English (id=7)
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('bundle_translations')
+      .select('*')
+      .eq('bundle_id', bundle.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('bundle_translations')
+      .select('*')
+      .eq('bundle_id', bundle.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  // 3. Fetch instructor profile
+  let instructor: any = null;
+  if (bundle.instructor_id) {
+    const { data: u } = await supabase
+      .from('users')
+      .select('id, full_name, email, profile_image_url')
+      .eq('id', bundle.instructor_id)
+      .single();
+    instructor = u;
+    if (u) {
+      const { data: ip } = await supabase
+        .from('instructor_profiles')
+        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average')
+        .eq('user_id', u.id)
+        .is('deleted_at', null)
+        .single();
+      if (ip) instructor = { ...instructor, ...ip };
+    }
+  }
+
+  // 4. Fetch included courses via bundle_courses junction
+  let includedCourses: any[] = [];
+  {
+    const { data: bc } = await supabase
+      .from('bundle_courses')
+      .select('course_id, sort_order')
+      .eq('bundle_id', bundle.id)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .order('sort_order', { ascending: true });
+    if (bc && bc.length > 0) {
+      const courseIds = bc.map((r: any) => r.course_id);
+      const { data: courses } = await supabase
+        .from('courses')
+        .select('id, slug, name, price, original_price, rating_average, rating_count, total_lessons, difficulty_level, trailer_thumbnail_url, duration_hours')
+        .in('id', courseIds)
+        .eq('is_active', true)
+        .is('deleted_at', null);
+      // Fetch course translations for names/thumbnails
+      let courseTransMap: Record<number, any> = {};
+      if (courses && courses.length > 0) {
+        const { data: ct } = await supabase
+          .from('course_translations')
+          .select('course_id, title, short_intro, web_thumbnail')
+          .in('course_id', courseIds)
+          .eq('language_id', langId)
+          .eq('is_active', true)
+          .is('deleted_at', null);
+        if (ct) for (const t of ct) courseTransMap[t.course_id] = t;
+      }
+      // Assemble in sort_order
+      includedCourses = bc.map((r: any) => {
+        const c = (courses || []).find((c: any) => c.id === r.course_id);
+        const t = courseTransMap[r.course_id];
+        return c ? { ...c, translated_title: t?.title || null, translated_description: t?.short_intro || null, translated_thumbnail: t?.web_thumbnail || null } : null;
+      }).filter(Boolean);
+    }
+  }
+
+  // 5. Assemble response
+  return ok(res, {
+    ...bundle,
+    translation: translation || null,
+    instructor: instructor || null,
+    included_courses: includedCourses,
+  });
+}
+
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 

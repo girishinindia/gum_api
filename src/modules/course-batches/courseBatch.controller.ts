@@ -132,6 +132,92 @@ export async function getById(req: Request, res: Response) {
   return ok(res, data);
 }
 
+/**
+ * Public detail endpoint — returns a full batch by slug with:
+ *   • full translation row (requested language, fallback to English id=7)
+ *   • parent course info
+ *   • instructor profile
+ *
+ * GET /course-batches/by-slug/:slug?language_id=7
+ */
+export async function getBySlug(req: Request, res: Response) {
+  const slug = req.params.slug;
+
+  // 1. Fetch the batch row with FK joins
+  const { data: batch, error: e1 } = await supabase
+    .from(TABLE)
+    .select(FK_SELECT)
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .single();
+  if (e1 || !batch) return err(res, 'Course batch not found', 404);
+
+  // 2. Fetch translation — prefer requested language, fallback to English (id=7)
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('batch_translations')
+      .select('*')
+      .eq('batch_id', batch.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('batch_translations')
+      .select('*')
+      .eq('batch_id', batch.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  // 3. Fetch instructor profile (if not already in FK_SELECT user data)
+  let instructor: any = null;
+  if (batch.instructor_id) {
+    const batchUser = (batch as any).users;
+    instructor = batchUser ? { id: batchUser.id, full_name: batchUser.full_name, email: batchUser.email } : null;
+    if (instructor) {
+      const { data: ip } = await supabase
+        .from('instructor_profiles')
+        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average, profile_image_url')
+        .eq('user_id', instructor.id)
+        .is('deleted_at', null)
+        .single();
+      if (ip) instructor = { ...instructor, ...ip };
+    }
+  }
+
+  // 4. Fetch parent course translation for title/thumbnail
+  let courseTranslation: any = null;
+  if (batch.course_id) {
+    const { data: ct } = await supabase
+      .from('course_translations')
+      .select('title, short_intro, web_thumbnail')
+      .eq('course_id', batch.course_id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    courseTranslation = ct;
+  }
+
+  // 5. Assemble response
+  return ok(res, {
+    ...batch,
+    translation: translation || null,
+    instructor: instructor || null,
+    course_translation: courseTranslation || null,
+  });
+}
+
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 

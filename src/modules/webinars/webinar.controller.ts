@@ -190,6 +190,77 @@ export async function getById(req: Request, res: Response) {
   return ok(res, data);
 }
 
+/**
+ * Public detail endpoint — returns a full webinar by slug with:
+ *   • full translation row (requested language, fallback to English id=7)
+ *   • instructor profile
+ *   • parent course info (if linked)
+ *
+ * GET /webinars/by-slug/:slug?language_id=7
+ */
+export async function getBySlug(req: Request, res: Response) {
+  const slug = req.params.slug;
+
+  // 1. Fetch the webinar row with FK joins
+  const { data: webinar, error: e1 } = await supabase
+    .from(TABLE)
+    .select(FK_SELECT)
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .single();
+  if (e1 || !webinar) return err(res, 'Webinar not found', 404);
+
+  // 2. Fetch translation — prefer requested language, fallback to English (id=7)
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('webinar_translations')
+      .select('*')
+      .eq('webinar_id', webinar.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('webinar_translations')
+      .select('*')
+      .eq('webinar_id', webinar.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  // 3. Fetch instructor profile
+  let instructor: any = null;
+  if (webinar.instructor_id) {
+    const webUser = (webinar as any).users;
+    instructor = webUser ? { id: webUser.id, full_name: webUser.full_name, email: webUser.email } : null;
+    if (instructor) {
+      const { data: ip } = await supabase
+        .from('instructor_profiles')
+        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average, profile_image_url')
+        .eq('user_id', instructor.id)
+        .is('deleted_at', null)
+        .single();
+      if (ip) instructor = { ...instructor, ...ip };
+    }
+  }
+
+  // 4. Assemble response
+  return ok(res, {
+    ...webinar,
+    translation: translation || null,
+    instructor: instructor || null,
+  });
+}
+
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 

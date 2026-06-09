@@ -36,6 +36,7 @@ r.get('/languages', ctrl.courseLanguages);
 // isn't swallowed by the param route. Auth-gated below via the middleware
 // block is too late, so gate it inline. REMOVE after the video bug is fixed.
 r.get('/_debug/bunny-stream', authMiddleware, ctrl.debugBunnyStream);
+r.get('/by-slug/:slug', ctrl.getBySlug);
 r.get('/:id',  ctrl.getById);
 
 // Protected — specific routes MUST come before generic /:id

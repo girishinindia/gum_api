@@ -518,6 +518,435 @@ export async function getById(req: Request, res: Response) {
   return ok(res, data);
 }
 
+/**
+ * Public detail endpoint — returns a full course by slug with:
+ *   • full translation row (for requested language, fallback to English id=7)
+ *   • instructor profile (name, avatar, bio)
+ *   • full curriculum tree (modules → chapters → topics → sub-topics)
+ *   • FAQs for this course (from polymorphic faqs table)
+ *   • published reviews with reviewer info + star breakdown
+ *   • course language name + native_name
+ *   • category info
+ *   • related courses (from future_courses JSONB or same-category fallback)
+ *
+ * GET /courses/by-slug/:slug?language_id=7
+ */
+export async function getBySlug(req: Request, res: Response) {
+  const slug = req.params.slug;
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+
+  // 1. Fetch the course row
+  const { data: course, error: e1 } = await supabase
+    .from('courses')
+    .select('*')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .single();
+  if (e1 || !course) return err(res, 'Course not found', 404);
+
+  // 2. Fetch translation — prefer requested language, fallback to English (id=7)
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('course_translations')
+      .select('*')
+      .eq('course_id', course.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('course_translations')
+      .select('*')
+      .eq('course_id', course.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  // 3. Fetch instructor profile
+  let instructor: any = null;
+  if (course.instructor_id) {
+    const { data: u } = await supabase
+      .from('users')
+      .select('id, full_name, email, profile_image_url')
+      .eq('id', course.instructor_id)
+      .single();
+    instructor = u;
+    if (u) {
+      const { data: ip } = await supabase
+        .from('instructor_profiles')
+        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average')
+        .eq('user_id', u.id)
+        .is('deleted_at', null)
+        .single();
+      if (ip) instructor = { ...instructor, ...ip };
+    }
+  }
+
+  // 4. Fetch full curriculum tree (modules → chapters → topics → sub-topics)
+  //    DB hierarchy: course_modules → course_module_subjects → course_chapters
+  //    → chapters → course_chapter_topics → topics → sub_topics
+  let curriculum: any[] = [];
+  let curriculumCounts = { modules: 0, chapters: 0, topics: 0, subtopics: 0 };
+  {
+    const { data: modules } = await supabase
+      .from('course_modules')
+      .select('id, name, display_order')
+      .eq('course_id', course.id)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .order('display_order', { ascending: true });
+
+    if (modules && modules.length > 0) {
+      const moduleIds = modules.map((m: any) => m.id);
+
+      // Module → subject junctions
+      const { data: cms } = await supabase
+        .from('course_module_subjects')
+        .select('id, course_module_id, subject_id')
+        .eq('course_id', course.id)
+        .in('course_module_id', moduleIds)
+        .eq('is_active', true)
+        .is('deleted_at', null);
+      const cmsIds = (cms || []).map((s: any) => s.id);
+
+      // Chapter junctions (course_chapters → chapters entity)
+      let courseChapters: any[] = [];
+      if (cmsIds.length > 0) {
+        const { data: cc } = await supabase
+          .from('course_chapters')
+          .select('id, course_module_subject_id, chapter_id')
+          .eq('course_id', course.id)
+          .in('course_module_subject_id', cmsIds)
+          .eq('is_active', true)
+          .is('deleted_at', null);
+        courseChapters = cc || [];
+      }
+      const ccIds = courseChapters.map((c: any) => c.id);
+      const chapterIds = [...new Set(courseChapters.map((c: any) => c.chapter_id))];
+
+      // Fetch chapter entity data
+      const chapterMap: Record<number, any> = {};
+      if (chapterIds.length > 0) {
+        const { data: chRows } = await supabase
+          .from('chapters')
+          .select('id, name, display_order')
+          .in('id', chapterIds)
+          .eq('is_active', true);
+        if (chRows) for (const ch of chRows) chapterMap[ch.id] = ch;
+      }
+
+      // Topic junctions (course_chapter_topics → topics entity)
+      let courseChapterTopics: any[] = [];
+      if (ccIds.length > 0) {
+        const { data: cct } = await supabase
+          .from('course_chapter_topics')
+          .select('id, course_chapter_id, topic_id')
+          .eq('course_id', course.id)
+          .in('course_chapter_id', ccIds)
+          .eq('is_active', true)
+          .is('deleted_at', null);
+        courseChapterTopics = cct || [];
+      }
+      const topicIds = [...new Set(courseChapterTopics.map((t: any) => t.topic_id))];
+
+      // Fetch topic entity data
+      const topicMap: Record<number, any> = {};
+      if (topicIds.length > 0) {
+        const { data: tRows } = await supabase
+          .from('topics')
+          .select('id, name, display_order')
+          .in('id', topicIds)
+          .eq('is_active', true);
+        if (tRows) for (const t of tRows) topicMap[t.id] = t;
+      }
+
+      // Sub-topics (direct FK on topic_id)
+      const subtopicsByTopic: Record<number, any[]> = {};
+      if (topicIds.length > 0) {
+        const { data: stRows } = await supabase
+          .from('sub_topics')
+          .select('id, topic_id, name, display_order, estimated_minutes')
+          .in('topic_id', topicIds)
+          .eq('is_active', true)
+          .order('display_order', { ascending: true });
+        if (stRows) {
+          for (const st of stRows) {
+            if (!subtopicsByTopic[st.topic_id]) subtopicsByTopic[st.topic_id] = [];
+            subtopicsByTopic[st.topic_id].push({ id: st.id, name: st.name, estimated_minutes: st.estimated_minutes });
+          }
+        }
+      }
+
+      // Build lookup maps for tree assembly
+      const topicsByCC: Record<number, number[]> = {};
+      for (const cct of courseChapterTopics) {
+        if (!topicsByCC[cct.course_chapter_id]) topicsByCC[cct.course_chapter_id] = [];
+        topicsByCC[cct.course_chapter_id].push(cct.topic_id);
+      }
+      const ccToChapterId: Record<number, number> = {};
+      for (const cc of courseChapters) ccToChapterId[cc.id] = cc.chapter_id;
+      const chaptersByCMS: Record<number, number[]> = {};
+      for (const cc of courseChapters) {
+        if (!chaptersByCMS[cc.course_module_subject_id]) chaptersByCMS[cc.course_module_subject_id] = [];
+        chaptersByCMS[cc.course_module_subject_id].push(cc.id);
+      }
+      const cmsByModule: Record<number, number[]> = {};
+      for (const s of (cms || [])) {
+        if (!cmsByModule[s.course_module_id]) cmsByModule[s.course_module_id] = [];
+        cmsByModule[s.course_module_id].push(s.id);
+      }
+
+      // Assemble the 4-level tree
+      let totalChapters = 0, totalTopics = 0, totalSubtopics = 0;
+      curriculum = modules.map((mod: any) => {
+        const modCmsIds = cmsByModule[mod.id] || [];
+        const modChapters: any[] = [];
+        for (const cmsId of modCmsIds) {
+          const ccIdsForCms = chaptersByCMS[cmsId] || [];
+          for (const ccId of ccIdsForCms) {
+            const chapterId = ccToChapterId[ccId];
+            const chapter = chapterMap[chapterId];
+            if (!chapter) continue;
+            const topicIdsForCC = topicsByCC[ccId] || [];
+            const chTopics = topicIdsForCC
+              .map((tid: number) => {
+                const topic = topicMap[tid];
+                if (!topic) return null;
+                const subs = subtopicsByTopic[tid] || [];
+                totalSubtopics += subs.length;
+                return { id: topic.id, name: topic.name, display_order: topic.display_order, subtopic_count: subs.length, sub_topics: subs };
+              })
+              .filter(Boolean)
+              .sort((a: any, b: any) => a.display_order - b.display_order);
+            totalTopics += chTopics.length;
+            modChapters.push({
+              id: chapter.id, name: chapter.name, display_order: chapter.display_order,
+              topic_count: chTopics.length,
+              subtopic_count: chTopics.reduce((s: number, t: any) => s + (t?.subtopic_count || 0), 0),
+              topics: chTopics,
+            });
+          }
+        }
+        modChapters.sort((a: any, b: any) => a.display_order - b.display_order);
+        totalChapters += modChapters.length;
+        return {
+          id: mod.id, name: mod.name, display_order: mod.display_order,
+          chapter_count: modChapters.length,
+          topic_count: modChapters.reduce((s: number, c: any) => s + c.topic_count, 0),
+          subtopic_count: modChapters.reduce((s: number, c: any) => s + c.subtopic_count, 0),
+          chapters: modChapters,
+        };
+      });
+      curriculumCounts = { modules: modules.length, chapters: totalChapters, topics: totalTopics, subtopics: totalSubtopics };
+    }
+  }
+
+  // 5. Fetch FAQs (polymorphic: item_type='course')
+  const { data: faqs } = await supabase
+    .from('faqs')
+    .select('id, question, answer, display_order')
+    .eq('item_type', 'course')
+    .eq('item_id', course.id)
+    .eq('is_active', true)
+    .order('display_order', { ascending: true });
+
+  // 6. Fetch reviews + compute star breakdown
+  const { data: reviewRows } = await supabase
+    .from('reviews')
+    .select('id, user_id, rating, title, review_text, is_verified_purchase, helpful_count, created_at')
+    .eq('item_type', 'course')
+    .eq('item_id', course.id)
+    .eq('status', 'published')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  let reviews: any[] = [];
+  const reviewSummary: { average: number; total: number; breakdown: Record<number, number> } = {
+    average: 0, total: 0, breakdown: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+  };
+  if (reviewRows && reviewRows.length > 0) {
+    const userIds = [...new Set(reviewRows.map((r: any) => r.user_id))];
+    const reviewerMap: Record<string, any> = {};
+    if (userIds.length > 0) {
+      const { data: users } = await supabase.from('users').select('id, full_name, profile_image_url').in('id', userIds);
+      if (users) for (const u of users) reviewerMap[u.id] = u;
+    }
+    reviews = reviewRows.map((r: any) => ({
+      ...r,
+      reviewer_name: reviewerMap[r.user_id]?.full_name || 'Anonymous',
+      reviewer_image: reviewerMap[r.user_id]?.profile_image_url || null,
+    }));
+    let ratingSum = 0;
+    for (const r of reviewRows) {
+      ratingSum += r.rating;
+      const star = Math.min(5, Math.max(1, r.rating));
+      reviewSummary.breakdown[star]++;
+    }
+    reviewSummary.total = reviewRows.length;
+    reviewSummary.average = parseFloat((ratingSum / reviewRows.length).toFixed(1));
+  }
+
+  // 7. Fetch course language name + native_name
+  let languageName: string | null = null;
+  let languageNativeName: string | null = null;
+  if (course.course_language_id) {
+    const { data: lang } = await supabase
+      .from('languages')
+      .select('name, native_name')
+      .eq('id', course.course_language_id)
+      .single();
+    if (lang) {
+      languageName = lang.name;
+      languageNativeName = lang.native_name || null;
+    }
+  }
+
+  // 8. Fetch primary category + sub-category
+  let category: any = null;
+  {
+    const { data: cscRows } = await supabase
+      .from('course_sub_categories')
+      .select('sub_category_id, sub_categories(id, slug, category_id, categories:category_id(id, name))')
+      .eq('course_id', course.id)
+      .eq('is_primary', true)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .limit(1);
+    if (cscRows && cscRows.length > 0) {
+      const r = cscRows[0] as any;
+      const sc = r.sub_categories;
+      const cat = sc?.categories;
+      let scName = sc?.slug || '';
+      const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+      if (enLang) {
+        const { data: scTrans } = await supabase
+          .from('sub_category_translations')
+          .select('name')
+          .eq('sub_category_id', r.sub_category_id)
+          .eq('language_id', enLang.id)
+          .is('deleted_at', null)
+          .single();
+        if (scTrans?.name) scName = scTrans.name;
+      }
+      category = {
+        category_id: cat?.id || sc?.category_id || null,
+        category_name: cat?.name || null,
+        sub_category_id: r.sub_category_id,
+        sub_category_name: scName,
+      };
+    }
+  }
+
+  // 9. Fetch related courses (from future_courses JSONB or same-category fallback)
+  let relatedCourses: any[] = [];
+  {
+    if (translation?.future_courses && Array.isArray(translation.future_courses)) {
+      const names = translation.future_courses
+        .map((c: any) => (typeof c === 'string' ? c : c?.label || c?.title || c?.text || ''))
+        .filter(Boolean);
+      if (names.length > 0) {
+        const { data: related } = await supabase
+          .from('courses')
+          .select('id, slug, name, price, original_price, is_free, rating_average, trailer_thumbnail_url, difficulty_level')
+          .in('name', names)
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .neq('id', course.id)
+          .limit(4);
+        if (related && related.length > 0) relatedCourses = related;
+      }
+    }
+    // Fallback: same sub-category courses
+    if (relatedCourses.length === 0 && category?.sub_category_id) {
+      const { data: sameCatJunctions } = await supabase
+        .from('course_sub_categories')
+        .select('course_id')
+        .eq('sub_category_id', category.sub_category_id)
+        .eq('is_active', true)
+        .is('deleted_at', null)
+        .neq('course_id', course.id)
+        .limit(4);
+      if (sameCatJunctions && sameCatJunctions.length > 0) {
+        const relIds = sameCatJunctions.map((r: any) => r.course_id);
+        const { data: related } = await supabase
+          .from('courses')
+          .select('id, slug, name, price, original_price, is_free, rating_average, trailer_thumbnail_url, difficulty_level')
+          .in('id', relIds)
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .limit(4);
+        if (related) relatedCourses = related;
+      }
+    }
+    // Enrich related courses with translated title + thumbnail + description
+    if (relatedCourses.length > 0) {
+      const relIds = relatedCourses.map((c: any) => c.id);
+
+      // Translation enrichment
+      const { data: relTrans } = await supabase
+        .from('course_translations')
+        .select('course_id, title, web_thumbnail, short_intro')
+        .in('course_id', relIds)
+        .eq('language_id', langId)
+        .eq('is_active', true)
+        .is('deleted_at', null);
+      const transMap: Record<number, any> = {};
+      if (relTrans) for (const t of relTrans) transMap[t.course_id] = t;
+
+      // Module count per course
+      const { data: relModules } = await supabase
+        .from('course_modules')
+        .select('course_id, module_id')
+        .in('course_id', relIds)
+        .eq('is_active', true)
+        .is('deleted_at', null);
+      const modCountMap: Record<number, number> = {};
+      if (relModules) {
+        for (const m of relModules) {
+          modCountMap[m.course_id] = (modCountMap[m.course_id] || 0) + 1;
+        }
+      }
+
+      // Category name for related courses (same category as parent course)
+      const catName = category?.category_name || '';
+
+      relatedCourses = relatedCourses.map((c: any) => ({
+        ...c,
+        translated_title: transMap[c.id]?.title || null,
+        translated_thumbnail: transMap[c.id]?.web_thumbnail || null,
+        short_description: transMap[c.id]?.short_intro || null,
+        module_count: modCountMap[c.id] || 0,
+        category_name: catName,
+      }));
+    }
+  }
+
+  // 10. Assemble response
+  return ok(res, {
+    ...course,
+    translation: translation || null,
+    instructor: instructor || null,
+    chapters: [],
+    curriculum,
+    curriculum_counts: curriculumCounts,
+    faqs: faqs || [],
+    reviews,
+    review_summary: reviewSummary,
+    related_courses: relatedCourses,
+    language_name: languageName,
+    language_native_name: languageNativeName,
+    category: category || null,
+  });
+}
+
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
