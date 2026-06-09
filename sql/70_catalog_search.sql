@@ -112,7 +112,7 @@ with cat(content_type,id,slug,title,short_description,thumbnail,price,original_p
   from course_batches cb
   left join batch_translations bttl on bttl.batch_id=cb.id and bttl.language_id=p_language_id
   left join batch_translations btte on btte.batch_id=cb.id and btte.language_id=7
-  where cb.deleted_at is null and coalesce(cb.is_active,true)
+  where cb.deleted_at is null and coalesce(cb.is_active,true) and cb.batch_status <> 'cancelled'
     and (p_types is null or 'batch' = any(p_types))
   union all
   select 'podcast', p.id, null::text,

@@ -51,6 +51,7 @@ export async function list(req: Request, res: Response) {
   if (search) q = applySearch(q, search, { ilike: ['title', 'code'] });
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
+  else q = q.neq('batch_status', 'cancelled'); // hide cancelled batches by default
   if (req.query.batch_owner) q = q.eq('batch_owner', req.query.batch_owner as string);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
