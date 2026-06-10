@@ -34,6 +34,40 @@ function parseBody(req: Request): any {
   return body;
 }
 
+// ── OPTION LISTS (id + name) for the admin Create Ticket searchable dropdowns ──
+export async function userOptions(req: Request, res: Response) {
+  const search = ((req.query.search as string) || '').trim();
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+  let q = supabase.from('users').select('id, first_name, last_name, email').order('id', { ascending: false }).limit(limit);
+  if (search) q = q.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
+  const { data, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  const options = (data || []).map((u: any) => ({ id: u.id, name: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email, email: u.email }));
+  return ok(res, options);
+}
+
+// related_type → entity table + display column (matches the support_tickets check constraint)
+const RELATED_TABLES: Record<string, { table: string; nameCol: string }> = {
+  course:  { table: 'courses',  nameCol: 'name' },
+  webinar: { table: 'webinars', nameCol: 'title' },
+  bundle:  { table: 'bundles',  nameCol: 'name' },
+  order:   { table: 'orders',   nameCol: 'order_number' },
+};
+
+export async function relatedOptions(req: Request, res: Response) {
+  const relatedType = req.query.related_type as string;
+  const search = ((req.query.search as string) || '').trim();
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+  const cfg = RELATED_TABLES[relatedType];
+  if (!cfg) return ok(res, []); // general / unsupported → no options
+  let q = supabase.from(cfg.table).select(`id, ${cfg.nameCol}`).order('id', { ascending: false }).limit(limit);
+  if (search) q = q.ilike(cfg.nameCol, `%${search}%`);
+  const { data, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  const options = (data || []).map((row: any) => ({ id: row.id, name: row[cfg.nameCol] || `#${row.id}` }));
+  return ok(res, options);
+}
+
 // GET /support-tickets
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });

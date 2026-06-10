@@ -127,6 +127,7 @@ import issuedCertificateRoutes from './modules/issued-certificates/issuedCertifi
 import badgeRoutes from './modules/badges/badge.routes';
 import userBadgeRoutes from './modules/user-badges/userBadge.routes';
 import reviewRoutes from './modules/reviews/review.routes';
+import publicReviewRoutes from './modules/public-reviews/publicReview.routes';
 import reviewHelpfulnessRoutes from './modules/review-helpfulness/reviewHelpfulness.routes';
 import notificationRoutes from './modules/notifications/notification.routes';
 import emailTemplateRoutes from './modules/notifications/emailTemplate.routes';
@@ -398,6 +399,7 @@ app.use(`${api}/issued-certificates`,                      issuedCertificateRout
 app.use(`${api}/badges`,                                   badgeRoutes);
 app.use(`${api}/user-badges`,                              userBadgeRoutes);
 app.use(`${api}/reviews`,                                  reviewRoutes);
+app.use(`${api}/public-reviews`,                           publicReviewRoutes);
 app.use(`${api}/review-helpfulness`,                       reviewHelpfulnessRoutes);
 app.use(`${api}/notifications`,                            notificationRoutes);
 app.use(`${api}/email-templates`,                          emailTemplateRoutes);

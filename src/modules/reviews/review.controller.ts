@@ -18,6 +18,9 @@ const RATING_TARGETS: Record<string, { table: string; avgCol: string; countCol: 
   webinar:    { table: 'webinars',            avgCol: 'rating_average', countCol: 'rating_count' },
   bundle:     { table: 'bundles',             avgCol: 'rating_average', countCol: 'rating_count' },
   instructor: { table: 'instructor_profiles', avgCol: 'average_rating', countCol: 'total_reviews_received' },
+  blog:         { table: 'blog_posts',    avgCol: 'rating_average', countCol: 'rating_count' },
+  live_session: { table: 'live_sessions', avgCol: 'rating_average', countCol: 'rating_count' },
+  podcast:      { table: 'podcasts',      avgCol: 'rating_average', countCol: 'rating_count' },
 };
 
 // ── ITEM NAME LOOKUP ──
@@ -27,6 +30,9 @@ const ITEM_TABLES: Record<string, { table: string; nameCol: string }> = {
   webinar:    { table: 'webinars',            nameCol: 'title' },
   bundle:     { table: 'bundles',             nameCol: 'name' },
   instructor: { table: 'instructor_profiles', nameCol: 'user_id' }, // special — look up user name
+  blog:         { table: 'blog_posts',    nameCol: 'title' },
+  live_session: { table: 'live_sessions', nameCol: 'title' },
+  podcast:      { table: 'podcasts',      nameCol: 'title' },
 };
 
 async function getItemName(itemType: string, itemId: number): Promise<string | null> {
@@ -45,7 +51,7 @@ async function getItemName(itemType: string, itemId: number): Promise<string | n
 }
 
 // ── RECALCULATE RATINGS ──
-async function recalculateRatings(itemType: string, itemId: number) {
+export async function recalculateRatings(itemType: string, itemId: number) {
   const target = RATING_TARGETS[itemType];
   if (!target) return;
 
@@ -73,7 +79,7 @@ async function recalculateRatings(itemType: string, itemId: number) {
 }
 
 // ── CHECK VERIFIED PURCHASE ──
-async function checkVerifiedPurchase(userId: number, itemType: string, itemId: number): Promise<boolean> {
+export async function checkVerifiedPurchase(userId: number, itemType: string, itemId: number): Promise<boolean> {
   if (itemType === 'instructor') return false; // no enrollment for instructor reviews
 
   const { data } = await supabase
@@ -195,7 +201,7 @@ export async function create(req: Request, res: Response) {
     return err(res, 'user_id, item_type, item_id, and rating are required', 400);
   }
 
-  const validTypes = ['course', 'batch', 'webinar', 'bundle', 'instructor'];
+  const validTypes = ['course', 'batch', 'webinar', 'bundle', 'instructor', 'blog', 'live_session', 'podcast'];
   if (!validTypes.includes(body.item_type)) {
     return err(res, `item_type must be one of: ${validTypes.join(', ')}`, 400);
   }
@@ -372,4 +378,59 @@ export async function stats(req: Request, res: Response) {
     : 0;
 
   return ok(res, { total: count || 0, average_rating: avgRating, by_rating: byRating, by_status: byStatus });
+}
+
+// ── OPTION LISTS (id + name) for the admin "Create Review" searchable dropdowns ──
+const VALID_ITEM_TYPES = ['course', 'batch', 'webinar', 'bundle', 'instructor', 'blog', 'live_session', 'podcast'];
+
+// GET /reviews/user-options?search=&limit=  → [{ id, name, email }]
+export async function userOptions(req: Request, res: Response) {
+  const search = ((req.query.search as string) || '').trim();
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+
+  let q = supabase.from('users').select('id, first_name, last_name, email').order('id', { ascending: false }).limit(limit);
+  if (search) q = q.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
+
+  const { data, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  const options = (data || []).map((u: any) => ({
+    id: u.id,
+    name: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email,
+    email: u.email,
+  }));
+  return ok(res, options);
+}
+
+// GET /reviews/item-options?item_type=&search=&limit=  → [{ id, name }]
+export async function itemOptions(req: Request, res: Response) {
+  const itemType = req.query.item_type as string;
+  const search = ((req.query.search as string) || '').trim();
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+  if (!itemType || !VALID_ITEM_TYPES.includes(itemType)) {
+    return err(res, `item_type must be one of: ${VALID_ITEM_TYPES.join(', ')}`, 400);
+  }
+
+  // Instructor is special — the "name" lives on the joined user.
+  if (itemType === 'instructor') {
+    const { data: profiles, error: pe } = await supabase.from('instructor_profiles').select('id, user_id').limit(limit * 4);
+    if (pe) return err(res, pe.message, 500);
+    const userIds = [...new Set((profiles || []).map((p: any) => p.user_id).filter(Boolean))];
+    const userMap: Record<number, string> = {};
+    if (userIds.length) {
+      const { data: users } = await supabase.from('users').select('id, first_name, last_name, email').in('id', userIds);
+      if (users) for (const u of users as any[]) userMap[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email;
+    }
+    let options = (profiles || []).map((p: any) => ({ id: p.id, name: userMap[p.user_id] || `Instructor #${p.id}` }));
+    if (search) options = options.filter((o) => o.name.toLowerCase().includes(search.toLowerCase()));
+    return ok(res, options.slice(0, limit));
+  }
+
+  const cfg = ITEM_TABLES[itemType];
+  let q = supabase.from(cfg.table).select(`id, ${cfg.nameCol}`).order('id', { ascending: false }).limit(limit);
+  if (search) q = q.ilike(cfg.nameCol, `%${search}%`);
+
+  const { data, error: e } = await q;
+  if (e) return err(res, e.message, 500);
+  const options = (data || []).map((row: any) => ({ id: row.id, name: row[cfg.nameCol] || `#${row.id}` }));
+  return ok(res, options);
 }

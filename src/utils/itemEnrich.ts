@@ -25,12 +25,16 @@ export async function attachItems<T extends EnrichRow>(rows: T[]): Promise<(T & 
       .select('id, name, slug, price, original_price, is_free, difficulty_level, trailer_thumbnail_url')
       .in('id', byType.course);
     for (const c of data || []) map[`course:${c.id}`] = { id: c.id, type: 'course', title: c.name, slug: c.slug, price: c.price, original_price: c.original_price, is_free: c.is_free, level: c.difficulty_level, thumbnail_url: c.trailer_thumbnail_url };
+    const { data: tr } = await supabase.from('course_translations').select('course_id, short_intro').in('course_id', byType.course).eq('language_id', 7);
+    for (const t of (tr || []) as any[]) { const m = map[`course:${t.course_id}`]; if (m) m.short_description = t.short_intro; }
   }
   if (byType.bundle?.length) {
     const { data } = await supabase.from('bundles')
       .select('id, name, slug, price, original_price')
       .in('id', byType.bundle);
     for (const b of data || []) map[`bundle:${b.id}`] = { id: b.id, type: 'bundle', title: b.name, slug: b.slug, price: b.price, original_price: b.original_price, is_free: false };
+    const { data: tr } = await supabase.from('bundle_translations').select('bundle_id, short_description').in('bundle_id', byType.bundle).eq('language_id', 7);
+    for (const t of (tr || []) as any[]) { const m = map[`bundle:${t.bundle_id}`]; if (m) m.short_description = t.short_description; }
   }
   if (byType.batch?.length) {
     const { data } = await supabase.from('course_batches')
@@ -43,6 +47,8 @@ export async function attachItems<T extends EnrichRow>(rows: T[]): Promise<(T & 
       .select('id, title, is_free, scheduled_at, thumbnail_url')
       .in('id', byType.webinar);
     for (const w of data || []) map[`webinar:${w.id}`] = { id: w.id, type: 'webinar', title: w.title, is_free: w.is_free, scheduled_at: w.scheduled_at, thumbnail_url: w.thumbnail_url };
+    const { data: tr } = await supabase.from('webinar_translations').select('webinar_id, short_description').in('webinar_id', byType.webinar).eq('language_id', 7);
+    for (const t of (tr || []) as any[]) { const m = map[`webinar:${t.webinar_id}`]; if (m) m.short_description = t.short_description; }
   }
 
   return rows.map((r) => ({ ...r, item: map[`${r.item_type}:${r.item_id}`] ?? null }));

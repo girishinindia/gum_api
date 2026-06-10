@@ -8,8 +8,10 @@ const r = Router();
 // ALL protected
 r.use(authMiddleware, attachPermissions());
 
-// Stats must come before /:id
+// Stats + option lists must come before /:id
 r.get('/stats',              requirePermission('support_ticket', 'read'),        ctrl.stats);
+r.get('/user-options',       requirePermission('support_ticket', 'read'),        ctrl.userOptions);
+r.get('/related-options',    requirePermission('support_ticket', 'read'),        ctrl.relatedOptions);
 r.get('/',                   requirePermission('support_ticket', 'read'),        ctrl.list);
 r.get('/:id',               requirePermission('support_ticket', 'read'),        ctrl.getById);
 r.post('/',                  requirePermission('support_ticket', 'create'),      ctrl.create);

@@ -7,8 +7,10 @@ const r = Router();
 
 r.use(authMiddleware, attachPermissions());
 
-// Stats (before /:id to avoid conflict)
+// Stats + option lists (before /:id to avoid conflict)
 r.get('/stats',         requirePermission('review', 'read'), ctrl.stats);
+r.get('/user-options',  requirePermission('review', 'read'), ctrl.userOptions);
+r.get('/item-options',  requirePermission('review', 'read'), ctrl.itemOptions);
 
 // CRUD
 r.get('/',              requirePermission('review', 'read'),   ctrl.list);
