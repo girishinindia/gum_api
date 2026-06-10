@@ -84,16 +84,21 @@ async function getUserInfo(userId: number): Promise<{ name: string; email: strin
 }
 
 // ── Email template from DB ──
-async function getEmailTemplate(templateCode: string): Promise<{ subject: string; body_html: string } | null> {
+async function getEmailTemplate(notificationType: string): Promise<{ subject: string; body_html: string } | null> {
+  // The table keys templates by `notification_type` and stores the body in
+  // `html_body` (not `body_html`). Match those column names exactly, else the
+  // lookup silently fails and every email falls back to the generic wrapper.
   const { data } = await supabase
     .from('email_templates')
-    .select('subject, body_html')
-    .eq('template_code', templateCode)
+    .select('subject, html_body')
+    .eq('notification_type', notificationType)
     .eq('is_active', true)
     .is('deleted_at', null)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
-  return data;
+  if (!data) return null;
+  return { subject: data.subject || '', body_html: data.html_body || '' };
 }
 
 // ── Send email via Brevo ──

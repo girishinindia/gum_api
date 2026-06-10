@@ -228,3 +228,118 @@ export async function getUnreadCount(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 }
+
+
+// ══════════════════════════════════════════════════
+// SELF-SERVE (current authenticated user)
+// Strictly scoped to req.user.id — NO admin permission required.
+// The "inbox" is the in_app channel; email/push rows are delivery records.
+// ══════════════════════════════════════════════════
+
+/** GET /notifications/me — current user's in-app inbox (paginated). */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const { page, limit, offset } = parseListParams(req, { sort: 'created_at' });
+
+    let q = supabase
+      .from(TABLE)
+      .select('id, notification_type, title, message, is_read, read_at, reference_type, reference_id, metadata, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('channel', 'in_app')
+      .is('deleted_at', null);
+
+    if (req.query.is_read === 'true')  q = q.eq('is_read', true);
+    if (req.query.is_read === 'false') q = q.eq('is_read', false);
+    if (req.query.notification_type)   q = q.eq('notification_type', String(req.query.notification_type));
+
+    q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+
+    const { data, count, error: e } = await q;
+    if (e) return err(res, e.message, 500);
+    return paginated(res, data || [], count || 0, page, limit);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** GET /notifications/me/unread-count — current user's unread in-app count. */
+export async function unreadCountMine(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const { count, error: e } = await supabase
+      .from(TABLE)
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('channel', 'in_app')
+      .eq('is_read', false)
+      .is('deleted_at', null);
+    if (e) return err(res, e.message, 500);
+    return ok(res, { unread_count: count || 0 });
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** PATCH /notifications/me/:id/read — mark one of the caller's notifications read. */
+export async function markMineRead(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const id = parseInt(req.params.id);
+    const { data: row } = await supabase.from(TABLE).select('id, user_id, is_read').eq('id', id).single();
+    if (!row || row.user_id !== userId) return err(res, 'Notification not found', 404);
+    if (row.is_read) return ok(res, { id, is_read: true }, 'Already read');
+
+    const { error: e } = await supabase
+      .from(TABLE)
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', id);
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    return ok(res, { id, is_read: true }, 'Marked as read');
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** PATCH /notifications/me/read-all — mark all the caller's notifications read. */
+export async function markAllMineRead(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false)
+      .is('deleted_at', null)
+      .select('id');
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    return ok(res, { marked: data?.length || 0 }, `${data?.length || 0} notifications marked as read`);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** DELETE /notifications/me/:id — dismiss (soft-delete) one of the caller's notifications. */
+export async function dismissMine(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const id = parseInt(req.params.id);
+    const { data: row } = await supabase.from(TABLE).select('id, user_id').eq('id', id).single();
+    if (!row || row.user_id !== userId) return err(res, 'Notification not found', 404);
+
+    const { error: e } = await supabase
+      .from(TABLE)
+      .update({ deleted_at: new Date().toISOString(), is_active: false })
+      .eq('id', id);
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    return ok(res, { id }, 'Notification dismissed');
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

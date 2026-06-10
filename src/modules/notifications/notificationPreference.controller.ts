@@ -136,3 +136,50 @@ export async function summary(_req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 }
+
+
+// ══════════════════════════════════════════════════
+// SELF-SERVE (current authenticated user) — own preferences only.
+// ══════════════════════════════════════════════════
+
+/** GET /notification-preferences/me — caller's preference rows. */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .select('id, notification_type, email_enabled, sms_enabled, in_app_enabled, push_enabled, is_active')
+      .eq('user_id', userId)
+      .order('notification_type');
+    if (e) return err(res, e.message, 500);
+    return ok(res, data || []);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** PATCH /notification-preferences/me — upsert one preference for the caller. */
+export async function upsertMine(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const notificationType = String(req.body.notification_type || '').trim();
+    if (!notificationType) return err(res, 'notification_type is required', 400);
+
+    const row: any = { user_id: userId, notification_type: notificationType };
+    for (const k of ['email_enabled', 'sms_enabled', 'in_app_enabled', 'push_enabled', 'is_active']) {
+      if (req.body[k] !== undefined) row[k] = typeof req.body[k] === 'string' ? req.body[k] === 'true' : !!req.body[k];
+    }
+
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .upsert(row, { onConflict: 'user_id,notification_type' })
+      .select('id, notification_type, email_enabled, sms_enabled, in_app_enabled, push_enabled, is_active')
+      .single();
+    if (e) return err(res, e.message, 500);
+
+    await clearCache();
+    return ok(res, data, 'Preference updated');
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

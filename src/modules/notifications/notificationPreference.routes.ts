@@ -5,6 +5,11 @@ import { attachPermissions, requirePermission } from '../../middleware/rbac';
 
 const r = Router();
 
+// ── Self-serve — authenticated user, own preferences only (no admin perm). ──
+r.get('/me',   authMiddleware, ctrl.listMine);
+r.patch('/me', authMiddleware, ctrl.upsertMine);
+
+// ── Admin (RBAC-gated). ──
 r.use(authMiddleware, attachPermissions());
 
 r.get('/summary', requirePermission('notification_preference', 'read'), ctrl.summary);
