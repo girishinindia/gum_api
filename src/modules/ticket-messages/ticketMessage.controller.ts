@@ -68,6 +68,13 @@ export async function create(req: Request, res: Response) {
 
   if (!body.ticket_id) return err(res, 'ticket_id is required', 400);
 
+  // Block messaging on a closed ticket — it must be reopened first. Mirrors the
+  // student-side guard so a closed ticket can't receive replies from either side.
+  const { data: parentTicket } = await supabase.from('support_tickets').select('ticket_status').eq('id', body.ticket_id).single();
+  if (parentTicket?.ticket_status === 'closed') {
+    return err(res, 'This ticket is closed. Reopen it to continue the conversation.', 400);
+  }
+
   // Set sender from current user
   body.sender_id = req.user!.id;
   body.sender_type = 'admin';

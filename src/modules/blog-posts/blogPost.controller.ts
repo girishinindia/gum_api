@@ -71,9 +71,13 @@ export async function list(req: Request, res: Response) {
   return paginated(res, data || [], count || 0, page, limit);
 }
 
-// ── GET BY ID ──
+// ── GET BY ID OR SLUG ──
+// The web links to /blog/<slug>; numeric params still resolve by id. Accept both
+// so the detail page never 404s on a slug.
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
+  const idOrSlug = String(req.params.id);
+  const col = /^\d+$/.test(idOrSlug) ? 'id' : 'slug';
+  const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq(col, idOrSlug).maybeSingle();
   if (e || !data) return err(res, 'Blog post not found', 404);
   return ok(res, data);
 }

@@ -3,6 +3,7 @@ import { supabase } from '../../config/supabase';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { sendNotification } from '../../services/notification.service';
+import { uploadRawFile, processAndUploadImage } from '../../services/storage.service';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
@@ -45,7 +46,7 @@ async function insertAutoReply(ticketId: number, ticketNumber: string): Promise<
   });
 }
 
-async function notifyAdmins(ticketId: number, ticketNumber: string, subject: string): Promise<void> {
+async function notifyAdmins(ticketId: number, ticketNumber: string, subject: string, opts?: { title?: string; message?: string; notificationType?: string }): Promise<void> {
   try {
     // Find users with admin or super_admin roles
     const { data: adminUsers } = await supabase
@@ -61,9 +62,9 @@ async function notifyAdmins(ticketId: number, ticketNumber: string, subject: str
     for (const adminId of uniqueAdminIds) {
       await sendNotification({
         userId: adminId,
-        notificationType: 'support_ticket',
-        title: `New Support Ticket: ${ticketNumber}`,
-        message: `A new support ticket "${subject}" has been submitted and needs review.`,
+        notificationType: opts?.notificationType || 'support_ticket',
+        title: opts?.title || `New Support Ticket: ${ticketNumber}`,
+        message: opts?.message || `A new support ticket "${subject}" has been submitted and needs review.`,
         channels: ['in_app', 'email'],
         referenceType: 'support_ticket',
         referenceId: ticketId,
@@ -102,7 +103,10 @@ export async function listMyTickets(req: Request, res: Response) {
   if (req.query.ticket_status) q = q.eq('ticket_status', req.query.ticket_status as string);
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
 
-  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+  // Newest ticket first by default (issue: list was oldest-first). Opt into
+  // ascending only with an explicit ?order=asc.
+  const asc = (req.query.order as string) === 'asc' ? true : (req.query.order ? ascending : false);
+  q = q.order(sort, { ascending: asc }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
@@ -248,6 +252,14 @@ export async function replyToTicket(req: Request, res: Response) {
     .update({ updated_at: new Date().toISOString() })
     .eq('id', ticketId);
 
+  // Notify admins/support of the student reply (fire and forget). They now see
+  // it in the in-app inbox + email, so replies don't sit unanswered.
+  notifyAdmins(ticketId, ticket.ticket_number, ticket.ticket_number, {
+    title: `New reply on ${ticket.ticket_number}`,
+    message: `A student replied: "${message.slice(0, 80)}${message.length > 80 ? '…' : ''}"`,
+    notificationType: 'support_ticket_reply',
+  });
+
   // If ticket was in 'resolved' status, move back to 'open' since user replied
   if (ticket.ticket_status === 'resolved') {
     await supabase
@@ -311,4 +323,77 @@ export async function closeMyTicket(req: Request, res: Response) {
   });
 
   return ok(res, data, 'Ticket closed');
+}
+
+// ── Attachments (self-serve, strictly ownership-scoped) ──
+
+/** Returns the ticket row if it exists and belongs to the caller, else null. */
+async function ownTicketOrNull(ticketId: number, userId: number) {
+  const { data } = await supabase
+    .from(TICKET_TABLE)
+    .select('id, ticket_status, user_id')
+    .eq('id', ticketId)
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .single();
+  return data;
+}
+
+// ── GET /user-tickets/:id/attachments ──
+export async function listMyAttachments(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const ticketId = parseInt(req.params.id);
+  const ticket = await ownTicketOrNull(ticketId, userId);
+  if (!ticket) return err(res, 'Ticket not found', 404);
+
+  const { data, error: e } = await supabase
+    .from('ticket_attachments')
+    .select('id, message_id, file_name, file_url, file_size, file_type, created_at')
+    .eq('ticket_id', ticketId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true });
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
+// ── POST /user-tickets/:id/attachments  (multipart: file, optional message_id) ──
+export async function uploadMyAttachment(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const ticketId = parseInt(req.params.id);
+  const ticket = await ownTicketOrNull(ticketId, userId);
+  if (!ticket) return err(res, 'Ticket not found', 404);
+  if (ticket.ticket_status === 'closed') return err(res, 'This ticket is closed. Reopen it to add files.', 400);
+  if (!req.file) return err(res, 'No file provided', 400);
+
+  const messageId = toIntOrNull(req.body.message_id);
+  const isImage = req.file.mimetype.startsWith('image/');
+  const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `support-tickets/ticket-${ticketId}/${Date.now()}-${safeName}`;
+
+  let fileUrl: string;
+  try {
+    fileUrl = isImage
+      ? await processAndUploadImage(req.file.buffer, path, { width: 1600, height: 1600, quality: 85 })
+      : await uploadRawFile(req.file.buffer, path);
+  } catch (uploadErr: any) {
+    return err(res, `File upload failed: ${uploadErr.message}`, 500);
+  }
+
+  const row: any = {
+    ticket_id: ticketId,
+    file_name: req.file.originalname,
+    file_url: fileUrl,
+    file_size: req.file.size,
+    file_type: req.file.mimetype,
+    uploaded_by: userId,
+  };
+  if (messageId) row.message_id = messageId;
+
+  const { data, error: e } = await supabase
+    .from('ticket_attachments')
+    .insert(row)
+    .select('id, message_id, file_name, file_url, file_size, file_type, created_at')
+    .single();
+  if (e) return err(res, e.message, 500);
+  return ok(res, data, 'Attachment uploaded', 201);
 }
