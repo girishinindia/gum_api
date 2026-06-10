@@ -19,45 +19,69 @@ async function myCodeIds(userId: number): Promise<number[]> {
 
 // GET /my/referral  → get-or-create my referral code + headline stats
 export async function getMine(req: Request, res: Response) {
-  const userId = req.user!.id;
+  try {
+    const userId = req.user!.id;
 
-  let { data: code } = await supabase.from('referral_codes').select('*').eq('student_id', userId).is('deleted_at', null).maybeSingle();
+    // A student may (rarely) end up with more than one row — order + limit(1)
+    // instead of maybeSingle() so a duplicate never throws the whole request.
+    const fetchMine = async () =>
+      (await supabase
+        .from('referral_codes')
+        .select('*')
+        .eq('student_id', userId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)).data?.[0] ?? null;
 
-  if (!code) {
-    let referral_code = genCode();
-    for (let i = 0; i < 4; i++) {
-      const { data: ex } = await supabase.from('referral_codes').select('id').eq('referral_code', referral_code).maybeSingle();
-      if (!ex) break;
-      referral_code = genCode();
+    let code = await fetchMine();
+
+    if (!code) {
+      let referral_code = genCode();
+      for (let i = 0; i < 4; i++) {
+        const { data: ex } = await supabase.from('referral_codes').select('id').eq('referral_code', referral_code).maybeSingle();
+        if (!ex) break;
+        referral_code = genCode();
+      }
+
+      const { data: created, error: e } = await supabase.from('referral_codes').insert({
+        student_id: userId,
+        referral_code,
+        discount_percentage: 10,
+        // Must be one of wallet_credit | discount_code | cashback
+        // (chk_referral_codes_reward_type). The referrer earns 10% as wallet credit.
+        referrer_reward_type: 'wallet_credit',
+        referrer_reward_percentage: 10,
+        is_active: true,
+        created_by: userId,
+      }).select('*').single();
+
+      if (e || !created) {
+        // A concurrent request may have created the row first — re-fetch before failing.
+        code = await fetchMine();
+        if (!code) return err(res, e?.message || 'Could not create referral code', 500);
+      } else {
+        code = created;
+      }
     }
-    const { data: created, error: e } = await supabase.from('referral_codes').insert({
-      student_id: userId,
-      referral_code,
-      discount_percentage: 10,
-      referrer_reward_type: 'percentage',
-      referrer_reward_percentage: 10,
-      is_active: true,
-      created_by: userId,
-    }).select('*').single();
-    if (e) return err(res, e.message, 500);
-    code = created;
-  }
 
-  return ok(res, {
-    id: code.id,
-    referral_code: code.referral_code,
-    discount_percentage: code.discount_percentage,
-    referrer_reward_type: code.referrer_reward_type,
-    referrer_reward_percentage: code.referrer_reward_percentage,
-    referrer_reward_amount: code.referrer_reward_amount,
-    is_active: code.is_active,
-    expires_at: code.expires_at,
-    stats: {
-      total_referrals: code.total_referrals || 0,
-      successful_referrals: code.successful_referrals || 0,
-      total_earnings: Number(code.total_earnings || 0),
-    },
-  });
+    return ok(res, {
+      id: code.id,
+      referral_code: code.referral_code,
+      discount_percentage: code.discount_percentage,
+      referrer_reward_type: code.referrer_reward_type,
+      referrer_reward_percentage: code.referrer_reward_percentage,
+      referrer_reward_amount: code.referrer_reward_amount,
+      is_active: code.is_active,
+      expires_at: code.expires_at,
+      stats: {
+        total_referrals: code.total_referrals || 0,
+        successful_referrals: code.successful_referrals || 0,
+        total_earnings: Number(code.total_earnings || 0),
+      },
+    });
+  } catch (e: any) {
+    return err(res, e?.message || 'Failed to load referral', 500);
+  }
 }
 
 // GET /my/referral/usages  → people who used my code
