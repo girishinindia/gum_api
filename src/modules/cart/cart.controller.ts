@@ -68,11 +68,29 @@ export async function getById(req: Request, res: Response) {
 export async function create(req: Request, res: Response) {
   try {
     const body = parseBody(req);
-    if (!body.user_id) return err(res, 'user_id is required', 400);
     if (!body.item_type) return err(res, 'item_type is required', 400);
     if (!body.item_id) return err(res, 'item_id is required', 400);
 
+    // Self-service: the cart always belongs to the caller. The web client sends
+    // no user_id; forcing it here also closes the IDOR (can't add to someone
+    // else's cart by passing a different user_id).
+    body.user_id = req.user!.id;
     body.created_by = req.user!.id;
+
+    // Idempotent on (user_id, item_type, item_id): restore a soft-deleted row or
+    // return the existing one instead of erroring / creating a duplicate.
+    const { data: existing } = await supabase.from(TABLE).select('*')
+      .eq('user_id', body.user_id).eq('item_type', body.item_type).eq('item_id', body.item_id).maybeSingle();
+    if (existing) {
+      if (existing.deleted_at || existing.is_active === false) {
+        const { data: restored } = await supabase.from(TABLE)
+          .update({ deleted_at: null, is_active: true, updated_by: req.user!.id })
+          .eq('id', existing.id).select(FK_SELECT).single();
+        await clearCache();
+        return ok(res, restored, 'Cart item restored', 200);
+      }
+      return ok(res, existing, 'Already in cart', 200);
+    }
 
     const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
     if (e) return err(res, e.message, 500);
