@@ -103,6 +103,7 @@ import webinarTranslationRoutes from './modules/webinar-translations/webinarTran
 import referralCodeRoutes from './modules/referral-codes/referralCode.routes';
 import myReferralRoutes from './modules/my-referral/myReferral.routes';
 import publicPromotionRoutes from './modules/public-promotions/publicPromotion.routes';
+import publicContentRoutes from './modules/public-content/publicContent.routes';
 import referralUsageRoutes from './modules/referral-usages/referralUsage.routes';
 import referralRewardRoutes from './modules/referral-rewards/referralReward.routes';
 import couponRoutes from './modules/coupons/coupon.routes';
@@ -377,6 +378,7 @@ app.use(`${api}/webinar-translations`,                  webinarTranslationRoutes
 app.use(`${api}/referral-codes`,                        referralCodeRoutes);
 app.use(`${api}/my/referral`,                           myReferralRoutes);
 app.use(`${api}/public-promotions`,                     publicPromotionRoutes);
+app.use(`${api}/public-content`,                        publicContentRoutes);
 app.use(`${api}/referral-usages`,                       referralUsageRoutes);
 app.use(`${api}/referral-rewards`,                      referralRewardRoutes);
 app.use(`${api}/coupons`,                               couponRoutes);
