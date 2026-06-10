@@ -33,58 +33,167 @@ const clearOrderCaches = async () => {
   ]);
 };
 
-// ── Helper: resolve item price ──
+// ── Per-type price + name resolution (columns differ per content type) ──
+const ITEM_TABLE: Record<string, { table: string; nameCol: string; hasSlug: boolean; hasFree: boolean }> = {
+  course:  { table: 'courses',        nameCol: 'name',  hasSlug: true,  hasFree: true },
+  bundle:  { table: 'bundles',        nameCol: 'name',  hasSlug: true,  hasFree: false },
+  batch:   { table: 'course_batches', nameCol: 'title', hasSlug: true,  hasFree: true },
+  webinar: { table: 'webinars',       nameCol: 'title', hasSlug: false, hasFree: true },
+};
+
 async function resolveItemPrice(itemType: string, itemId: number): Promise<{ price: number; name: string; slug: string } | null> {
-  let table = '';
-  switch (itemType) {
-    case 'course':  table = 'courses'; break;
-    case 'bundle':  table = 'bundles'; break;
-    case 'batch':   table = 'course_batches'; break;
-    case 'webinar': table = 'webinars'; break;
-    default: return null;
-  }
-  const { data } = await supabase
-    .from(table)
-    .select('id, name, slug, price, sale_price')
-    .eq('id', itemId)
-    .single();
+  const cfg = ITEM_TABLE[itemType];
+  if (!cfg) return null;
+  const cols = ['id', 'price', cfg.nameCol, ...(cfg.hasSlug ? ['slug'] : []), ...(cfg.hasFree ? ['is_free'] : [])].join(', ');
+  const { data } = await supabase.from(cfg.table).select(cols).eq('id', itemId).single();
   if (!data) return null;
-  const price = data.sale_price && data.sale_price > 0 ? data.sale_price : (data.price || 0);
-  return { price, name: data.name || data.slug, slug: data.slug || '' };
+  const d = data as any;
+  const isFree = cfg.hasFree ? !!d.is_free : false;
+  const price = isFree ? 0 : Number(d.price || 0);
+  return { price, name: d[cfg.nameCol] || `${itemType} #${itemId}`, slug: cfg.hasSlug ? (d.slug || '') : '' };
 }
 
-// ── Helper: apply coupon discount ──
-async function applyCoupon(code: string, subtotal: number, items: any[]): Promise<{ valid: boolean; discount: number; couponId: number | null; message?: string }> {
+// ── Build order items from the user's active cart ──
+async function buildCartItems(userId: number): Promise<{ orderItems: any[]; subtotal: number; error?: string }> {
+  const { data: cartItems, error: cartErr } = await supabase
+    .from('cart_items').select('*').eq('user_id', userId).is('deleted_at', null).eq('is_active', true);
+  if (cartErr) return { orderItems: [], subtotal: 0, error: cartErr.message };
+  if (!cartItems || cartItems.length === 0) return { orderItems: [], subtotal: 0, error: 'Cart is empty' };
+
+  const orderItems: any[] = [];
+  let subtotal = 0;
+  for (const ci of cartItems) {
+    const resolved = await resolveItemPrice(ci.item_type, ci.item_id);
+    if (!resolved) return { orderItems: [], subtotal: 0, error: `Item not found: ${ci.item_type} #${ci.item_id}` };
+    const qty = ci.quantity || 1;
+    subtotal += resolved.price * qty;
+    orderItems.push({
+      item_type: ci.item_type, item_id: ci.item_id, item_name: resolved.name, item_slug: resolved.slug,
+      original_price: resolved.price, discount_amount: 0, tax_amount: 0, final_price: resolved.price, quantity: qty,
+    });
+  }
+  return { orderItems, subtotal };
+}
+
+// ── Eligible subtotal for a coupon's scope (specific items → content type → all) ──
+async function eligibleSubtotalForCoupon(coupon: any, orderItems: any[]): Promise<number> {
+  const junctions = [
+    { table: 'coupon_courses',  type: 'course',  col: 'course_id' },
+    { table: 'coupon_bundles',  type: 'bundle',  col: 'bundle_id' },
+    { table: 'coupon_batches',  type: 'batch',   col: 'batch_id' },
+    { table: 'coupon_webinars', type: 'webinar', col: 'webinar_id' },
+  ];
+  const specific: Record<string, Set<number>> = {};
+  let hasSpecific = false;
+  for (const j of junctions) {
+    const { data } = await supabase.from(j.table).select(j.col).eq('coupon_id', coupon.id).eq('is_active', true).is('deleted_at', null);
+    const ids = (data || []).map((r: any) => Number(r[j.col]));
+    if (ids.length) { specific[j.type] = new Set(ids); hasSpecific = true; }
+  }
+
+  let total = 0;
+  for (const oi of orderItems) {
+    const line = Number(oi.original_price) * (oi.quantity || 1);
+    if (hasSpecific) {
+      if (specific[oi.item_type]?.has(Number(oi.item_id))) total += line;          // item-level scope
+    } else if (coupon.applicable_to && coupon.applicable_to !== 'all') {
+      if (oi.item_type === coupon.applicable_to) total += line;                     // content-type scope
+    } else {
+      total += line;                                                                // all
+    }
+  }
+  return total;
+}
+
+// ── Apply a coupon (scope-aware) ──
+async function applyCoupon(code: string, subtotal: number, orderItems: any[], userId: number): Promise<{ valid: boolean; discount: number; couponId: number | null; message?: string }> {
   if (!code) return { valid: false, discount: 0, couponId: null };
 
-  const { data: coupon } = await supabase
-    .from('coupons')
-    .select('*')
-    .eq('code', code.toUpperCase())
-    .eq('is_active', true)
-    .is('deleted_at', null)
-    .single();
-
+  const { data: coupon } = await supabase.from('coupons').select('*')
+    .eq('coupon_code', code.toUpperCase()).eq('is_active', true).is('deleted_at', null).maybeSingle();
   if (!coupon) return { valid: false, discount: 0, couponId: null, message: 'Invalid coupon code' };
 
   const now = new Date();
   if (coupon.valid_from && new Date(coupon.valid_from) > now) return { valid: false, discount: 0, couponId: null, message: 'Coupon not yet active' };
-  if (coupon.valid_until && new Date(coupon.valid_until) < now) return { valid: false, discount: 0, couponId: null, message: 'Coupon expired' };
-  if (coupon.max_uses && coupon.times_used >= coupon.max_uses) return { valid: false, discount: 0, couponId: null, message: 'Coupon usage limit reached' };
-  if (coupon.min_order_amount && subtotal < coupon.min_order_amount) return { valid: false, discount: 0, couponId: null, message: `Minimum order amount is ₹${coupon.min_order_amount}` };
+  if (coupon.valid_until && new Date(coupon.valid_until) < now) return { valid: false, discount: 0, couponId: null, message: 'Coupon has expired' };
+  if (coupon.usage_limit && (coupon.used_count || 0) >= coupon.usage_limit) return { valid: false, discount: 0, couponId: null, message: 'Coupon usage limit reached' };
+  if (coupon.min_purchase_amount && subtotal < Number(coupon.min_purchase_amount)) return { valid: false, discount: 0, couponId: null, message: `Minimum order amount is ₹${coupon.min_purchase_amount}` };
 
-  let discount = 0;
-  if (coupon.discount_type === 'percentage') {
-    discount = subtotal * (coupon.discount_value / 100);
-    if (coupon.max_discount_amount && discount > coupon.max_discount_amount) {
-      discount = coupon.max_discount_amount;
-    }
-  } else {
-    discount = coupon.discount_value;
+  if (coupon.usage_per_user) {
+    const { count } = await supabase.from('orders').select('id', { count: 'exact', head: true })
+      .eq('user_id', userId).eq('coupon_id', coupon.id).eq('payment_status', 'paid').is('deleted_at', null);
+    if ((count || 0) >= coupon.usage_per_user) return { valid: false, discount: 0, couponId: null, message: 'You have already used this coupon' };
   }
 
-  discount = Math.min(discount, subtotal);
+  const eligible = await eligibleSubtotalForCoupon(coupon, orderItems);
+  if (eligible <= 0) return { valid: false, discount: 0, couponId: null, message: "This coupon doesn't apply to the items in your cart" };
+
+  let discount = coupon.discount_type === 'percentage'
+    ? eligible * (Number(coupon.discount_value) / 100)
+    : Number(coupon.discount_value);
+  if (coupon.discount_type === 'percentage' && coupon.max_discount_amount && discount > Number(coupon.max_discount_amount)) discount = Number(coupon.max_discount_amount);
+  discount = Math.min(discount, eligible);
   return { valid: true, discount: Math.round(discount * 100) / 100, couponId: coupon.id };
+}
+
+// ── Apply an instructor promo code (scope = its linked courses, else all course items) ──
+async function applyPromo(code: string, orderItems: any[], remainingSubtotal: number): Promise<{ valid: boolean; discount: number; promotionId: number | null; message?: string }> {
+  if (!code) return { valid: false, discount: 0, promotionId: null };
+
+  const { data: promo } = await supabase.from('instructor_promotions').select('*')
+    .eq('promo_code', code.toUpperCase()).eq('is_active', true).is('deleted_at', null).maybeSingle();
+  if (!promo) return { valid: false, discount: 0, promotionId: null, message: 'Invalid promo code' };
+
+  const now = new Date();
+  if (promo.promotion_status && !['active', 'approved', 'running'].includes(String(promo.promotion_status))) return { valid: false, discount: 0, promotionId: null, message: 'Promo is not active' };
+  if (promo.requires_approval && !promo.approved_at) return { valid: false, discount: 0, promotionId: null, message: 'Promo not approved yet' };
+  if (promo.valid_from && new Date(promo.valid_from) > now) return { valid: false, discount: 0, promotionId: null, message: 'Promo not yet active' };
+  if (promo.valid_until && new Date(promo.valid_until) < now) return { valid: false, discount: 0, promotionId: null, message: 'Promo has expired' };
+  if (promo.usage_limit && (promo.used_count || 0) >= promo.usage_limit) return { valid: false, discount: 0, promotionId: null, message: 'Promo usage limit reached' };
+
+  const { data: pc } = await supabase.from('instructor_promotion_courses').select('course_id').eq('promotion_id', promo.id).eq('is_active', true).is('deleted_at', null);
+  const courseIds = new Set((pc || []).map((r: any) => Number(r.course_id)));
+  let eligible = 0;
+  for (const oi of orderItems) {
+    if (oi.item_type !== 'course') continue;
+    if (courseIds.size && !courseIds.has(Number(oi.item_id))) continue;
+    eligible += Number(oi.original_price) * (oi.quantity || 1);
+  }
+  eligible = Math.min(eligible, remainingSubtotal);
+  if (eligible <= 0) return { valid: false, discount: 0, promotionId: null, message: "This promo doesn't apply to the courses in your cart" };
+
+  let discount = promo.discount_type === 'percentage'
+    ? eligible * (Number(promo.discount_value) / 100)
+    : Number(promo.discount_value);
+  if (promo.discount_type === 'percentage' && promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
+  discount = Math.min(discount, eligible);
+  return { valid: true, discount: Math.round(discount * 100) / 100, promotionId: promo.id };
+}
+
+// ── Shared pricing: cart → subtotal, coupon + promo discounts, total ──
+async function computeCartPricing(userId: number, coupon_code?: string, promo_code?: string) {
+  const built = await buildCartItems(userId);
+  if (built.error) return { error: built.error } as any;
+  const { orderItems, subtotal } = built;
+
+  let discountAmount = 0, couponId: number | null = null, promotionId: number | null = null;
+  let couponValid = false, promoValid = false;
+  let couponMessage: string | undefined, promoMessage: string | undefined;
+
+  if (coupon_code) {
+    const r = await applyCoupon(coupon_code, subtotal, orderItems, userId);
+    couponValid = r.valid; couponMessage = r.message;
+    if (r.valid) { discountAmount += r.discount; couponId = r.couponId; }
+  }
+  if (promo_code) {
+    const r = await applyPromo(promo_code, orderItems, subtotal - discountAmount);
+    promoValid = r.valid; promoMessage = r.message;
+    if (r.valid) { discountAmount += r.discount; promotionId = r.promotionId; }
+  }
+
+  const taxAmount = 0;
+  const total = Math.max(Math.round((subtotal - discountAmount + taxAmount) * 100) / 100, 0);
+  return { orderItems, subtotal, discountAmount, taxAmount, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
 }
 
 /**
@@ -94,80 +203,16 @@ async function applyCoupon(code: string, subtotal: number, items: any[]): Promis
  */
 export async function initiateCheckout(req: Request, res: Response) {
   try {
-    const { user_id, coupon_code, promo_code, notes, billing_name, billing_email, billing_phone, billing_address, billing_city, billing_state, billing_country, billing_pincode, gst_number } = req.body;
+    const { coupon_code, promo_code, notes, billing_name, billing_email, billing_phone, billing_address, billing_city, billing_state, billing_country, billing_pincode, gst_number } = req.body;
+    const user_id = req.body.user_id || req.user!.id;
 
-    if (!user_id) return err(res, 'user_id is required', 400);
+    // 1–4. Resolve prices + apply scope-aware coupon/promo discounts.
+    const pricing: any = await computeCartPricing(user_id, coupon_code, promo_code);
+    if (pricing.error) return err(res, pricing.error, 400);
+    if (coupon_code && !pricing.couponValid) return err(res, pricing.couponMessage || 'Invalid coupon', 400);
+    if (promo_code && !pricing.promoValid) return err(res, pricing.promoMessage || 'Invalid promo code', 400);
 
-    // 1. Fetch active cart items for this user
-    const { data: cartItems, error: cartErr } = await supabase
-      .from('cart_items')
-      .select('*')
-      .eq('user_id', user_id)
-      .is('deleted_at', null)
-      .eq('is_active', true);
-
-    if (cartErr) return err(res, cartErr.message, 500);
-    if (!cartItems || cartItems.length === 0) return err(res, 'Cart is empty', 400);
-
-    // 2. Resolve prices for each item
-    const orderItems: any[] = [];
-    let subtotal = 0;
-
-    for (const ci of cartItems) {
-      const resolved = await resolveItemPrice(ci.item_type, ci.item_id);
-      if (!resolved) return err(res, `Item not found: ${ci.item_type} #${ci.item_id}`, 400);
-
-      const itemTotal = resolved.price * (ci.quantity || 1);
-      subtotal += itemTotal;
-
-      orderItems.push({
-        item_type: ci.item_type,
-        item_id: ci.item_id,
-        item_name: resolved.name,
-        item_slug: resolved.slug,
-        original_price: resolved.price,
-        discount_amount: 0,
-        tax_amount: 0,
-        final_price: resolved.price,
-        quantity: ci.quantity || 1,
-      });
-    }
-
-    // 3. Apply coupon
-    let discountAmount = 0;
-    let couponId: number | null = null;
-    if (coupon_code) {
-      const couponResult = await applyCoupon(coupon_code, subtotal, orderItems);
-      if (!couponResult.valid) return err(res, couponResult.message || 'Invalid coupon', 400);
-      discountAmount = couponResult.discount;
-      couponId = couponResult.couponId;
-    }
-
-    // 4. Apply promo code (instructor promotion)
-    let promotionId: number | null = null;
-    if (promo_code) {
-      const { data: promo } = await supabase
-        .from('instructor_promotions')
-        .select('*')
-        .eq('promo_code', promo_code.toUpperCase())
-        .eq('is_active', true)
-        .is('deleted_at', null)
-        .single();
-      if (promo) {
-        promotionId = promo.id;
-        // Promo discount is additive to coupon
-        if (promo.discount_type === 'percentage') {
-          const promoDisc = subtotal * (promo.discount_value / 100);
-          discountAmount += Math.min(promoDisc, subtotal - discountAmount);
-        } else {
-          discountAmount += Math.min(promo.discount_value, subtotal - discountAmount);
-        }
-      }
-    }
-
-    const taxAmount = 0; // Tax can be added later (GST etc.)
-    const totalAmount = Math.max(subtotal - discountAmount + taxAmount, 0);
-    const totalRounded = Math.round(totalAmount * 100) / 100;
+    const { orderItems, subtotal, discountAmount, taxAmount, total: totalRounded, couponId, promotionId } = pricing;
 
     // 5. Create the order record (auto-generates order_number via trigger)
     const { data: order, error: orderErr } = await supabase
@@ -194,7 +239,7 @@ export async function initiateCheckout(req: Request, res: Response) {
     if (orderErr) return err(res, orderErr.message, 500);
 
     // 6. Create order_items
-    const itemsToInsert = orderItems.map(oi => ({
+    const itemsToInsert = orderItems.map((oi: any) => ({
       ...oi,
       order_id: order.id,
       created_by: req.user!.id,
@@ -231,14 +276,15 @@ export async function initiateCheckout(req: Request, res: Response) {
       });
     }
 
-    // 8. Increment coupon usage (for paid orders — free orders handled by orchestration)
-    if (couponId && totalRounded > 0) {
-      try {
-        await supabase.rpc('increment_coupon_usage', { coupon_id_arg: couponId });
-      } catch {
-        // Fallback: manual increment
-        const { data: c } = await supabase.from('coupons').select('times_used').eq('id', couponId).single();
-        if (c) await supabase.from('coupons').update({ times_used: (c.times_used || 0) + 1 }).eq('id', couponId);
+    // 8. Increment coupon + promo usage (paid orders; free orders handled by orchestration)
+    if (totalRounded > 0) {
+      if (couponId) {
+        const { data: c } = await supabase.from('coupons').select('used_count').eq('id', couponId).single();
+        if (c) await supabase.from('coupons').update({ used_count: (c.used_count || 0) + 1 }).eq('id', couponId);
+      }
+      if (promotionId) {
+        const { data: p } = await supabase.from('instructor_promotions').select('used_count').eq('id', promotionId).single();
+        if (p) await supabase.from('instructor_promotions').update({ used_count: (p.used_count || 0) + 1 }).eq('id', promotionId);
       }
     }
 
@@ -263,6 +309,31 @@ export async function initiateCheckout(req: Request, res: Response) {
   } catch (e: any) {
     console.error('[CHECKOUT] initiateCheckout error:', e);
     return err(res, e.message || 'Checkout failed', 500);
+  }
+}
+
+/**
+ * POST /checkout/preview
+ * Compute cart totals + coupon/promo discount WITHOUT creating an order.
+ * Body: { user_id?, coupon_code?, promo_code? } (user_id defaults to the caller).
+ */
+export async function previewCheckout(req: Request, res: Response) {
+  try {
+    const userId = req.body.user_id || req.user!.id;
+    const { coupon_code, promo_code } = req.body;
+    const pricing: any = await computeCartPricing(userId, coupon_code, promo_code);
+    if (pricing.error) return err(res, pricing.error, 400);
+    return ok(res, {
+      subtotal: pricing.subtotal,
+      discount_amount: pricing.discountAmount,
+      tax_amount: pricing.taxAmount,
+      total: pricing.total,
+      item_count: pricing.orderItems.length,
+      coupon: coupon_code ? { code: coupon_code, valid: pricing.couponValid, message: pricing.couponMessage } : null,
+      promo: promo_code ? { code: promo_code, valid: pricing.promoValid, message: pricing.promoMessage } : null,
+    });
+  } catch (e: any) {
+    return err(res, e.message || 'Preview failed', 500);
   }
 }
 

@@ -61,6 +61,9 @@ r.use(authMiddleware, attachPermissions());
  */
 r.post('/initiate', checkoutLimiter, requirePermission('order', 'create'), ctrl.initiateCheckout);
 
+// Preview totals + coupon/promo discount without creating an order
+r.post('/preview', requirePermission('order', 'create'), ctrl.previewCheckout);
+
 /**
  * @openapi
  * /checkout/verify:

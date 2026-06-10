@@ -101,6 +101,8 @@ import capstoneProjectSolutionRoutes from './modules/capstone-project-solutions/
 import webinarRoutes from './modules/webinars/webinar.routes';
 import webinarTranslationRoutes from './modules/webinar-translations/webinarTranslation.routes';
 import referralCodeRoutes from './modules/referral-codes/referralCode.routes';
+import myReferralRoutes from './modules/my-referral/myReferral.routes';
+import publicPromotionRoutes from './modules/public-promotions/publicPromotion.routes';
 import referralUsageRoutes from './modules/referral-usages/referralUsage.routes';
 import referralRewardRoutes from './modules/referral-rewards/referralReward.routes';
 import couponRoutes from './modules/coupons/coupon.routes';
@@ -373,6 +375,8 @@ app.use(`${api}/assessment-capstone-project-solutions`,  capstoneProjectSolution
 app.use(`${api}/webinars`,                              webinarRoutes);
 app.use(`${api}/webinar-translations`,                  webinarTranslationRoutes);
 app.use(`${api}/referral-codes`,                        referralCodeRoutes);
+app.use(`${api}/my/referral`,                           myReferralRoutes);
+app.use(`${api}/public-promotions`,                     publicPromotionRoutes);
 app.use(`${api}/referral-usages`,                       referralUsageRoutes);
 app.use(`${api}/referral-rewards`,                      referralRewardRoutes);
 app.use(`${api}/coupons`,                               couponRoutes);
