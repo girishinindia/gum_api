@@ -139,6 +139,7 @@ import notificationPreferenceRoutes from './modules/notifications/notificationPr
 import cronRoutes from './cron/cronRoutes';
 import instructorEarningRoutes from './modules/instructor-earnings/instructorEarning.routes';
 import revenueShareTierRoutes from './modules/revenue-share-tiers/revenueShareTier.routes';
+import meDashboardRoutes from './modules/me-dashboard/meDashboard.routes';
 import payoutRequestRoutes from './modules/payout-requests/payoutRequest.routes';
 import payoutSettlementRoutes from './modules/payout-settlements/payoutSettlement.routes';
 import discussionThreadRoutes from './modules/discussion-threads/discussionThread.routes';
@@ -427,6 +428,7 @@ app.use(`${api}/notification-preferences`,                 notificationPreferenc
 app.use(`${api}/cron`,                                     cronRoutes);
 app.use(`${api}/instructor-earnings`,                      instructorEarningRoutes);
 app.use(`${api}/revenue-share-tiers`,                      revenueShareTierRoutes);
+app.use(`${api}/dashboard`,                                meDashboardRoutes);
 app.use(`${api}/payout-requests`,                          payoutRequestRoutes);
 app.use(`${api}/payout-settlements`,                       payoutSettlementRoutes);
 app.use(`${api}/discussion-threads`,                       discussionThreadRoutes);

@@ -216,3 +216,82 @@ export async function getSummary(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 }
+
+// ── Self-service (June 2026 — web instructor earnings page) ────────────────
+// Always scoped to req.user.id.
+
+/** GET /instructor-earnings/me — own earnings, newest first. */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    let q = supabase
+      .from(TABLE)
+      .select('id, order_id, item_type, item_id, order_amount, gst_amount, instructor_share, earning_amount, platform_fee, earning_status, created_at, orders(id, order_number)', { count: 'exact' })
+      .eq('instructor_id', req.user!.id)
+      .is('deleted_at', null);
+    if (req.query.earning_status) q = q.eq('earning_status', req.query.earning_status as string);
+    q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+
+    const { data, count, error: e } = await q;
+    if (e) return err(res, e.message, 500);
+    return paginated(res, data || [], count || 0, page, limit);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** GET /instructor-earnings/me/summary — own totals by status + per item. */
+export async function summaryMine(req: Request, res: Response) {
+  try {
+    const instructorId = req.user!.id;
+    const { data: earnings, error: e } = await supabase
+      .from(TABLE)
+      .select('item_type, item_id, order_amount, earning_amount, earning_status')
+      .eq('instructor_id', instructorId)
+      .is('deleted_at', null);
+    if (e) return err(res, e.message, 500);
+
+    const summary: any = { total_earnings: 0, pending_earnings: 0, confirmed_earnings: 0, paid_earnings: 0, reversed_earnings: 0, gross_sales: 0 };
+    const byItem = new Map<string, { item_type: string; item_id: number; gross: number; earning: number; sales: number }>();
+
+    for (const row of (earnings || []) as any[]) {
+      const amt = Number(row.earning_amount) || 0;
+      const gross = Number(row.order_amount) || 0;
+      summary.total_earnings += amt;
+      summary.gross_sales += gross;
+      if (row.earning_status === 'pending') summary.pending_earnings += amt;
+      else if (row.earning_status === 'confirmed') summary.confirmed_earnings += amt;
+      else if (row.earning_status === 'paid') summary.paid_earnings += amt;
+      else if (row.earning_status === 'reversed') summary.reversed_earnings += amt;
+
+      const key = `${row.item_type}:${row.item_id}`;
+      const it = byItem.get(key) || { item_type: row.item_type, item_id: row.item_id, gross: 0, earning: 0, sales: 0 };
+      it.gross += gross; it.earning += amt; it.sales += 1;
+      byItem.set(key, it);
+    }
+
+    // Resolve item names (best-effort, per type)
+    const NAME_TABLE: Record<string, { table: string; col: string }> = {
+      course: { table: 'courses', col: 'name' },
+      bundle: { table: 'bundles', col: 'name' },
+      batch: { table: 'course_batches', col: 'title' },
+      webinar: { table: 'webinars', col: 'title' },
+    };
+    const items = [...byItem.values()];
+    for (const type of Object.keys(NAME_TABLE)) {
+      const ids = items.filter(i => i.item_type === type).map(i => i.item_id);
+      if (!ids.length) continue;
+      const { data: rows } = await supabase.from(NAME_TABLE[type].table).select(`id, ${NAME_TABLE[type].col}`).in('id', ids);
+      const nameMap = new Map((rows || []).map((r: any) => [r.id, r[NAME_TABLE[type].col]]));
+      for (const i of items) if (i.item_type === type) (i as any).name = nameMap.get(i.item_id) || `${type} #${i.item_id}`;
+    }
+
+    for (const k of Object.keys(summary)) summary[k] = Math.round(summary[k] * 100) / 100;
+    return ok(res, { ...summary, by_item: items.sort((a, b) => b.earning - a.earning) });
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

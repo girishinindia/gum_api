@@ -7,8 +7,12 @@ const r = Router();
 
 r.use(authMiddleware, attachPermissions());
 
-r.get('/', ctrl.list);
-r.get('/:id', ctrl.getById);
+// Self-service (the signed-in instructor's settlements). Before /:id.
+r.get('/me', ctrl.listMine);
+
+// Admin — permission-guarded (were open to any signed-in user).
+r.get('/', requirePermission('payout_settlement', 'read'), ctrl.list);
+r.get('/:id', requirePermission('payout_settlement', 'read'), ctrl.getById);
 r.post('/', requirePermission('payout_settlement', 'create'), ctrl.create);
 r.patch('/:id/complete', requirePermission('payout_settlement', 'update'), ctrl.markCompleted);
 r.patch('/:id/fail', requirePermission('payout_settlement', 'update'), ctrl.markFailed);

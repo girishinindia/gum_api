@@ -222,3 +222,48 @@ export async function getOrderItems(req: Request, res: Response) {
   if (e) return err(res, e.message, 500);
   return ok(res, data || []);
 }
+
+// ── Self-service (June 2026 — web "Payments & orders" page) ────────────────
+// Always scoped to req.user.id; never accepts a user id from the client.
+
+/** GET /orders/me — the caller's own orders, newest first, items embedded. */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const { data, count, error: e } = await supabase
+      .from(TABLE)
+      .select('*, order_items(id, item_type, item_id, original_price, final_price, quantity)', { count: 'exact' })
+      .eq('user_id', req.user!.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (e) return err(res, e.message, 500);
+    return paginated(res, data || [], count || 0, page, limit);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** GET /orders/me/:id — one of the caller's own orders (404 otherwise). */
+export async function getMine(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .select('*, order_items(id, item_type, item_id, original_price, discount_amount, tax_amount, final_price, quantity)')
+      .eq('id', id)
+      .eq('user_id', req.user!.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (e) return err(res, e.message, 500);
+    if (!data) return err(res, 'Order not found', 404);
+    return ok(res, data);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

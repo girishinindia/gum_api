@@ -267,3 +267,22 @@ export async function markFailed(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 }
+
+// ── Self-service (June 2026 — web instructor payouts page) ─────────────────
+
+/** GET /payout-settlements/me — the signed-in instructor's settlements. */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .select('*, payout_requests(id, request_number, requested_amount)')
+      .eq('instructor_id', req.user!.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (e) return err(res, e.message, 500);
+    return ok(res, data || []);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

@@ -372,3 +372,87 @@ export async function reject(req: Request, res: Response) {
     return err(res, e.message, 500);
   }
 }
+
+// ── Self-service (June 2026 — web instructor payouts page) ─────────────────
+
+/** GET /payout-requests/me — the signed-in instructor's requests. */
+export async function listMine(req: Request, res: Response) {
+  try {
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('instructor_id', req.user!.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (e) return err(res, e.message, 500);
+    return ok(res, data || []);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/**
+ * POST /payout-requests/me — instructor submits a payout request.
+ * Amount is capped at confirmed earnings minus already-requested amounts.
+ */
+export async function createMine(req: Request, res: Response) {
+  try {
+    const instructorId = req.user!.id;
+    const requested = Number(req.body.requested_amount);
+    if (!requested || requested <= 0) return err(res, 'requested_amount must be > 0', 400);
+
+    // Available = confirmed earnings − active/settled requests
+    const { data: earnings } = await supabase
+      .from('instructor_earnings')
+      .select('earning_amount')
+      .eq('instructor_id', instructorId)
+      .eq('earning_status', 'confirmed')
+      .is('deleted_at', null);
+    const confirmed = (earnings || []).reduce((s: number, r: any) => s + (Number(r.earning_amount) || 0), 0);
+
+    const { data: prior } = await supabase
+      .from(TABLE)
+      .select('requested_amount, request_status')
+      .eq('instructor_id', instructorId)
+      .is('deleted_at', null);
+    const reserved = (prior || [])
+      .filter((p: any) => !['rejected', 'cancelled', 'failed'].includes(String(p.request_status)))
+      .reduce((s: number, p: any) => s + (Number(p.requested_amount) || 0), 0);
+
+    const available = Math.round((confirmed - reserved) * 100) / 100;
+    if (requested > available) {
+      return err(res, `Requested amount exceeds your available confirmed earnings (₹${available.toFixed(2)})`, 400);
+    }
+
+    // Optional bank account — must belong to the caller
+    let bankAccountId: number | null = null;
+    if (req.body.bank_account_id) {
+      const { data: acct } = await supabase
+        .from('bank_accounts')
+        .select('id, user_id')
+        .eq('id', parseInt(req.body.bank_account_id))
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (!acct || acct.user_id !== instructorId) return err(res, 'Invalid bank account', 400);
+      bankAccountId = acct.id;
+    }
+
+    const { data, error: e } = await supabase
+      .from(TABLE)
+      .insert({
+        instructor_id: instructorId,
+        requested_amount: requested,
+        payment_method: req.body.payment_method || 'bank_transfer',
+        bank_account_id: bankAccountId,
+        notes: req.body.notes || null,
+        created_by: instructorId,
+      })
+      .select('*')
+      .single();
+    if (e) return err(res, e.message, 500);
+    return ok(res, data, 'Payout request submitted', 201);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}

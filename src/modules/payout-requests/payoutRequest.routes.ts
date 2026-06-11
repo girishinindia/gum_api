@@ -7,8 +7,13 @@ const r = Router();
 
 r.use(authMiddleware, attachPermissions());
 
-r.get('/', ctrl.list);
-r.get('/:id', ctrl.getById);
+// Self-service (the signed-in instructor). Before /:id.
+r.get('/me', ctrl.listMine);
+r.post('/me', ctrl.createMine);
+
+// Admin — permission-guarded (were open to any signed-in user).
+r.get('/', requirePermission('payout_request', 'read'), ctrl.list);
+r.get('/:id', requirePermission('payout_request', 'read'), ctrl.getById);
 r.post('/', requirePermission('payout_request', 'create'), ctrl.create);
 r.patch('/:id/approve', requirePermission('payout_request', 'approve'), ctrl.approve);
 r.patch('/:id/reject', requirePermission('payout_request', 'reject'), ctrl.reject);
