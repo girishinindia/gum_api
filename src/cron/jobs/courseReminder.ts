@@ -18,10 +18,12 @@ export async function runCourseReminder(): Promise<{ reminded: number; skipped: 
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Find enrollments that have gone stale (not accessed in 7+ days, not completed)
+  // Find enrollments that have gone stale (not accessed in 7+ days, not completed).
+  // Enrollments are polymorphic (item_type + item_id) — reminders only target courses.
   const { data: stale, error: err } = await supabase
     .from('enrollments')
-    .select('id, user_id, course_id, progress_pct, last_accessed_at')
+    .select('id, user_id, item_type, item_id, progress_pct, last_accessed_at')
+    .eq('item_type', 'course')
     .eq('enrollment_status', 'active')
     .eq('is_active', true)
     .lt('progress_pct', 100)
@@ -39,16 +41,16 @@ export async function runCourseReminder(): Promise<{ reminded: number; skipped: 
     return { reminded: 0, skipped: 0 };
   }
 
-  // Get course titles for personalized messages
-  const courseIds = [...new Set(stale.map((e: any) => e.course_id).filter(Boolean))];
+  // Get course names for personalized messages (courses column is `name`, not `title`)
+  const courseIds = [...new Set(stale.map((e: any) => e.item_id).filter(Boolean))];
   const { data: courses } = await supabase
     .from('courses')
-    .select('id, title')
+    .select('id, name')
     .in('id', courseIds);
 
   const courseMap = new Map<number, string>();
   for (const c of courses || []) {
-    courseMap.set(c.id, c.title);
+    courseMap.set(c.id, c.name);
   }
 
   // Check user preferences — skip users who opted out of reminders
@@ -91,7 +93,7 @@ export async function runCourseReminder(): Promise<{ reminded: number; skipped: 
       continue;
     }
 
-    const courseTitle = courseMap.get(enrollment.course_id) || 'your course';
+    const courseTitle = courseMap.get(enrollment.item_id) || 'your course';
     const progress = parseFloat(enrollment.progress_pct || 0);
 
     try {
@@ -103,7 +105,7 @@ export async function runCourseReminder(): Promise<{ reminded: number; skipped: 
         channels: ['in_app', 'email'],
         referenceType: 'enrollment',
         referenceId: enrollment.id,
-        metadata: { course_id: enrollment.course_id, progress_pct: progress },
+        metadata: { course_id: enrollment.item_id, progress_pct: progress },
       });
       reminded++;
       // Mark this user as reminded so we skip their other stale enrollments

@@ -14,9 +14,10 @@ export async function runEnrollmentExpiry(): Promise<{ expired: number; warned: 
   let warned = 0;
 
   // ── 1. Expire overdue enrollments ──
+  // (enrollments are polymorphic: item_type + item_id — there is no course_id column)
   const { data: overdue, error: err1 } = await supabase
     .from('enrollments')
-    .select('id, user_id, course_id, expires_at')
+    .select('id, user_id, item_type, item_id, expires_at')
     .eq('enrollment_status', 'active')
     .eq('is_active', true)
     .not('expires_at', 'is', null)
@@ -64,7 +65,7 @@ export async function runEnrollmentExpiry(): Promise<{ expired: number; warned: 
 
   const { data: expiringSoon } = await supabase
     .from('enrollments')
-    .select('id, user_id, course_id, expires_at')
+    .select('id, user_id, item_type, item_id, expires_at')
     .eq('enrollment_status', 'active')
     .eq('is_active', true)
     .not('expires_at', 'is', null)
@@ -76,7 +77,8 @@ export async function runEnrollmentExpiry(): Promise<{ expired: number; warned: 
   if (expiringSoon && expiringSoon.length > 0) {
     for (const enrollment of expiringSoon) {
       try {
-        // Only warn once — check if we already sent a warning (via metadata)
+        // Only warn once — a previous warning creates one row PER channel
+        // (in_app + email), so check by count, never maybeSingle().
         const { data: existing } = await supabase
           .from('notifications')
           .select('id')
@@ -84,9 +86,9 @@ export async function runEnrollmentExpiry(): Promise<{ expired: number; warned: 
           .eq('notification_type', 'enrollment_expiring_soon')
           .eq('reference_type', 'enrollment')
           .eq('reference_id', enrollment.id)
-          .maybeSingle();
+          .limit(1);
 
-        if (!existing) {
+        if (!existing || existing.length === 0) {
           await sendNotification({
             userId: enrollment.user_id,
             notificationType: 'enrollment_expiring_soon',

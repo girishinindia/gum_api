@@ -390,14 +390,17 @@ export async function engagement(req: Request, res: Response) {
       stuckEnrollments,
     ] = await Promise.all([
       supabase.from('users').select('id', { count: 'exact', head: true }).gte('last_login_at', since7d).is('deleted_at', null),
-      supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('completion_status', 'completed').gte('completed_at', since30d),
+      // completion_status doesn't exist — a non-null completed_at IS the completion marker
+      supabase.from('enrollments').select('id', { count: 'exact', head: true }).not('completed_at', 'is', null).gte('completed_at', since30d),
       supabase.from('enrollments').select('id', { count: 'exact', head: true }).gte('created_at', since30d),
       supabase.from('reviews').select('rating', { count: 'exact' }).is('deleted_at', null),
       supabase.from('issued_certificates').select('id', { count: 'exact', head: true }).gte('issued_at', since30d).is('revoked_at', null),
       supabase.from('reviews').select('id, rating, comment, user_id, course_id, created_at').eq('is_flagged', true).order('created_at', { ascending: false }).limit(10),
       supabase.from('reviews').select('id, rating, comment, course_id, user_id, created_at').is('deleted_at', null).order('created_at', { ascending: false }).limit(10),
       safeAwait<any[]>(() => supabase.rpc('fn_lowest_rated_courses'), []),
-      supabase.from('enrollments').select('id, user_id, course_id, last_accessed_at').eq('completion_status', 'in_progress').lt('last_accessed_at', nDaysAgo(14)).order('last_accessed_at', { ascending: true }).limit(10),
+      // enrollments have no course_id/completion_status columns — polymorphic item_type/item_id
+      // + enrollment_status/progress_pct. Alias keeps the response shape (course_id) stable.
+      supabase.from('enrollments').select('id, user_id, course_id:item_id, item_type, last_accessed_at').eq('item_type', 'course').eq('enrollment_status', 'active').lt('progress_pct', 100).lt('last_accessed_at', nDaysAgo(14)).order('last_accessed_at', { ascending: true }).limit(10),
     ]);
 
     const reviews = reviewsAggregate.data ?? [];
