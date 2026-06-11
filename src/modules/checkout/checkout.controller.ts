@@ -165,7 +165,9 @@ async function applyPromo(code: string, orderItems: any[], remainingSubtotal: nu
   let discount = promo.discount_type === 'percentage'
     ? eligible * (Number(promo.discount_value) / 100)
     : Number(promo.discount_value);
-  if (promo.discount_type === 'percentage' && promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
+  // max_discount_amount caps BOTH types (admin shows "₹200 (max ₹100)" for
+  // fixed promos too — previously the cap was only enforced for percentage).
+  if (promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
   discount = Math.min(discount, eligible);
   return { valid: true, discount: Math.round(discount * 100) / 100, promotionId: promo.id };
 }

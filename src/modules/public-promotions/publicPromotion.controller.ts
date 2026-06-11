@@ -40,7 +40,8 @@ export async function activeForCourse(req: Request, res: Response) {
 
   const discountFor = (p: any): number => {
     let d = p.discount_type === 'percentage' ? price * (Number(p.discount_value) / 100) : Number(p.discount_value);
-    if (p.discount_type === 'percentage' && p.max_discount_amount && d > Number(p.max_discount_amount)) d = Number(p.max_discount_amount);
+    // max_discount_amount caps BOTH types (keep in sync with checkout applyPromo)
+    if (p.max_discount_amount && d > Number(p.max_discount_amount)) d = Number(p.max_discount_amount);
     return Math.min(d, price);
   };
 
