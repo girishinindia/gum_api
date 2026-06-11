@@ -109,6 +109,14 @@ export async function list(req: Request, res: Response) {
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
   if (req.query.webinar_status) q = q.eq('webinar_status', req.query.webinar_status as string);
+  else q = q.neq('webinar_status', 'cancelled'); // hide cancelled webinars by default (same pattern as course-batches)
+  // Extra exclusions (comma-separated), e.g. the public site passes
+  // exclude_webinar_status=draft so work-in-progress webinars never leak.
+  if (req.query.exclude_webinar_status) {
+    for (const s of String(req.query.exclude_webinar_status).split(',').map(v => v.trim()).filter(Boolean)) {
+      q = q.neq('webinar_status', s);
+    }
+  }
   if (req.query.webinar_owner) q = q.eq('webinar_owner', req.query.webinar_owner as string);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
@@ -188,7 +196,36 @@ export async function list(req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Webinar not found', 404);
-  return ok(res, data);
+
+  // Same translation enrichment as getBySlug — catalog cards may link by id,
+  // and without this the public detail page rendered none of the translated
+  // content (description/tags/SEO) stored in webinar_translations (June 2026).
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('webinar_translations')
+      .select('*')
+      .eq('webinar_id', data.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('webinar_translations')
+      .select('*')
+      .eq('webinar_id', data.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  return ok(res, { ...data, translation });
 }
 
 /**

@@ -12,7 +12,7 @@ const TABLE = 'wallets';
 const CACHE_KEY = 'wallets:all';
 
 const FK_SELECT = `*,
-  user:users!wallets_user_id_fkey(id, first_name, last_name, email, type, profile_picture)`;
+  user:users!wallets_user_id_fkey(id, first_name, last_name, email, type, profile_picture:avatar_url)`;
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 
@@ -89,6 +89,45 @@ export async function getByUserId(req: Request, res: Response) {
 
     const { data } = await supabase.from(TABLE).select(FK_SELECT).eq('id', wallet.id).single();
     return ok(res, data);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+// ── Self-service endpoints (June 2026 — the web /wallet page) ──────────────
+// Any signed-in user; always scoped to req.user.id — never accepts a user id.
+
+/** GET /wallets/me — the caller's own wallet (auto-created on first access). */
+export async function getMine(req: Request, res: Response) {
+  try {
+    const wallet = await getOrCreateWallet(req.user!.id);
+    if (!wallet) return err(res, 'Failed to get wallet', 500);
+    return ok(res, wallet);
+  } catch (e: any) {
+    return err(res, e.message, 500);
+  }
+}
+
+/** GET /wallets/me/transactions?page=&limit= — the caller's own history. */
+export async function myTransactions(req: Request, res: Response) {
+  try {
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const wallet = await getOrCreateWallet(req.user!.id);
+    if (!wallet) return err(res, 'Failed to get wallet', 500);
+
+    const { data, count, error: e } = await supabase
+      .from('wallet_transactions')
+      .select('id, transaction_type, amount, balance_before, balance_after, source_type, source_id, description, status, created_at', { count: 'exact' })
+      .eq('wallet_id', wallet.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (e) return err(res, e.message, 500);
+    return paginated(res, data || [], count || 0, page, limit);
   } catch (e: any) {
     return err(res, e.message, 500);
   }

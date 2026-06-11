@@ -10,7 +10,7 @@ export async function listByRoom(req: Request, res: Response) {
   const roomId = parseInt(req.params.roomId);
   const { data, error: e } = await supabase
     .from(TABLE)
-    .select('*, users!chat_read_receipts_user_id_fkey(id, first_name, last_name, profile_picture)')
+    .select('*, users!chat_read_receipts_user_id_fkey(id, first_name, last_name, profile_picture:avatar_url)')
     .eq('room_id', roomId)
     .order('read_at', { ascending: false });
 

@@ -3,6 +3,7 @@ import multer from 'multer';
 import os from 'os';
 import { authMiddleware } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
+import { publicVerifyLimiter } from '../../middleware/rateLimiter';
 import * as ctrl from './course.controller';
 import * as importCtrl from './courseImport.controller';
 
@@ -37,6 +38,10 @@ r.get('/languages', ctrl.courseLanguages);
 // block is too late, so gate it inline. REMOVE after the video bug is fixed.
 r.get('/_debug/bunny-stream', authMiddleware, ctrl.debugBunnyStream);
 r.get('/by-slug/:slug', ctrl.getBySlug);
+// Phase 6 (June 2026) — PUBLIC signed trailer URL for the marketing site's
+// preview modal (the Bunny library is token-gated; raw embed URLs 403).
+// Published+active courses only; rate-limited like other public endpoints.
+r.get('/:id/trailer-playback', publicVerifyLimiter, ctrl.courseTrailerPlayback);
 r.get('/:id',  ctrl.getById);
 
 // Protected — specific routes MUST come before generic /:id

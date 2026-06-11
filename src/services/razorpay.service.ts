@@ -65,12 +65,20 @@ export function verifyPaymentSignature(params: VerifyPaymentParams): boolean {
 /**
  * Verify a Razorpay webhook signature.
  */
-export function verifyWebhookSignature(body: string, signature: string, secret: string): boolean {
+export function verifyWebhookSignature(body: string | Buffer, signature: string, secret: string): boolean {
+  if (!secret || !signature) return false;
   const expected = crypto
     .createHmac('sha256', secret)
     .update(body)
-    .digest('hex');
-  return expected === signature;
+    .digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(String(signature).trim().toLowerCase().replace(/^sha256=/, ''), 'hex');
+  } catch {
+    return false;
+  }
+  if (expected.length !== given.length) return false;
+  return crypto.timingSafeEqual(expected, given); // constant-time compare
 }
 
 /**

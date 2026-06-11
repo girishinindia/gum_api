@@ -45,6 +45,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.item_id) q = q.eq('item_id', parseInt(req.query.item_id as string));
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.session_status) q = q.eq('session_status', req.query.session_status as string);
+  else q = q.neq('session_status', 'cancelled'); // hide cancelled sessions by default (same pattern as course-batches)
   if (req.query.is_recurring === 'true') q = q.eq('is_recurring', true);
   else if (req.query.is_recurring === 'false') q = q.eq('is_recurring', false);
   if (req.query.meeting_platform) q = q.eq('meeting_platform', req.query.meeting_platform as string);

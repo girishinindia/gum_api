@@ -131,7 +131,35 @@ export async function list(req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Course batch not found', 404);
-  return ok(res, data);
+
+  // Same translation enrichment as getBySlug — id-based consumers otherwise
+  // see none of the translated content stored in batch_translations.
+  const langId = req.query.language_id ? parseInt(req.query.language_id as string) : 7;
+  let translation: any = null;
+  {
+    const { data: t } = await supabase
+      .from('batch_translations')
+      .select('*')
+      .eq('batch_id', data.id)
+      .eq('language_id', langId)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+  if (!translation && langId !== 7) {
+    const { data: t } = await supabase
+      .from('batch_translations')
+      .select('*')
+      .eq('batch_id', data.id)
+      .eq('language_id', 7)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .single();
+    translation = t;
+  }
+
+  return ok(res, { ...data, translation });
 }
 
 /**

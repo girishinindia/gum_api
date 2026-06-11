@@ -84,30 +84,46 @@ export async function createEarningsFromOrder(
   createdBy: number,
 ): Promise<EarningResult> {
   // Fetch order + items
-  const { data: order } = await supabase
+  const { data: order, error: orderError } = await supabase
     .from('orders')
     .select('id, subtotal, discount_amount, total_amount')
     .eq('id', orderId)
     .single();
 
+  if (orderError) {
+    console.error('[EARNINGS] Failed to fetch order:', orderError.message);
+    throw new Error(`Failed to fetch order ${orderId}: ${orderError.message}`);
+  }
   if (!order) return { totalEarnings: 0, earningsCreated: 0 };
 
-  const { data: orderItems } = await supabase
+  // NOTE: order_items columns are original_price / final_price (NOT unit_price / total_price).
+  const { data: orderItems, error: itemsError } = await supabase
     .from('order_items')
-    .select('id, item_type, item_id, unit_price, quantity, total_price')
+    .select('id, item_type, item_id, original_price, final_price, quantity')
     .eq('order_id', orderId)
     .is('deleted_at', null);
 
+  if (itemsError) {
+    // Throw so withStep() records the step as failed (retryable) instead of
+    // silently completing with zero earnings.
+    console.error('[EARNINGS] Failed to fetch order items:', itemsError.message);
+    throw new Error(`Failed to fetch order items for order ${orderId}: ${itemsError.message}`);
+  }
   if (!orderItems || orderItems.length === 0) return { totalEarnings: 0, earningsCreated: 0 };
 
   let totalEarnings = 0;
   let earningsCreated = 0;
 
   // Calculate proportional GST per item
+  const orderSubtotal = Number(order.subtotal) || 0;
   const orderSubtotalAfterDiscount = Math.max(
-    (order.subtotal || 0) - (order.discount_amount || 0),
+    orderSubtotal - (Number(order.discount_amount) || 0),
     0,
   );
+  // Order-level discounts (coupons/promos) live on orders.discount_amount and are
+  // NOT reflected in order_items.final_price — prorate them so earnings are based
+  // on what the student actually paid (a 100%-off order must yield ₹0 earnings).
+  const discountFactor = orderSubtotal > 0 ? orderSubtotalAfterDiscount / orderSubtotal : 1;
 
   for (const item of orderItems) {
     // Skip if item_type not supported
@@ -117,8 +133,10 @@ export async function createEarningsFromOrder(
     const instructorId = await getInstructorId(item.item_type, item.item_id);
     if (!instructorId) continue; // No instructor assigned
 
-    // Calculate proportional GST for this item
-    const itemAmount = item.total_price || item.unit_price || 0;
+    // Calculate proportional GST for this item (final_price falls back to original_price)
+    const grossItem =
+      (Number(item.final_price ?? item.original_price) || 0) * (Number(item.quantity) || 1);
+    const itemAmount = Math.round(grossItem * discountFactor * 100) / 100;
     const gstProportion = orderSubtotalAfterDiscount > 0
       ? (itemAmount / orderSubtotalAfterDiscount) * gstAmount
       : 0;

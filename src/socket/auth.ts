@@ -19,7 +19,7 @@ export async function socketAuthMiddleware(socket: Socket, next: (err?: Error) =
     // Fetch minimal user data for presence
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email, profile_picture')
+      .select('id, first_name, last_name, email, profile_picture:avatar_url')
       .eq('id', userId)
       .single();
 

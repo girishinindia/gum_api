@@ -20,10 +20,14 @@
  *   6  UploadFailed     — upload itself failed
  *
  * Security:
- *   • HMAC-SHA256 of the raw body, signed with the shared webhook secret
- *     configured in Bunny dashboard, sent in the `X-Bunny-Signature`
- *     header (Bunny uses different header names across product lines;
- *     we accept a few candidates).
+ *   • PRIMARY: shared-secret token in the webhook URL query string —
+ *     configure Bunny's WebhookUrl as
+ *       https://<api-host>/api/v1/webhooks/bunny-stream?token=<BUNNY_STREAM_WEBHOOK_SECRET>
+ *     Bunny Stream does NOT sign webhook payloads, so URL-token auth is
+ *     the practical mechanism. Compared in constant time.
+ *   • FALLBACK: HMAC-SHA256 of the raw body in an `X-Bunny-Signature`-style
+ *     header (kept for proxies/gateways that sign on Bunny's behalf).
+ *   • Fail-closed: if BUNNY_STREAM_WEBHOOK_SECRET is unset, reject all.
  *   • Idempotency: webhook_events table with provider='bunny_stream',
  *     event_id = `<library>:<video>:<status>:<timestamp>` — duplicates
  *     are answered 200 OK with `{duplicate: true}`.
@@ -61,6 +65,20 @@ function getSignatureHeader(req: Request): string {
   );
 }
 
+/**
+ * Constant-time match of the `?token=` query parameter against the shared
+ * secret. Both sides are SHA-256-hashed first so timingSafeEqual always
+ * receives equal-length buffers.
+ */
+function verifyUrlToken(req: Request): boolean {
+  if (!config.bunny.streamWebhookSecret) return false; // fail-closed
+  const token = String(req.query.token || '');
+  if (!token) return false;
+  const a = crypto.createHash('sha256').update(token).digest();
+  const b = crypto.createHash('sha256').update(config.bunny.streamWebhookSecret).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 function verifyBunnySignature(rawBody: string, signature: string): boolean {
   if (!config.bunny.streamWebhookSecret) {
     // If no secret is configured we MUST reject everything — fail-closed.
@@ -83,13 +101,17 @@ function verifyBunnySignature(rawBody: string, signature: string): boolean {
 export async function handleBunnyStreamWebhook(req: Request, res: Response) {
   let webhookRowId: number | null = null;
   try {
-    const rawBody = JSON.stringify(req.body ?? {});
+    const rawBody = (req as any).rawBody
+      ? (req as any).rawBody.toString('utf8')
+      : JSON.stringify(req.body ?? {});
     const signature = getSignatureHeader(req);
 
-    if (!verifyBunnySignature(rawBody, signature)) {
+    // Accept EITHER the URL token (primary — Bunny doesn't sign payloads)
+    // OR a valid HMAC signature header (proxy-signed setups).
+    if (!verifyUrlToken(req) && !verifyBunnySignature(rawBody, signature)) {
       logger.warn(
-        { signature_present: !!signature },
-        '[BunnyWebhook] Invalid signature — rejecting',
+        { token_present: !!req.query.token, signature_present: !!signature },
+        '[BunnyWebhook] Auth failed — rejecting',
       );
       return res.status(401).json({ success: false, error: 'Invalid signature' });
     }

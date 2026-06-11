@@ -143,7 +143,7 @@ export function registerAdminHandlers(adminNs: Namespace, chatNs: Namespace, soc
 
       const { data, error: e } = await supabase
         .from('chat_messages')
-        .select('id, room_id, content, message_type, created_at, sender_id, users!chat_messages_sender_id_fkey(id, first_name, last_name, profile_picture), chat_rooms!inner(id, name)')
+        .select('id, room_id, content, message_type, created_at, sender_id, users!chat_messages_sender_id_fkey(id, first_name, last_name, profile_picture:avatar_url), chat_rooms!inner(id, name)')
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(limit);

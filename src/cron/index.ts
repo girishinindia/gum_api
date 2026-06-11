@@ -17,6 +17,7 @@ import { runCouponDeactivation } from './jobs/couponDeactivation';
 import { runOldNotificationCleanup } from './jobs/oldNotificationCleanup';
 import { runWalletReconciliation } from './jobs/walletReconciliation';
 import { runRevenueDailyRefresh } from './jobs/revenueDailyRefresh';
+import { runVideoStatusPoll } from './jobs/videoStatusPoll';
 
 // ── Types ──
 export interface CronJobDef {
@@ -174,6 +175,14 @@ const jobs: CronJobDef[] = [
     description: 'Refresh v_revenue_daily materialised view for the revenue dashboard',
     handler: runRevenueDailyRefresh,
     lockTtl: 120,
+    enabled: true,
+  },
+  {
+    name: 'video-status-poll',
+    schedule: '*/10 * * * *',        // Every 10 minutes
+    description: 'Reconcile Bunny Stream encoding status for pending sub_topic videos (webhook safety net)',
+    handler: runVideoStatusPoll,
+    lockTtl: 300,
     enabled: true,
   },
 ];

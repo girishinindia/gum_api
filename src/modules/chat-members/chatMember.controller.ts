@@ -9,7 +9,7 @@ import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'chat_room_members';
 const CACHE_KEY = 'chat_members:all';
-const FK_SELECT = '*, chat_rooms(id, name, room_type), users!chat_room_members_user_id_fkey(id, first_name, last_name, email, profile_picture)';
+const FK_SELECT = '*, chat_rooms(id, name, room_type), users!chat_room_members_user_id_fkey(id, first_name, last_name, email, profile_picture:avatar_url)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 

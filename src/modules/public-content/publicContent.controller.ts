@@ -11,6 +11,29 @@ import { ok, err } from '../../utils/response';
  */
 const BASE_LANG = 7;
 
+// GET /public-content/announcements?limit=
+// Published, active, not-yet-expired announcements for the marketing site —
+// pinned first, then newest. (June 2026: the public page used to render a
+// hardcoded array; admin announcements never reached visitors.)
+export async function announcementsPublic(req: Request, res: Response) {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+  const nowIso = new Date().toISOString();
+
+  const { data, error: e } = await supabase
+    .from('announcements')
+    .select('id, title, content, announcement_type, priority, is_pinned, published_at, expires_at')
+    .eq('status', 'published')
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    .order('is_pinned', { ascending: false })
+    .order('published_at', { ascending: false, nullsFirst: false })
+    .limit(limit);
+
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
 // GET /public-content/policy/:code?language_id=
 export async function policyByCode(req: Request, res: Response) {
   const code = (req.params.code || '').toUpperCase();

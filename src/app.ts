@@ -6,6 +6,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import hpp from 'hpp';
 import rateLimit from 'express-rate-limit';
+import { RedisRateLimitStore } from './middleware/redisRateLimitStore';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { activityLogger } from './middleware/activityLogger';
@@ -195,7 +196,13 @@ app.use(helmet());
 app.use(hpp());
 app.use(compression());
 app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  // Capture the exact raw bytes for webhook HMAC verification (Razorpay,
+  // RazorpayX, Bunny). JSON.stringify(req.body) is NOT byte-identical to
+  // what providers sign — key order and number formatting can differ.
+  verify: (req, _res, buf) => { (req as any).rawBody = buf; },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // Phase 46 — defensively clamp `display_order` to a non-negative integer at the
@@ -252,7 +259,13 @@ app.use(cors({
 }));
 
 // ── Rate Limiting ──
-app.use(rateLimit({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore('global'), // cluster-safe (shared via Redis)
+}));
 
 // ── Activity Logger ──
 app.use(activityLogger);

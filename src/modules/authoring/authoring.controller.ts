@@ -9,6 +9,7 @@ import { processAndUploadImage, uploadRawFile, deleteImage } from '../../service
 import { uploadVideoToStream, deleteVideoFromStream, extractBunnyVideoGuid } from '../../services/video.service';
 import { signEmbedUrl } from '../../services/bunnyToken.service';
 import { config } from '../../config';
+import { db } from '../../services/db';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -44,7 +45,10 @@ function collectUnitSubtree(allUnits: any[], rootId: number): Set<number> {
 
 // Phase 49 — Instructor course authoring (draft layer). Four resources:
 // courses, course_highlights, units (module/chapter/topic tree), faqs.
-// Canonical course tables are NOT touched here — only by a future publish step.
+// Canonical course tables are written ONLY by verifyCourse(), which calls the
+// transactional UDF fn_publish_authoring_course (Phase 5, June 2026) to
+// materialize the approved draft into courses/modules/chapters/topics/
+// sub_topics/faqs/assesment_* and links back via canonical_course_id.
 
 // ── Re-approval guard ──
 // After ANY content mutation (course basics, highlights, curriculum, capstones,
@@ -222,13 +226,29 @@ export async function verifyCourse(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('authoring_courses').select('*').eq('id', id).single();
   if (!old) return err(res, 'Authoring course not found', 404);
+
+  // Materialize the draft into the canonical course tables FIRST — atomically
+  // (fn_publish_authoring_course runs as one transaction: courses, translation,
+  // category junction, module→subject→chapter→topic→sub_topic tree, FAQs,
+  // capstone/mini projects). Re-publish updates the same canonical course.
+  // NOTE: cast pending regeneration of src/types/database.ts (Phase 11.4.3).
+  let publishSummary: unknown = null;
+  try {
+    publishSummary = await db.callFn('fn_publish_authoring_course' as never, {
+      p_authoring_course_id: id,
+      p_actor_id: req.user!.id,
+    } as never);
+  } catch (e: any) {
+    return err(res, `Publish failed: ${e?.message || 'unknown error'}`, 500);
+  }
+
   const now = new Date().toISOString();
   const { data, error: e } = await supabase.from('authoring_courses').update({
     status: 'published', verified_by: req.user!.id, verified_at: now, last_published_at: now, rejection_reason: null, updated_by: req.user!.id,
   }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
   logAdmin({ actorId: req.user!.id, action: 'authoring_course_verified', targetType: 'authoring_course', targetId: id, targetName: old.title, ip: getClientIp(req) });
-  return ok(res, data, 'Course verified & published');
+  return ok(res, { ...data, publish: publishSummary }, 'Course verified & published to catalog');
 }
 
 export async function rejectCourse(req: Request, res: Response) {

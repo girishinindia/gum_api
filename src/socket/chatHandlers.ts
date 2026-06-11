@@ -2,7 +2,7 @@ import { Namespace, Socket } from 'socket.io';
 import { supabase } from '../config/supabase';
 import { logger } from '../utils/logger';
 
-const MSG_SELECT = `*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture), chat_attachments(*), chat_message_reactions(id, emoji, user_id, users!chat_message_reactions_user_id_fkey(id, first_name, last_name))`;
+const MSG_SELECT = `*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture:avatar_url), chat_attachments(*), chat_message_reactions(id, emoji, user_id, users!chat_message_reactions_user_id_fkey(id, first_name, last_name))`;
 
 // ── Types ──
 interface JoinRoomPayload { roomId: number }

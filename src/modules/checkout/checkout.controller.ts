@@ -512,12 +512,20 @@ export async function handleWebhook(req: Request, res: Response) {
   let webhookRowId: number | null = null;
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
-    const webhookSecret = config.razorpay.webhookSecret || config.razorpay.keySecret;
+    // Dedicated webhook secret ONLY (configured in the Razorpay dashboard).
+    // The key secret signs checkout payloads, not webhooks — no fallback.
+    const webhookSecret = config.razorpay.webhookSecret;
+    if (!webhookSecret) {
+      console.error('[WEBHOOK] RAZORPAY_WEBHOOK_SECRET not configured — rejecting (fail-closed)');
+      return res.status(401).json({ success: false, error: 'Webhook not configured' });
+    }
 
-    // Verify webhook signature
-    // NOTE: For perfect HMAC fidelity we should mount express.raw() on this
-    //       route — JSON.stringify is best-effort. Tracked in Phase 10 cleanup.
-    const rawBody = JSON.stringify(req.body);
+    // Verify HMAC over the EXACT raw bytes Razorpay sent (captured by the
+    // express.json `verify` hook in app.ts). Stringify fallback covers tests
+    // that construct req without a raw buffer.
+    const rawBody: string = (req as any).rawBody
+      ? (req as any).rawBody.toString('utf8')
+      : JSON.stringify(req.body);
     const isValid = verifyWebhookSignature(rawBody, signature, webhookSecret);
     if (!isValid) {
       console.warn('[WEBHOOK] Invalid signature');

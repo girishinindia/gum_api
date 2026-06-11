@@ -8,6 +8,11 @@ const r = Router();
 
 r.use(authMiddleware, attachPermissions());
 
+// ── Self-service (any signed-in user — own wallet only, no admin permission) ──
+// MUST be registered before /:id so "me" isn't swallowed by the param route.
+r.get('/me', walletCtrl.getMine);
+r.get('/me/transactions', walletCtrl.myTransactions);
+
 // ── Wallet CRUD ──
 r.get('/', requirePermission('wallet', 'read'), walletCtrl.list);
 r.get('/:id', requirePermission('wallet', 'read'), walletCtrl.getById);

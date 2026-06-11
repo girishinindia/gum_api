@@ -14,10 +14,13 @@ export async function runCertificateAutoIssue(): Promise<{ issued: number; noTem
   let issued = 0;
   let noTemplate = 0;
 
-  // Find completed enrollments without a certificate
+  // Find completed COURSE enrollments without a certificate.
+  // NOTE: enrollments is polymorphic — it has item_type + item_id, NOT a
+  // course_id column (selecting course_id failed every hourly run, June 2026).
   const { data: eligible, error: err } = await supabase
     .from('enrollments')
-    .select('id, user_id, course_id, progress_pct')
+    .select('id, user_id, item_type, item_id, progress_pct')
+    .eq('item_type', 'course')
     .or('enrollment_status.eq.completed,progress_pct.gte.100')
     .eq('is_active', true)
     .is('certificate_issued_at', null)
@@ -34,8 +37,9 @@ export async function runCertificateAutoIssue(): Promise<{ issued: number; noTem
     return { issued: 0, noTemplate: 0 };
   }
 
-  // Batch-fetch certificate templates for all distinct course_ids
-  const courseIds = [...new Set(eligible.map((e: any) => e.course_id).filter(Boolean))];
+  // Batch-fetch certificate templates for all distinct course ids
+  // (enrollment.item_id IS the course id for item_type='course' rows)
+  const courseIds = [...new Set(eligible.map((e: any) => e.item_id).filter(Boolean))];
   const { data: templates } = await supabase
     .from('certificate_templates')
     .select('id, course_id, template_type')
@@ -50,7 +54,7 @@ export async function runCertificateAutoIssue(): Promise<{ issued: number; noTem
   }
 
   for (const enrollment of eligible) {
-    const template = templateMap.get(enrollment.course_id);
+    const template = templateMap.get(enrollment.item_id);
     if (!template) {
       noTemplate++;
       continue;

@@ -65,7 +65,10 @@ export async function handleRazorpayxWebhook(req: Request, res: Response) {
   let webhookRowId: number | null = null;
   try {
     const sig = String(req.headers['x-razorpay-signature'] || req.headers['x-razorpayx-signature'] || '');
-    const rawBody = JSON.stringify(req.body ?? {});
+    // Exact raw bytes captured by the express.json `verify` hook in app.ts.
+    const rawBody: string = (req as any).rawBody
+      ? (req as any).rawBody.toString('utf8')
+      : JSON.stringify(req.body ?? {});
 
     if (!verifySignature(rawBody, sig)) {
       logger.warn('[RazorpayXWebhook] invalid signature');

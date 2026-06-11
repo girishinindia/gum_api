@@ -14,8 +14,8 @@ const TABLE = 'chat_messages';
 const ATTACHMENT_TABLE = 'chat_attachments';
 const CACHE_KEY = 'chat_messages:all';
 
-const FK_SELECT = '*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture), chat_rooms(id, name)';
-const MSG_WITH_REPLIES = `*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture), chat_attachments(*), chat_message_reactions(id, emoji, user_id, users!chat_message_reactions_user_id_fkey(id, first_name, last_name))`;
+const FK_SELECT = '*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture:avatar_url), chat_rooms(id, name)';
+const MSG_WITH_REPLIES = `*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture:avatar_url), chat_attachments(*), chat_message_reactions(id, emoji, user_id, users!chat_message_reactions_user_id_fkey(id, first_name, last_name))`;
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 

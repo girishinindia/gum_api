@@ -17,21 +17,21 @@ import { generateMaterialData, type MaterialTreeInput } from '../../services/mat
 import { getArchivedYoutubeUrls, markArchiveRestored } from '../../services/youtubeArchive.service';
 import { fetchAll } from '../../utils/supabaseFetchAll';
 
-// ─── Rate limiter (in-memory, per user) ───
-const rateLimits = new Map<number, { count: number; resetAt: number }>();
+// ─── Rate limiter (Redis-backed, per user — shared across instances/restarts) ───
 const RATE_LIMIT = 20;
 const RATE_WINDOW = 60_000;
 
-function checkRateLimit(userId: number): boolean {
-  const now = Date.now();
-  const entry = rateLimits.get(userId);
-  if (!entry || now > entry.resetAt) {
-    rateLimits.set(userId, { count: 1, resetAt: now + RATE_WINDOW });
+async function checkRateLimit(userId: number): Promise<boolean> {
+  try {
+    const key = `rl:ai:${userId}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.pexpire(key, RATE_WINDOW);
+    return count <= RATE_LIMIT;
+  } catch (e: any) {
+    // Fail-open: a Redis hiccup must not take down every AI feature.
+    console.error('[AI] Rate limit check failed (failing open):', e?.message);
     return true;
   }
-  if (entry.count >= RATE_LIMIT) return false;
-  entry.count++;
-  return true;
 }
 
 // ─── Provider Types ───
@@ -194,7 +194,7 @@ export async function generateTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { category_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!category_id || !target_language_code) return err(res, 'category_id and target_language_code are required', 400);
@@ -267,7 +267,7 @@ export async function bulkGenerateTranslations(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { category_id, prompt, provider: reqProvider } = req.body;
     if (!category_id) return err(res, 'category_id is required', 400);
@@ -482,7 +482,7 @@ export async function generateSubCategoryTranslation(req: Request, res: Response
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { sub_category_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!sub_category_id || !target_language_code) return err(res, 'sub_category_id and target_language_code are required', 400);
@@ -555,7 +555,7 @@ export async function bulkGenerateSubCategoryTranslations(req: Request, res: Res
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { sub_category_id, prompt, provider: reqProvider } = req.body;
     if (!sub_category_id) return err(res, 'sub_category_id is required', 400);
@@ -1382,7 +1382,7 @@ export async function generateEntityTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { entity_type, entity_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     const validTypes: MaterialEntityType[] = ['subject', 'chapter', 'topic', 'sub_topic', 'course', 'course_module', 'bundle', 'course_batch', 'webinar', 'faq_category', 'faq', 'policy_type', 'policy'];
@@ -1468,7 +1468,7 @@ export async function generateBlogPostContent(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { title, category, prompt, provider: reqProvider } = req.body;
     if (!title || !String(title).trim()) return err(res, 'title is required', 400);
@@ -1523,7 +1523,7 @@ export async function generateSubjectTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { subject_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!subject_id || !target_language_code) return err(res, 'subject_id and target_language_code are required', 400);
@@ -1598,7 +1598,7 @@ export async function bulkGenerateSubjectTranslations(req: Request, res: Respons
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { subject_id, prompt, provider: reqProvider } = req.body;
     if (!subject_id) return err(res, 'subject_id is required', 400);
@@ -1707,7 +1707,7 @@ export async function generateChapterTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { chapter_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!chapter_id || !target_language_code) return err(res, 'chapter_id and target_language_code are required', 400);
@@ -1784,7 +1784,7 @@ export async function bulkGenerateChapterTranslations(req: Request, res: Respons
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { chapter_id, prompt, provider: reqProvider } = req.body;
     if (!chapter_id) return err(res, 'chapter_id is required', 400);
@@ -1892,7 +1892,7 @@ export async function generateTopicTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!topic_id || !target_language_code) return err(res, 'topic_id and target_language_code are required', 400);
@@ -1969,7 +1969,7 @@ export async function bulkGenerateTopicTranslations(req: Request, res: Response)
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, prompt, provider: reqProvider } = req.body;
     if (!topic_id) return err(res, 'topic_id is required', 400);
@@ -2077,7 +2077,7 @@ export async function generateSubTopicTranslation(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { sub_topic_id, target_language_code, target_language_name, prompt, provider: reqProvider } = req.body;
     if (!sub_topic_id || !target_language_code) return err(res, 'sub_topic_id and target_language_code are required', 400);
@@ -2152,7 +2152,7 @@ export async function bulkGenerateSubTopicTranslations(req: Request, res: Respon
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { sub_topic_id, prompt, provider: reqProvider } = req.body;
     if (!sub_topic_id) return err(res, 'sub_topic_id is required', 400);
@@ -2695,7 +2695,7 @@ export async function generateSampleData(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { module, provider: reqProvider, target_user_id, count: reqCount } = req.body;
     if (!module || !VALID_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MODULES.join(', ')}`, 400);
@@ -3285,7 +3285,7 @@ export async function generateMasterData(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { module, provider: reqProvider, count: reqCount, prompt } = req.body;
     if (!module || !VALID_MASTER_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MASTER_MODULES.join(', ')}`, 400);
@@ -3370,7 +3370,7 @@ export async function updateMasterData(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { module, provider: reqProvider, prompt, record_ids } = req.body;
     if (!module || !VALID_MASTER_MODULES.includes(module)) return err(res, `Invalid module. Must be one of: ${VALID_MASTER_MODULES.join(', ')}`, 400);
@@ -3452,7 +3452,7 @@ export async function generateResumeContent(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { provider: reqProvider, prompt, target_user_id, mode } = req.body;
     if (!target_user_id) return err(res, 'target_user_id is required', 400);
@@ -3524,7 +3524,7 @@ export async function autoSubTopics(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, language_id, prompt, provider: reqProvider, sub_topic_id: existingSubTopicId } = req.body;
     if (!topic_id) return err(res, 'topic_id is required', 400);
@@ -6628,7 +6628,7 @@ export async function bulkGenerateMissingContent(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { entity_type, entity_ids: rawIds, generate_all, prompt, provider: reqProvider, force_regenerate } = req.body;
 
@@ -6805,7 +6805,7 @@ export async function autoGenerateMcq(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const {
       topic_id,
@@ -7471,7 +7471,7 @@ export async function autoTranslateMcq(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, question_ids, provider: reqProvider } = req.body;
     if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
@@ -7806,7 +7806,7 @@ export async function autoGenerateOw(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const {
       topic_id,
@@ -8455,7 +8455,7 @@ export async function autoTranslateOw(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, question_ids, provider: reqProvider } = req.body;
     if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
@@ -8755,7 +8755,7 @@ export async function autoGenerateDesc(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const {
       topic_id,
@@ -9281,7 +9281,7 @@ export async function autoTranslateDesc(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, question_ids, provider: reqProvider } = req.body;
     if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
@@ -9524,7 +9524,7 @@ export async function autoGenerateMatching(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const {
       topic_id,
@@ -10131,7 +10131,7 @@ export async function autoTranslateMatching(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, question_ids, provider: reqProvider } = req.body;
     if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {
@@ -10426,7 +10426,7 @@ export async function autoGenerateOrdering(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const {
       topic_id,
@@ -11023,7 +11023,7 @@ export async function autoTranslateOrdering(req: Request, res: Response) {
   try {
     const userId = req.user?.id;
     if (!userId) return err(res, 'Authentication required', 401);
-    if (!checkRateLimit(userId)) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
+    if (!(await checkRateLimit(userId))) return err(res, 'Rate limit exceeded. Please wait a minute.', 429);
 
     const { topic_id, question_ids, provider: reqProvider } = req.body;
     if (!topic_id && (!question_ids || !Array.isArray(question_ids) || question_ids.length === 0)) {

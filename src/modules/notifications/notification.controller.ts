@@ -15,8 +15,21 @@ const FK_SELECT = '*, users!notifications_user_id_fkey(id, first_name, last_name
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 
+// Columns that actually exist on public.notifications. Anything else in the
+// request body is dropped BEFORE the insert/update — a stray form field must
+// produce a clean 400/ignore, never a PostgREST "schema cache" 500.
+// (That exact failure shipped once: the admin form sent `action_url` before
+// the column existed. June 2026.)
+const ALLOWED_COLUMNS = new Set([
+  'user_id', 'notification_type', 'title', 'message', 'channel',
+  'delivery_status', 'is_read', 'read_at', 'reference_type', 'reference_id',
+  'metadata', 'is_active', 'action_url', 'priority', 'sent_at',
+]);
+
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
+  // The admin form's textarea is named `body`; the column is `message`.
+  if (body.body !== undefined && body.message === undefined) body.message = body.body;
   // Boolean fields
   if (typeof body.is_read === 'string') body.is_read = body.is_read === 'true';
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
@@ -30,6 +43,8 @@ function parseBody(req: Request): any {
   }
   // Nullify empty strings
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  // Whitelist — drop unknown keys (audit columns are set explicitly by handlers)
+  for (const k of Object.keys(body)) { if (!ALLOWED_COLUMNS.has(k)) delete body[k]; }
   return body;
 }
 
@@ -78,6 +93,12 @@ export async function create(req: Request, res: Response) {
     const body = parseBody(req);
     if (!body.user_id) return err(res, 'user_id is required', 400);
     if (!body.title) return err(res, 'title is required', 400);
+
+    // In-app notifications are delivered the moment the row exists; other
+    // channels (email/sms/push) get sent_at stamped by their dispatchers.
+    if (!body.sent_at && (body.channel ?? 'in_app') === 'in_app') {
+      body.sent_at = new Date().toISOString();
+    }
 
     body.created_by = req.user!.id;
 

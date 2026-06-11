@@ -75,6 +75,40 @@ export async function coursePlayback(req: Request, res: Response) {
 }
 
 /**
+ * Phase 6 (June 2026) — PUBLIC trailer playback for the marketing site.
+ * Returns a short-lived signed embed URL for the course trailer only, and
+ * only for active published courses (never leaks drafts/coming-soon media).
+ *
+ * GET /courses/:id/trailer-playback → { trailer: {url, expiresAt} | null }
+ */
+export async function courseTrailerPlayback(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  if (!Number.isFinite(id)) return err(res, 'Invalid course id', 400);
+
+  const { data: course } = await supabase
+    .from('courses')
+    .select('id, trailer_video_url, course_status, is_active')
+    .eq('id', id)
+    .is('deleted_at', null)
+    .single();
+
+  if (!course || !(course as any).is_active || (course as any).course_status !== 'published') {
+    return err(res, 'Course not found', 404);
+  }
+
+  const guid = extractBunnyVideoGuid((course as any).trailer_video_url);
+  if (!guid) return ok(res, { trailer: null }, 'No trailer available');
+
+  try {
+    const s = signEmbedUrl(guid);
+    return ok(res, { trailer: { url: s.embedUrl, expiresAt: s.expiresAt } }, 'Signed trailer URL');
+  } catch (e: any) {
+    console.error('[course.trailerPlayback] sign failed:', e?.message);
+    return ok(res, { trailer: null }, 'No trailer available');
+  }
+}
+
+/**
  * Phase 44.11 — dedicated course video upload, mirroring the WORKING
  * sub-topic pattern (memory buffer + uploadVideoToStream). The combined
  * course-save multipart used uploadVideoStreamFromPath (Readable.toWeb +
