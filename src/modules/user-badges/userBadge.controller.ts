@@ -10,8 +10,14 @@ const CACHE_KEY = 'user_badges:all';
 const clearCache = () => redis.del(CACHE_KEY);
 
 // ── LIST ──
+// Sortable columns on user_badges. Anything else (e.g. the legacy
+// `awarded_at` the admin page used to send) falls back to earned_at — a bad
+// sort param must never reach PostgREST and 500 the page. (June 2026)
+const SORTABLE = new Set(['id', 'earned_at', 'created_at', 'user_id', 'badge_id']);
+
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'earned_at' });
+  const sortCol = SORTABLE.has(sort) ? sort : 'earned_at';
 
   let q = supabase.from('user_badges').select('*', { count: 'exact' });
 
@@ -19,7 +25,7 @@ export async function list(req: Request, res: Response) {
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.badge_id) q = q.eq('badge_id', parseInt(req.query.badge_id as string));
 
-  q = q.order(sort, { ascending: false }).range(offset, offset + limit - 1);
+  q = q.order(sortCol, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);

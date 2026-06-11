@@ -12,6 +12,25 @@ import { applySearch } from '../../utils/search';
 const CACHE_KEY = 'issued_certificates:all';
 const clearCache = () => redis.del(CACHE_KEY);
 
+/**
+ * GET /issued-certificates/me — the signed-in user's own certificates.
+ * Active, not revoked, not deleted, newest first; joined with template +
+ * course name for display. Any authenticated user; scoped to req.user.id.
+ */
+export async function listMine(req: Request, res: Response) {
+  const { data, error: e } = await supabase
+    .from('issued_certificates')
+    .select('id, certificate_number, certificate_url, png_url, issued_at, expires_at, score_achieved, progress_achieved, certificate_templates(id, name, course_id, courses(id, name, slug))')
+    .eq('user_id', req.user!.id)
+    .is('deleted_at', null)
+    .is('revoked_at', null)
+    .eq('is_active', true)
+    .order('issued_at', { ascending: false });
+
+  if (e) return err(res, e.message, 500);
+  return ok(res, data || []);
+}
+
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }

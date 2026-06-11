@@ -11,6 +11,10 @@ r.get('/verify/:certificateNumber', ctrl.verify);
 // All other routes are protected
 r.use(authMiddleware, attachPermissions());
 
+// Self-service: the caller's own certificates (any signed-in user, no admin
+// permission). Registered before /:id so "me" isn't swallowed. (June 2026)
+r.get('/me', ctrl.listMine);
+
 r.get('/',    requirePermission('issued_certificate', 'read'), ctrl.list);
 r.get('/:id', requirePermission('issued_certificate', 'read'), ctrl.getById);
 
