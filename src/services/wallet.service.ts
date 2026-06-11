@@ -23,7 +23,7 @@ import { redis } from '../config/redis';
 export interface WalletCreditParams {
   userId: number;
   amount: number;
-  sourceType: 'earning' | 'referral' | 'refund' | 'manual_credit' | 'adjustment';
+  sourceType: 'earning' | 'referral' | 'refund' | 'manual_credit' | 'adjustment' | 'idea_reward';
   sourceId?: number;
   description: string;
   metadata?: Record<string, any>;

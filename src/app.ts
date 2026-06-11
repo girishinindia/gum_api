@@ -141,6 +141,8 @@ import instructorEarningRoutes from './modules/instructor-earnings/instructorEar
 import revenueShareTierRoutes from './modules/revenue-share-tiers/revenueShareTier.routes';
 import meDashboardRoutes from './modules/me-dashboard/meDashboard.routes';
 import studioRoutes from './modules/studio/studio.routes';
+import ideaCategoryRoutes from './modules/idea-categories/ideaCategory.routes';
+import ideaRoutes from './modules/ideas/idea.routes';
 import payoutRequestRoutes from './modules/payout-requests/payoutRequest.routes';
 import payoutSettlementRoutes from './modules/payout-settlements/payoutSettlement.routes';
 import discussionThreadRoutes from './modules/discussion-threads/discussionThread.routes';
@@ -431,6 +433,8 @@ app.use(`${api}/instructor-earnings`,                      instructorEarningRout
 app.use(`${api}/revenue-share-tiers`,                      revenueShareTierRoutes);
 app.use(`${api}/dashboard`,                                meDashboardRoutes);
 app.use(`${api}/studio`,                                   studioRoutes);
+app.use(`${api}/idea-categories`,                          ideaCategoryRoutes);
+app.use(`${api}/ideas`,                                    ideaRoutes);
 app.use(`${api}/payout-requests`,                          payoutRequestRoutes);
 app.use(`${api}/payout-settlements`,                       payoutSettlementRoutes);
 app.use(`${api}/discussion-threads`,                       discussionThreadRoutes);

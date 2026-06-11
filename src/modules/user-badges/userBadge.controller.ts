@@ -65,6 +65,39 @@ export async function getById(req: Request, res: Response) {
   return ok(res, data);
 }
 
+// ── UPDATE (June 2026 — doc 24 fix: admin had no way to edit an award) ──
+export async function update(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: old } = await supabase.from('user_badges').select('*').eq('id', id).single();
+  if (!old) return err(res, 'User badge not found', 404);
+
+  const updates: any = {};
+  if (req.body.badge_id !== undefined) updates.badge_id = parseInt(req.body.badge_id);
+  if (req.body.user_id !== undefined) updates.user_id = parseInt(req.body.user_id);
+  if (req.body.earned_at !== undefined && req.body.earned_at) updates.earned_at = req.body.earned_at;
+  if (req.body.metadata !== undefined) updates.metadata = req.body.metadata;
+  if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+
+  if (updates.badge_id) {
+    const { data: b } = await supabase.from('badges').select('id').eq('id', updates.badge_id).maybeSingle();
+    if (!b) return err(res, 'Badge not found', 400);
+  }
+  if (updates.user_id) {
+    const { data: u } = await supabase.from('users').select('id').eq('id', updates.user_id).maybeSingle();
+    if (!u) return err(res, 'User not found', 400);
+  }
+  // Keep the one-badge-per-user uniqueness intact
+  const targetUser = updates.user_id ?? old.user_id;
+  const targetBadge = updates.badge_id ?? old.badge_id;
+  const { data: dup } = await supabase.from('user_badges').select('id').eq('user_id', targetUser).eq('badge_id', targetBadge).neq('id', id).maybeSingle();
+  if (dup) return err(res, 'That user already has this badge', 400);
+
+  const { data, error: e } = await supabase.from('user_badges').update(updates).eq('id', id).select('*').single();
+  if (e) return err(res, e.message, 500);
+  await redis.del(CACHE_KEY);
+  return ok(res, data, 'Badge award updated');
+}
+
 // ── AWARD BADGE ──
 export async function award(req: Request, res: Response) {
   const { user_id, badge_id, enrollment_id, metadata } = req.body;
