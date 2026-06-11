@@ -13,6 +13,7 @@ import {
 } from '../../services/razorpay.service';
 import { orchestratePostPayment } from '../../services/postPayment.service';
 import { reverseEarningsForOrder } from '../../services/instructorEarning.service';
+import { resolveShare, maxSystemDiscountForItems } from '../../services/revenueShare.service';
 import { notifyRefundProcessed } from '../../services/notification.service';
 import {
   beginWebhookEvent,
@@ -169,6 +170,16 @@ async function applyPromo(code: string, orderItems: any[], remainingSubtotal: nu
   // fixed promos too — previously the cap was only enforced for percentage).
   if (promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
   discount = Math.min(discount, eligible);
+
+  // Revenue-share protection (June 2026): an instructor cannot discount more
+  // than THEIR OWN share of the eligible amount — the system's share of the
+  // full price is untouchable.
+  if (promo.instructor_id) {
+    const share = await resolveShare(Number(promo.instructor_id), 'course');
+    const instructorMax = eligible * (share.instructorSharePct / 100);
+    if (discount > instructorMax) discount = instructorMax;
+  }
+
   return { valid: true, discount: Math.round(discount * 100) / 100, promotionId: promo.id };
 }
 
@@ -181,21 +192,32 @@ async function computeCartPricing(userId: number, coupon_code?: string, promo_co
   let discountAmount = 0, couponId: number | null = null, promotionId: number | null = null;
   let couponValid = false, promoValid = false;
   let couponMessage: string | undefined, promoMessage: string | undefined;
+  // Who gave the discount matters for revenue-share protection:
+  let couponDiscount = 0; // system-given  → system absorbs it
+  let promoDiscount = 0;  // instructor-given → instructor absorbs it
 
   if (coupon_code) {
     const r = await applyCoupon(coupon_code, subtotal, orderItems, userId);
     couponValid = r.valid; couponMessage = r.message;
-    if (r.valid) { discountAmount += r.discount; couponId = r.couponId; }
+    if (r.valid) {
+      // The SYSTEM cannot give away more than its own share of instructor
+      // content — instructors keep their full share of the undiscounted
+      // amount (June 2026 revenue-share rules).
+      const maxSystem = await maxSystemDiscountForItems(orderItems);
+      couponDiscount = Math.min(r.discount, maxSystem);
+      discountAmount += couponDiscount;
+      couponId = r.couponId;
+    }
   }
   if (promo_code) {
     const r = await applyPromo(promo_code, orderItems, subtotal - discountAmount);
     promoValid = r.valid; promoMessage = r.message;
-    if (r.valid) { discountAmount += r.discount; promotionId = r.promotionId; }
+    if (r.valid) { promoDiscount = r.discount; discountAmount += promoDiscount; promotionId = r.promotionId; }
   }
 
   const taxAmount = 0;
   const total = Math.max(Math.round((subtotal - discountAmount + taxAmount) * 100) / 100, 0);
-  return { orderItems, subtotal, discountAmount, taxAmount, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
+  return { orderItems, subtotal, discountAmount, couponDiscount, promoDiscount, taxAmount, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
 }
 
 /**
@@ -214,7 +236,7 @@ export async function initiateCheckout(req: Request, res: Response) {
     if (coupon_code && !pricing.couponValid) return err(res, pricing.couponMessage || 'Invalid coupon', 400);
     if (promo_code && !pricing.promoValid) return err(res, pricing.promoMessage || 'Invalid promo code', 400);
 
-    const { orderItems, subtotal, discountAmount, taxAmount, total: totalRounded, couponId, promotionId } = pricing;
+    const { orderItems, subtotal, discountAmount, couponDiscount, promoDiscount, taxAmount, total: totalRounded, couponId, promotionId } = pricing;
 
     // 5. Create the order record (auto-generates order_number via trigger)
     const { data: order, error: orderErr } = await supabase
@@ -223,6 +245,8 @@ export async function initiateCheckout(req: Request, res: Response) {
         user_id,
         subtotal,
         discount_amount: discountAmount,
+        coupon_discount_amount: couponDiscount || 0,
+        promo_discount_amount: promoDiscount || 0,
         tax_amount: taxAmount,
         total_amount: totalRounded,
         currency: config.razorpay.currency,

@@ -14,7 +14,10 @@ import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 const TABLE = 'payout_requests';
 const CACHE_KEY = 'payout_requests:all';
 
-const FK_SELECT = '*, users!payout_requests_instructor_id_fkey(id, first_name, last_name, email), users!payout_requests_reviewed_by_fkey(id, first_name, last_name, email)';
+// Two embeds of `users` need distinct names — unaliased this 500'd every list
+// request (June 2026). The admin page reads item.users for the instructor, so
+// that embed keeps the default name; the reviewer gets an alias.
+const FK_SELECT = '*, users:users!payout_requests_instructor_id_fkey(id, first_name, last_name, full_name, email), reviewer:users!payout_requests_reviewed_by_fkey(id, first_name, last_name, full_name, email)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 

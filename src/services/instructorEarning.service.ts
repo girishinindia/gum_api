@@ -14,6 +14,7 @@
 
 import { supabase } from '../config/supabase';
 import { redis } from '../config/redis';
+import { resolveShare, type PayableItemType } from './revenueShare.service';
 
 // ── Types ──
 export interface EarningResult {
@@ -49,24 +50,10 @@ async function getInstructorId(itemType: string, itemId: number): Promise<number
   return data?.instructor_id || null;
 }
 
-// ── Get instructor share percentage ──
-async function getInstructorShare(instructorUserId: number): Promise<number> {
-  const { data } = await supabase
-    .from('instructor_profiles')
-    .select('revenue_share_percentage, payment_model')
-    .eq('user_id', instructorUserId)
-    .single();
-
-  if (!data) return 70; // Default 70%
-
-  // Only revenue_share model uses percentage
-  if (data.payment_model === 'revenue_share') {
-    return data.revenue_share_percentage || 70;
-  }
-
-  // For fixed/hourly, still record earnings but with default share
-  return data.revenue_share_percentage || 70;
-}
+// ── Share percentage ──
+// June 2026: resolved from `revenue_share_tiers` (student-count slabs with
+// per-content-type / per-instructor overrides) via revenueShare.service.
+// This REPLACES the legacy instructor_profiles.revenue_share_percentage.
 
 
 // ══════════════════════════════════════════════════
@@ -86,7 +73,7 @@ export async function createEarningsFromOrder(
   // Fetch order + items
   const { data: order, error: orderError } = await supabase
     .from('orders')
-    .select('id, subtotal, discount_amount, total_amount')
+    .select('id, subtotal, discount_amount, coupon_discount_amount, promo_discount_amount, promotion_id, total_amount')
     .eq('id', orderId)
     .single();
 
@@ -114,16 +101,49 @@ export async function createEarningsFromOrder(
   let totalEarnings = 0;
   let earningsCreated = 0;
 
-  // Calculate proportional GST per item
-  const orderSubtotal = Number(order.subtotal) || 0;
-  const orderSubtotalAfterDiscount = Math.max(
-    orderSubtotal - (Number(order.discount_amount) || 0),
+  // ── Revenue-share engine (June 2026) ──────────────────────────────────
+  // Shares are computed on the FULL (undiscounted) amount; each party
+  // absorbs only the discount IT gave:
+  //   • promo_discount_amount  (instructor promo)  → instructor absorbs
+  //   • coupon_discount_amount (platform coupon)   → system absorbs
+  // Legacy orders predating the split columns treated their whole
+  // discount_amount as system-given (coupons were the only source then).
+  const couponDiscTotal = Number(order.coupon_discount_amount) || 0;
+  const promoDiscTotal = Number(order.promo_discount_amount) || 0;
+  const legacyResidual = Math.max(
+    (Number(order.discount_amount) || 0) - couponDiscTotal - promoDiscTotal,
     0,
   );
-  // Order-level discounts (coupons/promos) live on orders.discount_amount and are
-  // NOT reflected in order_items.final_price — prorate them so earnings are based
-  // on what the student actually paid (a 100%-off order must yield ₹0 earnings).
-  const discountFactor = orderSubtotal > 0 ? orderSubtotalAfterDiscount / orderSubtotal : 1;
+  const systemDiscTotal = couponDiscTotal + legacyResidual;
+
+  // Promo eligibility: the promotion's linked courses (empty set = all courses)
+  let promoCourseIds = new Set<number>();
+  if (promoDiscTotal > 0 && order.promotion_id) {
+    const { data: pc } = await supabase
+      .from('instructor_promotion_courses')
+      .select('course_id')
+      .eq('promotion_id', order.promotion_id)
+      .eq('is_active', true)
+      .is('deleted_at', null);
+    promoCourseIds = new Set((pc || []).map((r: any) => Number(r.course_id)));
+  }
+  const isPromoEligible = (it: any) =>
+    it.item_type === 'course' && (promoCourseIds.size === 0 || promoCourseIds.has(Number(it.item_id)));
+
+  // Pass 1 — bases for prorating each discount + GST
+  const grossOf = (it: any) =>
+    (Number(it.original_price) || 0) * (Number(it.quantity) || 1);
+  const couponBase = orderItems.reduce((s: number, it: any) => s + grossOf(it), 0);
+  const promoBase = orderItems.reduce(
+    (s: number, it: any) => s + (promoDiscTotal > 0 && isPromoEligible(it) ? grossOf(it) : 0),
+    0,
+  );
+  const paidTotal = orderItems.reduce((s: number, it: any) => {
+    const g = grossOf(it);
+    const p = promoBase > 0 && isPromoEligible(it) ? promoDiscTotal * (g / promoBase) : 0;
+    const c = couponBase > 0 ? systemDiscTotal * (g / couponBase) : 0;
+    return s + Math.max(g - p - c, 0);
+  }, 0);
 
   for (const item of orderItems) {
     // Skip if item_type not supported
@@ -133,22 +153,32 @@ export async function createEarningsFromOrder(
     const instructorId = await getInstructorId(item.item_type, item.item_id);
     if (!instructorId) continue; // No instructor assigned
 
-    // Calculate proportional GST for this item (final_price falls back to original_price)
-    const grossItem =
-      (Number(item.final_price ?? item.original_price) || 0) * (Number(item.quantity) || 1);
-    const itemAmount = Math.round(grossItem * discountFactor * 100) / 100;
-    const gstProportion = orderSubtotalAfterDiscount > 0
-      ? (itemAmount / orderSubtotalAfterDiscount) * gstAmount
+    const grossItem = grossOf(item); // FULL amount — the share base
+    const promoItem = promoBase > 0 && isPromoEligible(item)
+      ? promoDiscTotal * (grossItem / promoBase) : 0;
+    const couponItem = couponBase > 0 ? systemDiscTotal * (grossItem / couponBase) : 0;
+    const paidItem = Math.max(grossItem - promoItem - couponItem, 0);
+
+    // GST is charged on what was actually paid — prorate by paid share
+    const itemGst = paidTotal > 0
+      ? Math.round(((paidItem / paidTotal) * gstAmount) * 100) / 100
       : 0;
-    const itemGst = Math.round(gstProportion * 100) / 100;
 
-    // Get instructor's share percentage
-    const sharePercent = await getInstructorShare(instructorId);
+    // Tiered share for THIS instructor × content type (student-count slabs)
+    const share = await resolveShare(instructorId, item.item_type as PayableItemType);
+    const sharePercent = share.instructorSharePct;
 
-    // Calculate earning: (itemAmount - proportionalGST) × share%
-    const netAmount = Math.max(itemAmount - itemGst, 0);
-    const earningAmount = Math.round(netAmount * (sharePercent / 100) * 100) / 100;
-    const platformFee = Math.round((netAmount - earningAmount) * 100) / 100;
+    // Share base: full amount net of GST. Each side then absorbs its own discount.
+    const netFull = Math.max(grossItem - itemGst, 0);
+    const earningAmount = Math.max(
+      Math.round((netFull * (sharePercent / 100) - promoItem) * 100) / 100,
+      0,
+    );
+    const platformFee = Math.max(
+      Math.round((netFull * ((100 - sharePercent) / 100) - couponItem) * 100) / 100,
+      0,
+    );
+    const itemAmount = Math.round(grossItem * 100) / 100; // recorded order_amount = full amount
 
     // Check for existing earning (idempotency)
     const { data: existing } = await supabase

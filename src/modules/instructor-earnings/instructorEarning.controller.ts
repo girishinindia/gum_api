@@ -11,7 +11,10 @@ import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 const TABLE = 'instructor_earnings';
 const CACHE_KEY = 'instructor_earnings:all';
 
-const FK_SELECT = '*, users!instructor_earnings_instructor_id_fkey(id, first_name, last_name, email), users!instructor_earnings_student_id_fkey(id, first_name, last_name, email), orders(id, order_number)';
+// Embedding `users` twice REQUIRES distinct aliases — unaliased it 500'd every
+// request ("table users specified more than once", June 2026). The admin page
+// already reads item.instructor / item.student / instructor_share_percentage.
+const FK_SELECT = '*, instructor_share_percentage:instructor_share, instructor:users!instructor_earnings_instructor_id_fkey(id, first_name, last_name, full_name, email), student:users!instructor_earnings_student_id_fkey(id, first_name, last_name, full_name, email), orders(id, order_number)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 
