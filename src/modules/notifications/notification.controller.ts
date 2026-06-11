@@ -100,6 +100,21 @@ export async function create(req: Request, res: Response) {
       body.sent_at = new Date().toISOString();
     }
 
+    // BUG-04 fix: admin-created in-app notifications must respect the user's
+    // notification settings — don't create rows for opted-out types.
+    if ((body.channel ?? 'in_app') === 'in_app' && body.notification_type) {
+      const { data: pref } = await supabase
+        .from('notification_preferences')
+        .select('in_app_enabled')
+        .eq('user_id', body.user_id)
+        .eq('notification_type', body.notification_type)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (pref && pref.in_app_enabled === false) {
+        return ok(res, { skipped: true }, 'Skipped — this user has turned off in-app notifications for this type.');
+      }
+    }
+
     body.created_by = req.user!.id;
 
     const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
@@ -257,6 +272,22 @@ export async function getUnreadCount(req: Request, res: Response) {
 // The "inbox" is the in_app channel; email/push rows are delivery records.
 // ══════════════════════════════════════════════════
 
+/**
+ * BUG-04 fix (June 2026): the inbox must respect notification settings.
+ * Returns the notification types this user has turned OFF for in-app.
+ */
+async function disabledInAppTypes(userId: number): Promise<string[]> {
+  const { data } = await supabase
+    .from('notification_preferences')
+    .select('notification_type')
+    .eq('user_id', userId)
+    .eq('in_app_enabled', false)
+    .is('deleted_at', null);
+  return (data || []).map((p: any) => String(p.notification_type)).filter(Boolean);
+}
+
+const notInTypes = (types: string[]) => `(${types.map((t) => `"${t.replace(/"/g, '')}"`).join(',')})`;
+
 /** GET /notifications/me — current user's in-app inbox (paginated). */
 export async function listMine(req: Request, res: Response) {
   try {
@@ -274,6 +305,10 @@ export async function listMine(req: Request, res: Response) {
     if (req.query.is_read === 'false') q = q.eq('is_read', false);
     if (req.query.notification_type)   q = q.eq('notification_type', String(req.query.notification_type));
 
+    // BUG-04: hide types the user disabled (covers rows created before opt-out too)
+    const disabled = await disabledInAppTypes(userId);
+    if (disabled.length) q = q.not('notification_type', 'in', notInTypes(disabled));
+
     q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
 
     const { data, count, error: e } = await q;
@@ -288,13 +323,17 @@ export async function listMine(req: Request, res: Response) {
 export async function unreadCountMine(req: Request, res: Response) {
   try {
     const userId = req.user!.id;
-    const { count, error: e } = await supabase
+    let q = supabase
       .from(TABLE)
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
       .eq('channel', 'in_app')
       .eq('is_read', false)
       .is('deleted_at', null);
+    // BUG-04: badge must match the filtered inbox
+    const disabled = await disabledInAppTypes(userId);
+    if (disabled.length) q = q.not('notification_type', 'in', notInTypes(disabled));
+    const { count, error: e } = await q;
     if (e) return err(res, e.message, 500);
     return ok(res, { unread_count: count || 0 });
   } catch (e: any) {

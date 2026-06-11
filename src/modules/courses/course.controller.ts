@@ -810,6 +810,7 @@ export async function getBySlug(req: Request, res: Response) {
     .eq('item_id', course.id)
     .eq('status', 'published')
     .eq('is_active', true)
+    .is('deleted_at', null) // BUG-09 fix: trashed reviews keep status=published — they were still embedded here
     .order('created_at', { ascending: false });
 
   let reviews: any[] = [];

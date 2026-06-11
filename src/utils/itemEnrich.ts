@@ -43,10 +43,12 @@ export async function attachItems<T extends EnrichRow>(rows: T[]): Promise<(T & 
     for (const b of (data || []) as any[]) map[`batch:${b.id}`] = { id: b.id, type: 'batch', title: b.title || b.courses?.name, slug: b.slug, course_slug: b.courses?.slug, price: b.price, is_free: b.is_free, thumbnail_url: b.courses?.trailer_thumbnail_url };
   }
   if (byType.webinar?.length) {
+    // BUG-01 fix (June 2026): price/original_price were never selected here, so
+    // every webinar in the cart displayed ₹0 while checkout charged correctly.
     const { data } = await supabase.from('webinars')
-      .select('id, title, is_free, scheduled_at, thumbnail_url')
+      .select('id, title, slug, price, original_price, is_free, scheduled_at, thumbnail_url')
       .in('id', byType.webinar);
-    for (const w of data || []) map[`webinar:${w.id}`] = { id: w.id, type: 'webinar', title: w.title, is_free: w.is_free, scheduled_at: w.scheduled_at, thumbnail_url: w.thumbnail_url };
+    for (const w of (data || []) as any[]) map[`webinar:${w.id}`] = { id: w.id, type: 'webinar', title: w.title, slug: w.slug, price: w.price, original_price: w.original_price, is_free: w.is_free, scheduled_at: w.scheduled_at, thumbnail_url: w.thumbnail_url };
     const { data: tr } = await supabase.from('webinar_translations').select('webinar_id, short_description').in('webinar_id', byType.webinar).eq('language_id', 7);
     for (const t of (tr || []) as any[]) { const m = map[`webinar:${t.webinar_id}`]; if (m) m.short_description = t.short_description; }
   }
