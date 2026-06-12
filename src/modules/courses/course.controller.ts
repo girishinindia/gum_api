@@ -315,7 +315,11 @@ export async function list(req: Request, res: Response) {
 
   // Filters — public list defaults to active + published. Override with
   // is_active=false, course_status=<x>, course_status=all, or include_unpublished=true.
-  const showUnpublished = req.query.course_status === 'all' || req.query.include_unpublished === 'true';
+  // BUG-14 fix (June 2026): the TRASH view must never apply the public
+  // active+published defaults — trashed courses are usually draft/inactive,
+  // so the trash list showed empty while the count said 2.
+  const showUnpublished = req.query.course_status === 'all' || req.query.include_unpublished === 'true'
+    || req.query.show_deleted === 'true';
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
   else if (!showUnpublished) q = q.eq('is_active', true);
