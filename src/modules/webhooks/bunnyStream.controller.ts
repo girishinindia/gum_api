@@ -111,7 +111,7 @@ export async function handleBunnyStreamWebhook(req: Request, res: Response) {
     if (!verifyUrlToken(req) && !verifyBunnySignature(rawBody, signature)) {
       logger.warn(
         { token_present: !!req.query.token, signature_present: !!signature },
-        '[BunnyWebhook] Auth failed — rejecting',
+        '[BunnyWebhook] Auth failed — rejecting. This is the WEBHOOK being rejected (not the video): set the Bunny library WebhookUrl to .../api/v1/webhooks/bunny-stream?token=<BUNNY_STREAM_WEBHOOK_SECRET>. The video-status-poll cron still reconciles statuses meanwhile.',
       );
       return res.status(401).json({ success: false, error: 'Invalid signature' });
     }

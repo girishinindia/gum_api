@@ -119,3 +119,24 @@ export function signHlsUrl(videoId: string, opts: SignedEmbedOptions = {}): Sign
     libraryId: config.bunny.streamLibraryId,
   };
 }
+
+/**
+ * BUG-12 fix (June 2026): sign ANY per-video file on the Stream pull zone
+ * (thumbnail.jpg, preview.webp, …). Same token formula as signHlsUrl —
+ * Bunny validates sha256(key + videoId + expires) zone-wide for the video.
+ * Without this, admin thumbnails 403 when Stream token auth is enabled.
+ */
+export function signStreamFileUrl(videoId: string, file: string, opts: SignedEmbedOptions = {}): string {
+  const streamCdn = config.bunny.streamCdn || 'https://vz-cdn.b-cdn.net';
+  const tokenKey = config.bunny.streamTokenKey;
+  if (!tokenKey) {
+    // Token auth not configured → zone is public; return the plain URL.
+    return `${streamCdn.replace(/\/+$/, '')}/${videoId}/${file}`;
+  }
+  const ttl = opts.ttlSeconds ?? config.bunny.streamTokenTtlSeconds;
+  const expiresUnix = opts.expiresUnix ?? Math.floor(Date.now() / 1000) + ttl;
+  const payload = tokenKey + videoId + String(expiresUnix) + (opts.viewerIp ? opts.viewerIp : '');
+  const token = crypto.createHash('sha256').update(payload).digest('hex');
+  const params = new URLSearchParams({ token, expires: String(expiresUnix) });
+  return `${streamCdn.replace(/\/+$/, '')}/${videoId}/${file}?${params.toString()}`;
+}

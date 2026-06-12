@@ -8,6 +8,7 @@ import { uploadVideoToStream, deleteVideoFromStream, getVideoStatus, findOrCreat
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
+import { signEmbedUrl, signStreamFileUrl } from '../../services/bunnyToken.service';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
 import { archiveYoutubeUrls, deleteArchiveForSubTopic } from '../../services/youtubeArchive.service';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
@@ -468,5 +469,48 @@ export async function videoStatus(req: Request, res: Response) {
     return ok(res, { status, encodeProgress: info.encodeProgress, length: info.length });
   } catch (e: any) {
     return ok(res, { status: st.video_status || 'unknown' });
+  }
+}
+
+// GET /sub-topics/:id/video-playback — BUG-12 fix (June 2026).
+// The Stream library has token authentication enabled, so the RAW embed and
+// thumbnail URLs stored on the row 403 in the browser. This returns freshly
+// SIGNED urls (same signing service the learner player uses) + live status,
+// so the admin panel can preview videos and show thumbnails without 403s.
+export async function videoPlayback(req: Request, res: Response) {
+  const id = parseInt(req.params.id);
+  const { data: st } = await supabase
+    .from('sub_topics')
+    .select('id, video_id, video_source, video_status, youtube_url')
+    .eq('id', id)
+    .single();
+  if (!st) return err(res, 'Sub-topic not found', 404);
+
+  if (st.video_source === 'youtube' && st.youtube_url) {
+    return ok(res, { source: 'youtube', embed_url: st.youtube_url, thumbnail_url: null, status: st.video_status || 'ready' });
+  }
+  if (!st.video_id || (st.video_source !== 'bunny' && st.video_source !== 'bunny_pending')) {
+    return ok(res, { source: st.video_source || null, embed_url: null, thumbnail_url: null, status: st.video_status || null });
+  }
+
+  try {
+    const signed = signEmbedUrl(st.video_id);
+    const thumb = signStreamFileUrl(st.video_id, 'thumbnail.jpg');
+    return ok(res, {
+      source: 'bunny',
+      embed_url: signed.embedUrl,
+      thumbnail_url: thumb,
+      status: st.video_status || 'processing',
+      expires_at: signed.expiresAt,
+    });
+  } catch (e: any) {
+    // Token key not configured → fall back to the stored (public-zone) urls
+    return ok(res, {
+      source: 'bunny',
+      embed_url: `https://iframe.mediadelivery.net/embed/${config.bunny.streamLibraryId}/${st.video_id}`,
+      thumbnail_url: config.bunny.streamCdn ? `${config.bunny.streamCdn}/${st.video_id}/thumbnail.jpg` : null,
+      status: st.video_status || 'processing',
+      warning: e?.message || 'signing unavailable',
+    });
   }
 }

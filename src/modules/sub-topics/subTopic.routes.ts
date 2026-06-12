@@ -13,6 +13,7 @@ r.get('/:id/video-status', ctrl.videoStatus);
 r.use(authMiddleware, attachPermissions());
 r.post('/',                requirePermission('sub_topic', 'create'),      ctrl.create);
 r.post('/:id/upload-video', requirePermission('sub_topic', 'update'), videoUpload.single('video'), ctrl.uploadVideo);
+r.get('/:id/video-playback', requirePermission('sub_topic', 'read'), ctrl.videoPlayback); // BUG-12: signed preview urls
 r.patch('/:id/restore',   requirePermission('sub_topic', 'restore'),     ctrl.restore);
 r.patch('/:id',           requirePermission('sub_topic', 'update'),      ctrl.update);
 r.delete('/:id/video',    requirePermission('sub_topic', 'update'),      ctrl.deleteVideo);
