@@ -186,6 +186,9 @@ export async function orchestratePostPayment(params: PostPaymentParams): Promise
         .select('instructor_id, earning_amount')
         .eq('order_id', orderId)
         .is('deleted_at', null);
+      // Buyer (student) name → clearer wallet description ("Earning from <name>").
+      const { data: buyer } = await supabase.from('users').select('first_name, last_name, full_name').eq('id', userId).maybeSingle();
+      const studentName = buyer ? (buyer.full_name || `${buyer.first_name ?? ''} ${buyer.last_name ?? ''}`.trim()).trim() : '';
       if (earnings) {
         for (const earning of earnings) {
           await creditWallet({
@@ -193,8 +196,8 @@ export async function orchestratePostPayment(params: PostPaymentParams): Promise
             amount: Number(earning.earning_amount),
             sourceType: 'earning',
             sourceId: orderId,
-            description: `Earning from order #${orderId}`,
-            metadata: { order_id: orderId },
+            description: studentName ? `Earning from ${studentName} (order #${orderId})` : `Earning from order #${orderId}`,
+            metadata: { order_id: orderId, student_id: userId },
             createdBy,
           }).catch(e => console.error('[POST-PAYMENT] Wallet credit failed:', e));
         }

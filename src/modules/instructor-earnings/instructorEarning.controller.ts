@@ -229,7 +229,7 @@ export async function listMine(req: Request, res: Response) {
 
     let q = supabase
       .from(TABLE)
-      .select('id, order_id, item_type, item_id, order_amount, gst_amount, instructor_share, earning_amount, platform_fee, earning_status, created_at, orders(id, order_number)', { count: 'exact' })
+      .select('id, order_id, item_type, item_id, order_amount, gst_amount, instructor_share, earning_amount, platform_fee, earning_status, created_at, orders(id, order_number), student:users!instructor_earnings_student_id_fkey(id, first_name, last_name, full_name)', { count: 'exact' })
       .eq('instructor_id', req.user!.id)
       .is('deleted_at', null);
     if (req.query.earning_status) q = q.eq('earning_status', req.query.earning_status as string);

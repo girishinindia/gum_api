@@ -7,6 +7,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
+import { sendNotification } from '../../services/notification.service';
 
 const TABLE = 'ticket_messages';
 const CACHE_KEY = 'ticket_messages:all';
@@ -70,7 +71,8 @@ export async function create(req: Request, res: Response) {
 
   // Block messaging on a closed ticket — it must be reopened first. Mirrors the
   // student-side guard so a closed ticket can't receive replies from either side.
-  const { data: parentTicket } = await supabase.from('support_tickets').select('ticket_status').eq('id', body.ticket_id).single();
+  // BUG-62: also pull the owner/number/subject so we can notify the ticket owner below.
+  const { data: parentTicket } = await supabase.from('support_tickets').select('ticket_status, user_id, ticket_number, subject').eq('id', body.ticket_id).single();
   if (parentTicket?.ticket_status === 'closed') {
     return err(res, 'This ticket is closed. Reopen it to continue the conversation.', 400);
   }
@@ -84,6 +86,25 @@ export async function create(req: Request, res: Response) {
 
   // Update the parent ticket's updated_at
   await supabase.from('support_tickets').update({ updated_at: new Date().toISOString() }).eq('id', body.ticket_id);
+
+  // BUG-62: notify the ticket OWNER (student) when an admin posts a NON-internal
+  // reply. Previously this endpoint (used by the admin portal's "Send Message")
+  // created the reply but sent the student nothing, so admin replies never showed
+  // in the learner inbox. (Student → admin replies are handled separately by
+  // user-tickets replyToTicket → notifyAdmins.) Internal notes never notify the
+  // student, and we don't notify the sender about their own message.
+  if (!body.is_internal && parentTicket?.user_id && parentTicket.user_id !== req.user!.id) {
+    const snippet = String(body.message || '').slice(0, 140);
+    sendNotification({
+      userId: parentTicket.user_id,
+      notificationType: 'support_ticket_reply',
+      title: `New reply on ${parentTicket.ticket_number || 'your support ticket'}`,
+      message: `Support replied to your ticket${parentTicket.subject ? ` "${parentTicket.subject}"` : ''}${snippet ? `: ${snippet}` : '.'}`,
+      channels: ['in_app', 'email'],
+      referenceType: 'support_ticket',
+      referenceId: Number(body.ticket_id),
+    }).catch(() => { /* non-blocking */ });
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'ticket_message_created', targetType: 'ticket_message', targetId: data.id, targetName: `Message #${data.id}`, ip: getClientIp(req) });

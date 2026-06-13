@@ -14,6 +14,7 @@ import {
 import { orchestratePostPayment } from '../../services/postPayment.service';
 import { reverseEarningsForOrder } from '../../services/instructorEarning.service';
 import { notifyRefundProcessed } from '../../services/notification.service';
+import { resolveShare } from '../../services/revenueShare.service';
 import {
   beginWebhookEvent,
   completeWebhookEvent,
@@ -170,12 +171,22 @@ async function applyPromo(code: string, orderItems: any[], remainingSubtotal: nu
   if (promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
   discount = Math.min(discount, eligible);
 
-  // BUG-48 (June 2026 decision): honor the MARKETED discount. The promo applies at
-  // its advertised value — capped only by max_discount_amount and the eligible
-  // amount — so the course-detail banner price equals the checkout price. The
-  // previous revenue-share cap (instructor couldn't discount beyond their own
-  // share) has been removed; the instructor absorbs their promo in earnings
-  // (promoItem) per the earnings engine.
+  // Policy (June 2026, per product decision): an instructor-funded promo may NOT
+  // discount beyond the instructor's OWN revenue share. If it would, REJECT it with
+  // a clear alert (do not silently cap, and do not let it eat into the platform's
+  // cut). Promos within the share apply at their full marketed value, and earnings
+  // always reconcile (the discount never exceeds the instructor's share).
+  if (promo.instructor_id) {
+    const share = await resolveShare(Number(promo.instructor_id), 'course');
+    const instructorMax = Math.round(eligible * (share.instructorSharePct / 100) * 100) / 100;
+    if (discount > instructorMax + 0.01) {
+      return {
+        valid: false, discount: 0, promotionId: null,
+        message: `This promo can discount at most ₹${instructorMax} — the instructor's ${share.instructorSharePct}% share of the eligible ₹${Math.round(eligible)}. Lower the discount value or the max-discount amount.`,
+      };
+    }
+  }
+
   return { valid: true, discount: Math.round(discount * 100) / 100, promotionId: promo.id };
 }
 
@@ -395,8 +406,12 @@ export async function validateCode(req: Request, res: Response) {
       return ok(res, { kind: 'promo', valid: true, discount: promoRes.discount });
     }
 
-    // Neither applied — surface the most relevant message (coupon's, then promo's).
-    return ok(res, { kind: null, valid: false, discount: 0, message: couponRes.message || promoRes.message || 'Invalid code' });
+    // Neither applied — if the code IS a known promo that was rejected (e.g. it
+    // exceeds the instructor's share, or is expired), surface THAT specific message
+    // instead of the generic "Invalid coupon code".
+    const promoMatched = !!promoRes.message && promoRes.message !== 'Invalid promo code';
+    const message = promoMatched ? promoRes.message : (couponRes.message || promoRes.message || 'Invalid code');
+    return ok(res, { kind: null, valid: false, discount: 0, message });
   } catch (e: any) {
     return err(res, e.message || 'Validation failed', 500);
   }

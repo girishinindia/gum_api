@@ -43,9 +43,15 @@ export async function listForItem(req: Request, res: Response) {
     // BUG-66: registered users populate first_name/last_name, not full_name, so
     // the reviewer name fell through to 'User'. Compose from whichever exists;
     // drop email from the public-facing display for privacy.
-    const { data: users } = await supabase.from('users').select('id, full_name, first_name, last_name, profile_image_url').in('id', userIds);
+    const { data: users } = await supabase.from('users').select('id, full_name, display_name, first_name, last_name, profile_image_url').in('id', userIds);
     if (users) for (const u of users as any[]) {
-      const name = (u.full_name && u.full_name.trim()) || [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || 'User';
+      // BUG-66: resolve the reviewer's real name from whichever field is set —
+      // full_name, then the user's chosen display_name, then first+last — only
+      // falling back to the generic "User" when none exist.
+      const name = (u.full_name && u.full_name.trim())
+        || (u.display_name && u.display_name.trim())
+        || [u.first_name, u.last_name].filter(Boolean).join(' ').trim()
+        || 'User';
       userMap[u.id] = { name, image: u.profile_image_url || null };
     }
   }
