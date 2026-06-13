@@ -195,10 +195,10 @@ export async function debitWallet(params: WalletDebitParams & { allowOverdraft?:
 }
 
 // ── Freeze wallet ──
-export async function freezeWallet(walletId: number, updatedBy?: number): Promise<boolean> {
+export async function freezeWallet(walletId: number, updatedBy?: number, reason?: string | null): Promise<boolean> {
   const { error } = await supabase
     .from('wallets')
-    .update({ is_frozen: true, updated_by: updatedBy || null })
+    .update({ is_frozen: true, updated_by: updatedBy || null, frozen_reason: reason ?? null, frozen_at: new Date().toISOString(), frozen_by: updatedBy ?? null })
     .eq('id', walletId);
 
   if (error) {
@@ -213,7 +213,7 @@ export async function freezeWallet(walletId: number, updatedBy?: number): Promis
 export async function unfreezeWallet(walletId: number, updatedBy?: number): Promise<boolean> {
   const { error } = await supabase
     .from('wallets')
-    .update({ is_frozen: false, updated_by: updatedBy || null })
+    .update({ is_frozen: false, updated_by: updatedBy || null, frozen_reason: null, frozen_at: null, frozen_by: null })
     .eq('id', walletId);
 
   if (error) {

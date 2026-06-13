@@ -117,6 +117,20 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
+  // BUG-35 (June 2026): filter by course via the junction table so the public
+  // course page can show its promo banner.
+  if (req.query.course_id) {
+    const { data: links } = await supabase
+      .from('instructor_promotion_courses')
+      .select('promotion_id')
+      .eq('course_id', parseInt(req.query.course_id as string))
+      .eq('is_active', true)
+      .is('deleted_at', null);
+    const ids = (links || []).map((l: any) => l.promotion_id);
+    if (!ids.length) return paginated(res, [], 0, page, limit);
+    q = q.in('id', ids);
+  }
+
   // Filters
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);

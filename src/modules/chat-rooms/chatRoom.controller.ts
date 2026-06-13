@@ -12,7 +12,7 @@ const TABLE = 'chat_rooms';
 const MEMBER_TABLE = 'chat_room_members';
 const CACHE_KEY = 'chat_rooms:all';
 
-const FK_SELECT = `*, users!chat_rooms_created_by_fkey(id, first_name, last_name, email), course_batches(id, name)`;
+const FK_SELECT = `*, users!chat_rooms_created_by_fkey(id, first_name, last_name, email), course_batches(id, title)`;
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 

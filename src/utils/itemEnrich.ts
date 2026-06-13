@@ -25,8 +25,8 @@ export async function attachItems<T extends EnrichRow>(rows: T[]): Promise<(T & 
       .select('id, name, slug, price, original_price, is_free, difficulty_level, trailer_thumbnail_url')
       .in('id', byType.course);
     for (const c of data || []) map[`course:${c.id}`] = { id: c.id, type: 'course', title: c.name, slug: c.slug, price: c.price, original_price: c.original_price, is_free: c.is_free, level: c.difficulty_level, thumbnail_url: c.trailer_thumbnail_url };
-    const { data: tr } = await supabase.from('course_translations').select('course_id, short_intro').in('course_id', byType.course).eq('language_id', 7);
-    for (const t of (tr || []) as any[]) { const m = map[`course:${t.course_id}`]; if (m) m.short_description = t.short_intro; }
+    const { data: tr } = await supabase.from('course_translations').select('course_id, short_intro, web_thumbnail').in('course_id', byType.course).eq('language_id', 7);
+    for (const t of (tr || []) as any[]) { const m = map[`course:${t.course_id}`]; if (m) { m.short_description = t.short_intro; if (!m.thumbnail_url && t.web_thumbnail) m.thumbnail_url = t.web_thumbnail; } } // BUG-26: cart thumbnails
   }
   if (byType.bundle?.length) {
     const { data } = await supabase.from('bundles')

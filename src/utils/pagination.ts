@@ -30,6 +30,8 @@ export function parseListParams(
   const limit = Math.min(cap, Math.max(1, parseInt(req.query.limit as string) || defaults.limit || 20));
   const search = (req.query.search as string)?.trim() || undefined;
   const sort = (req.query.sort as string) || defaults.sort || 'name';
-  const ascending = (req.query.order as string) !== 'desc';
+  const ascending = req.query.ascending !== undefined
+    ? String(req.query.ascending) === 'true'
+    : (req.query.order as string) !== 'desc'; // BUG-25: some admin pages send ?ascending=
   return { page, limit, offset: (page - 1) * limit, search, sort, ascending };
 }

@@ -190,7 +190,7 @@ export async function toggleFreeze(req: Request, res: Response) {
     const action = wallet.is_frozen ? 'unfreeze' : 'freeze';
     const success = wallet.is_frozen
       ? await unfreezeWallet(id, req.user!.id)
-      : await freezeWallet(id, req.user!.id);
+      : await freezeWallet(id, req.user!.id, req.body?.reason ? String(req.body.reason) : null); // BUG-42
 
     if (!success) return err(res, `Failed to ${action} wallet`, 500);
 

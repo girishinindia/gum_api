@@ -13,7 +13,7 @@ import {
 } from '../../services/razorpay.service';
 import { orchestratePostPayment } from '../../services/postPayment.service';
 import { reverseEarningsForOrder } from '../../services/instructorEarning.service';
-import { resolveShare, maxSystemDiscountForItems } from '../../services/revenueShare.service';
+import { resolveShare } from '../../services/revenueShare.service';
 import { notifyRefundProcessed } from '../../services/notification.service';
 import {
   beginWebhookEvent,
@@ -200,11 +200,12 @@ async function computeCartPricing(userId: number, coupon_code?: string, promo_co
     const r = await applyCoupon(coupon_code, subtotal, orderItems, userId);
     couponValid = r.valid; couponMessage = r.message;
     if (r.valid) {
-      // The SYSTEM cannot give away more than its own share of instructor
-      // content — instructors keep their full share of the undiscounted
-      // amount (June 2026 revenue-share rules).
-      const maxSystem = await maxSystemDiscountForItems(orderItems);
-      couponDiscount = Math.min(r.discount, maxSystem);
+      // BUG-34 fix (June 2026): coupons apply at FULL face value (a 100%
+      // coupon makes the order free). The platform absorbs whatever exceeds
+      // its own share — instructor earnings are computed on the undiscounted
+      // amount either way (the earnings engine floors the platform fee at 0),
+      // so the June revenue-share rules still hold.
+      couponDiscount = Math.min(r.discount, subtotal);
       discountAmount += couponDiscount;
       couponId = r.couponId;
     }
@@ -215,9 +216,13 @@ async function computeCartPricing(userId: number, coupon_code?: string, promo_co
     if (r.valid) { promoDiscount = r.discount; discountAmount += promoDiscount; promotionId = r.promotionId; }
   }
 
-  const taxAmount = 0;
-  const total = Math.max(Math.round((subtotal - discountAmount + taxAmount) * 100) / 100, 0);
-  return { orderItems, subtotal, discountAmount, couponDiscount, promoDiscount, taxAmount, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
+  // BUG-36 (June 2026, option A): prices are GST-INCLUSIVE. The total does
+  // NOT change — we surface the included GST portion for the order summary.
+  // Rate is env-configurable (GST_RATE_PCT, default 18).
+  const gstRate = Number(process.env.GST_RATE_PCT || 18);
+  const total = Math.max(Math.round((subtotal - discountAmount) * 100) / 100, 0);
+  const taxAmount = gstRate > 0 ? Math.round((total * gstRate / (100 + gstRate)) * 100) / 100 : 0;
+  return { orderItems, subtotal, discountAmount, couponDiscount, promoDiscount, taxAmount, gstRate, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
 }
 
 /**

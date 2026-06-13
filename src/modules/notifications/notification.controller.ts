@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
+import { enqueuePush } from '../../services/push.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -54,13 +55,18 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = applySearch(q, search, { ilike: ['title', 'message'] });
+    // BUG-20 fix: an all-digits search matches the notification ID exactly
+    if (search && /^\d+$/.test(search.trim())) q = q.eq('id', parseInt(search.trim()));
+    else if (search) q = applySearch(q, search, { ilike: ['title', 'message'] });
     if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
     if (req.query.notification_type) q = q.eq('notification_type', req.query.notification_type as string);
     if (req.query.channel) q = q.eq('channel', req.query.channel as string);
     if (req.query.delivery_status) q = q.eq('delivery_status', req.query.delivery_status as string);
     if (req.query.is_read === 'true') q = q.eq('is_read', true);
     if (req.query.is_read === 'false') q = q.eq('is_read', false);
+    // BUG-22 fix: Sent At date-range filter
+    if (req.query.sent_from) q = q.gte('sent_at', String(req.query.sent_from));
+    if (req.query.sent_to) q = q.lte('sent_at', String(req.query.sent_to) + 'T23:59:59');
 
     if (req.query.show_deleted === 'true') {
       q = q.not('deleted_at', 'is', null);
@@ -119,6 +125,18 @@ export async function create(req: Request, res: Response) {
 
     const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
     if (e) return err(res, e.message, 500);
+
+    // BUG-23 (June 2026): Channel=Push actually dispatches to the user's
+    // registered web-push devices (best-effort; row stays as the record).
+    if ((body.channel ?? 'in_app') === 'push') {
+      enqueuePush(Number(body.user_id), {
+        title: String(body.title || 'Notification'),
+        body: String(body.message || ''),
+        url: body.action_url || undefined,
+      }).then(async (r) => {
+        await supabase.from(TABLE).update({ delivery_status: r.enqueued > 0 ? 'delivered' : 'failed', sent_at: new Date().toISOString() }).eq('id', data.id);
+      }).catch(() => {});
+    }
 
     await clearCache();
     logAdmin({ actorId: req.user!.id, action: 'notification_created', targetType: 'notification', targetId: data.id, targetName: data.title, ip: getClientIp(req) });
@@ -296,7 +314,7 @@ export async function listMine(req: Request, res: Response) {
 
     let q = supabase
       .from(TABLE)
-      .select('id, notification_type, title, message, is_read, read_at, reference_type, reference_id, metadata, created_at', { count: 'exact' })
+      .select('id, notification_type, title, message, is_read, read_at, reference_type, reference_id, metadata, action_url, priority, created_at', { count: 'exact' })
       .eq('user_id', userId)
       .eq('channel', 'in_app')
       .is('deleted_at', null);
