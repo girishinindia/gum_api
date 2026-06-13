@@ -293,7 +293,10 @@ export async function generateInvoiceForOrder(orderId: number): Promise<Generate
   const buyerCode = buyerStateCode(invoice.billing_state);
   const intraState = buyerCode !== null && buyerCode === SUPPLIER.stateCode;
 
-  const totalTax = Number(invoice.tax_amount || 0) || Math.round(taxableTotal * 0.18 * 100) / 100;
+  // GST REMOVED (June 2026): show only the stored tax (0 when GST is disabled).
+  // The previous `|| taxableTotal*0.18` fallback fabricated 18% GST on every
+  // invoice whenever tax_amount was 0, which would re-introduce GST after removal.
+  const totalTax = Number(invoice.tax_amount || 0);
   const cgst = intraState ? Math.round((totalTax / 2) * 100) / 100 : 0;
   const sgst = intraState ? Math.round((totalTax / 2) * 100) / 100 : 0;
   const igst = intraState ? 0 : totalTax;

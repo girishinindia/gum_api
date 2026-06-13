@@ -6,6 +6,7 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { getOrCreateWallet, creditWallet, debitWallet, freezeWallet, unfreezeWallet } from '../../services/wallet.service';
+import { notifyWalletFrozen } from '../../services/notification.service';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'wallets';
@@ -196,6 +197,11 @@ export async function toggleFreeze(req: Request, res: Response) {
 
     await clearCache();
     logAdmin({ actorId: req.user!.id, action: wallet.is_frozen ? 'wallet_unfrozen' : 'wallet_frozen', targetType: 'wallet', targetId: id, targetName: `Wallet #${id}`, ip: getClientIp(req) });
+
+    // BUG-53: alert the wallet owner (in-app + email) when their wallet is frozen, with the reason.
+    if (action === 'freeze' && wallet.user_id) {
+      notifyWalletFrozen(wallet.user_id, req.body?.reason ? String(req.body.reason) : '', id).catch(() => { /* non-blocking */ });
+    }
 
     const { data } = await supabase.from(TABLE).select(FK_SELECT).eq('id', id).single();
     return ok(res, data, `Wallet ${action === 'freeze' ? 'frozen' : 'unfrozen'}`);

@@ -254,7 +254,7 @@ export async function getMine(req: Request, res: Response) {
     const id = parseInt(req.params.id);
     const { data, error: e } = await supabase
       .from(TABLE)
-      .select('*, order_items(id, item_type, item_id, original_price, discount_amount, tax_amount, final_price, quantity)')
+      .select('*, order_items(id, item_type, item_id, item_name, item_slug, original_price, discount_amount, tax_amount, final_price, quantity)')
       .eq('id', id)
       .eq('user_id', req.user!.id)
       .is('deleted_at', null)

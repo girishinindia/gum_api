@@ -476,3 +476,22 @@ export async function notifyPayoutRejected(
     referenceId: payoutRequestId,
   });
 }
+
+// BUG-53: notify the wallet owner when an admin freezes their wallet, surfacing the reason.
+export async function notifyWalletFrozen(
+  userId: number,
+  reason: string,
+  walletId?: number,
+) {
+  return sendNotification({
+    userId,
+    notificationType: 'wallet_frozen',
+    title: 'Wallet Frozen',
+    message: reason
+      ? `Your wallet has been frozen. Reason: ${reason}. Please contact support if you have any questions.`
+      : 'Your wallet has been frozen. Please contact support if you have any questions.',
+    channels: ['in_app', 'email'],
+    referenceType: 'wallet',
+    referenceId: walletId,
+  });
+}

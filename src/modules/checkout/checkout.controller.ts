@@ -13,7 +13,6 @@ import {
 } from '../../services/razorpay.service';
 import { orchestratePostPayment } from '../../services/postPayment.service';
 import { reverseEarningsForOrder } from '../../services/instructorEarning.service';
-import { resolveShare } from '../../services/revenueShare.service';
 import { notifyRefundProcessed } from '../../services/notification.service';
 import {
   beginWebhookEvent,
@@ -171,15 +170,12 @@ async function applyPromo(code: string, orderItems: any[], remainingSubtotal: nu
   if (promo.max_discount_amount && discount > Number(promo.max_discount_amount)) discount = Number(promo.max_discount_amount);
   discount = Math.min(discount, eligible);
 
-  // Revenue-share protection (June 2026): an instructor cannot discount more
-  // than THEIR OWN share of the eligible amount — the system's share of the
-  // full price is untouchable.
-  if (promo.instructor_id) {
-    const share = await resolveShare(Number(promo.instructor_id), 'course');
-    const instructorMax = eligible * (share.instructorSharePct / 100);
-    if (discount > instructorMax) discount = instructorMax;
-  }
-
+  // BUG-48 (June 2026 decision): honor the MARKETED discount. The promo applies at
+  // its advertised value — capped only by max_discount_amount and the eligible
+  // amount — so the course-detail banner price equals the checkout price. The
+  // previous revenue-share cap (instructor couldn't discount beyond their own
+  // share) has been removed; the instructor absorbs their promo in earnings
+  // (promoItem) per the earnings engine.
   return { valid: true, discount: Math.round(discount * 100) / 100, promotionId: promo.id };
 }
 
@@ -216,10 +212,11 @@ async function computeCartPricing(userId: number, coupon_code?: string, promo_co
     if (r.valid) { promoDiscount = r.discount; discountAmount += promoDiscount; promotionId = r.promotionId; }
   }
 
-  // BUG-36 (June 2026, option A): prices are GST-INCLUSIVE. The total does
-  // NOT change — we surface the included GST portion for the order summary.
-  // Rate is env-configurable (GST_RATE_PCT, default 18).
-  const gstRate = Number(process.env.GST_RATE_PCT || 18);
+  // GST REMOVED (June 2026 business decision): GST is disabled platform-wide by
+  // defaulting the rate to 0 — prices are final, no tax line is surfaced, and
+  // instructor earnings are computed on the full price. GST can be re-enabled
+  // later by setting GST_RATE_PCT (then treated as a GST-inclusive carve-out).
+  const gstRate = Number(process.env.GST_RATE_PCT || 0);
   const total = Math.max(Math.round((subtotal - discountAmount) * 100) / 100, 0);
   const taxAmount = gstRate > 0 ? Math.round((total * gstRate / (100 + gstRate)) * 100) / 100 : 0;
   return { orderItems, subtotal, discountAmount, couponDiscount, promoDiscount, taxAmount, gstRate, total, couponId, promotionId, couponValid, promoValid, couponMessage, promoMessage };
@@ -365,6 +362,43 @@ export async function previewCheckout(req: Request, res: Response) {
     });
   } catch (e: any) {
     return err(res, e.message || 'Preview failed', 500);
+  }
+}
+
+/**
+ * POST /checkout/validate-code
+ * BUG-27: single-call coupon/promo validation for the web cart. Replaces the
+ * web's old "fire 3 /preview calls (try-coupon → try-promo → reset)" dance.
+ * Builds the caller's cart, tries the code as a COUPON first, then as a PROMO,
+ * and returns the rupee discount that would apply (no order is created).
+ * Body: { code }. Auth required but NOT the order:create permission.
+ */
+export async function validateCode(req: Request, res: Response) {
+  try {
+    const userId = req.user!.id;
+    const code = (req.body?.code || '').toString().trim();
+    if (!code) return err(res, 'code is required', 400);
+
+    const built = await buildCartItems(userId);
+    if (built.error) return err(res, built.error, 400);
+    const { orderItems, subtotal } = built;
+
+    // Try as a coupon first.
+    const couponRes = await applyCoupon(code, subtotal, orderItems, userId);
+    if (couponRes.valid) {
+      return ok(res, { kind: 'coupon', valid: true, discount: couponRes.discount });
+    }
+
+    // Then try as an instructor promo.
+    const promoRes = await applyPromo(code, orderItems, subtotal);
+    if (promoRes.valid) {
+      return ok(res, { kind: 'promo', valid: true, discount: promoRes.discount });
+    }
+
+    // Neither applied — surface the most relevant message (coupon's, then promo's).
+    return ok(res, { kind: null, valid: false, discount: 0, message: couponRes.message || promoRes.message || 'Invalid code' });
+  } catch (e: any) {
+    return err(res, e.message || 'Validation failed', 500);
   }
 }
 

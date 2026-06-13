@@ -57,11 +57,11 @@ async function clearWalletCaches(userId?: number) {
 }
 
 // ── Get or Create wallet for a user ──
-export async function getOrCreateWallet(userId: number): Promise<{ id: number; balance: number; is_frozen: boolean } | null> {
+export async function getOrCreateWallet(userId: number): Promise<{ id: number; balance: number; is_frozen: boolean; frozen_reason?: string | null; frozen_at?: string | null } | null> {
   // Try to find existing wallet
   const { data: existing } = await supabase
     .from('wallets')
-    .select('id, balance, is_frozen')
+    .select('id, balance, is_frozen, frozen_reason, frozen_at')
     .eq('user_id', userId)
     .is('deleted_at', null)
     .single();
@@ -83,7 +83,7 @@ export async function getOrCreateWallet(userId: number): Promise<{ id: number; b
       min_payout_amount: 500,
       is_active: true,
     })
-    .select('id, balance, is_frozen')
+    .select('id, balance, is_frozen, frozen_reason, frozen_at')
     .single();
 
   if (error) {
@@ -91,7 +91,7 @@ export async function getOrCreateWallet(userId: number): Promise<{ id: number; b
     if (error.code === '23505') { // unique_violation
       const { data: retry } = await supabase
         .from('wallets')
-        .select('id, balance, is_frozen')
+        .select('id, balance, is_frozen, frozen_reason, frozen_at')
         .eq('user_id', userId)
         .is('deleted_at', null)
         .single();

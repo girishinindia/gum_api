@@ -177,9 +177,11 @@ export async function createBatchRoom(req: Request, res: Response) {
   if (!body.name?.trim()) return err(res, 'Room name is required', 400);
 
   // Verify the instructor owns this batch
+  // BUG-30 fix: course_batches has `title`, not `name` — selecting `name` errored out
+  // and broke batch-room creation.
   const { data: batch } = await supabase
     .from('course_batches')
-    .select('id, name, instructor_id')
+    .select('id, title, instructor_id')
     .eq('id', body.batch_id)
     .single();
 

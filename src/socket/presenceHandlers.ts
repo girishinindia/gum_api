@@ -7,6 +7,11 @@ import { logger } from '../utils/logger';
 const PRESENCE_KEY = (userId: number) => `presence:${userId}`;
 const PRESENCE_TTL = 300; // 5 minutes — refreshed on heartbeat
 
+// BUG-31: authoritative online-user roster. A Redis SET is cluster-safe on
+// Upstash (unlike redis.keys('presence:*'), which is unreliable there). One
+// member per online user; the COUNT for admin dashboards comes from SCARD.
+const ONLINE_SET = 'online_users';
+
 // ── Types ──
 interface PresenceData {
   userId: number;
@@ -185,6 +190,8 @@ async function setOnline(chatNs: Namespace, socket: Socket, userId: number, name
     };
 
     await redis.set(PRESENCE_KEY(userId), JSON.stringify(presence), 'EX', PRESENCE_TTL);
+    // BUG-31: add to the cluster-safe online roster (idempotent across tabs).
+    await redis.sadd(ONLINE_SET, String(userId));
 
     // Notify all rooms this user belongs to
     for (const roomId of roomIds) {
@@ -230,6 +237,8 @@ async function setOffline(chatNs: Namespace, socket: Socket, userId: number, nam
     const roomIds = raw ? (JSON.parse(raw) as PresenceData).rooms : [];
 
     await redis.del(PRESENCE_KEY(userId));
+    // BUG-31: last socket for this user closed — drop from the online roster.
+    await redis.srem(ONLINE_SET, String(userId));
 
     // Notify all rooms
     for (const roomId of roomIds) {
@@ -287,10 +296,11 @@ async function getOnlineUsersInRoom(chatNs: Namespace, roomId: number): Promise<
 
 /**
  * Get total online user count (for admin dashboard).
+ * BUG-31: counts via SCARD on the online_users SET — cluster-safe on Upstash,
+ * unlike the previous redis.keys('presence:*') scan.
  */
 export async function getOnlineUserCount(): Promise<number> {
-  const keys = await redis.keys('presence:*');
-  return keys.length;
+  return redis.scard(ONLINE_SET);
 }
 
 /**

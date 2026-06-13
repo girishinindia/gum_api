@@ -125,10 +125,11 @@ CREATE TABLE IF NOT EXISTS public.authoring_units (
   updated_at          timestamptz NOT NULL DEFAULT now(),
   deleted_at          timestamptz,
 
-  -- a topic must declare its topic_type; modules/chapters must not
+  -- BUG-16: topics may have a NULL topic_type (the builder no longer forces one);
+  -- only non-topics are required to leave it NULL. Kept in sync with migration
+  -- 71_relax_authoring_units_topic_type_chk.sql (the production state).
   CONSTRAINT authoring_units_topic_type_chk
-    CHECK ( (unit_type = 'topic' AND topic_type IS NOT NULL)
-         OR (unit_type <> 'topic' AND topic_type IS NULL) )
+    CHECK ( (unit_type = 'topic') OR (topic_type IS NULL) )
 );
 CREATE INDEX IF NOT EXISTS idx_authoring_units_tree
   ON public.authoring_units(authoring_course_id, parent_unit_id, display_order);

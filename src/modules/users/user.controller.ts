@@ -286,6 +286,13 @@ export async function assignRole(req: Request, res: Response) {
     }
   }
 
+  // BUG-40/51: keep users.type in sync so the profile and admin ?type=instructor
+  // pickers reflect the instructor role. (The web profile reads max_role_level,
+  // which now resolves to 60 for instructors; users.type drives instructor pickers.)
+  if (role.name === 'instructor') {
+    await supabase.from('users').update({ type: 'instructor' }).eq('id', id);
+  }
+
   // Force-logout the target user so they get fresh permissions on re-login
   await supabase
     .from('login_sessions')

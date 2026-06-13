@@ -25,7 +25,9 @@ import {
 import { creditWallet } from './wallet.service';
 
 // ── Constants ──
-const GST_RATE = 0.18; // 18% GST for digital services in India
+// GST REMOVED (June 2026 business decision): disabled by default (rate 0) so
+// instructor earnings are computed on the full price. Set GST_RATE_PCT to re-enable.
+const GST_RATE = Number(process.env.GST_RATE_PCT || 0) / 100;
 
 // ──────────────────────────────────────────────
 // Re-entrant step wrapper

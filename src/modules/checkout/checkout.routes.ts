@@ -61,8 +61,14 @@ r.use(authMiddleware, attachPermissions());
  */
 r.post('/initiate', checkoutLimiter, requirePermission('order', 'create'), ctrl.initiateCheckout);
 
-// Preview totals + coupon/promo discount without creating an order
-r.post('/preview', requirePermission('order', 'create'), ctrl.previewCheckout);
+// Preview totals + coupon/promo discount without creating an order.
+// BUG-27: authenticated-only (no order:create) so instructors/other roles can
+// preview/validate carts too.
+r.post('/preview', ctrl.previewCheckout);
+
+// BUG-27: single-call coupon/promo validation for the web cart.
+// Authenticated-only — deliberately NOT gated behind order:create.
+r.post('/validate-code', ctrl.validateCode);
 
 /**
  * @openapi
