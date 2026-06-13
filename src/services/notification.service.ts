@@ -497,3 +497,21 @@ export async function notifyWalletFrozen(
     referenceId: walletId,
   });
 }
+
+// BUG-73: notify the account owner when an admin suspends/deactivates their account, surfacing the reason.
+export async function notifyAccountSuspended(
+  userId: number,
+  reason?: string,
+) {
+  return sendNotification({
+    userId,
+    notificationType: 'account_suspended',
+    title: 'Account Suspended',
+    message: reason
+      ? `Your account has been suspended. Reason: ${reason}. Please contact support if you have any questions.`
+      : 'Your account has been suspended. Please contact support if you have any questions.',
+    channels: ['in_app', 'email'],
+    referenceType: 'user',
+    referenceId: userId,
+  });
+}

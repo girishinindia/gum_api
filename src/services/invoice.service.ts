@@ -131,12 +131,16 @@ function buildInvoiceHtml(args: {
     </tr>
   `).join('');
 
-  const taxRow = taxBreakup.intraState
-    ? `
+  // BUG-68: with GST removed, totalTax is 0 — don't render ₹0.00 CGST/SGST/IGST rows.
+  // Only emit tax lines when there is actually tax to show.
+  const taxRow = taxBreakup.total <= 0
+    ? ''
+    : taxBreakup.intraState
+      ? `
       <tr><td>CGST @ 9%</td><td class="num">₹ ${formatINR(taxBreakup.cgst)}</td></tr>
       <tr><td>SGST @ 9%</td><td class="num">₹ ${formatINR(taxBreakup.sgst)}</td></tr>
     `
-    : `
+      : `
       <tr><td>IGST @ 18%</td><td class="num">₹ ${formatINR(taxBreakup.igst)}</td></tr>
     `;
 

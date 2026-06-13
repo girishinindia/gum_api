@@ -7,6 +7,7 @@ import { config } from '../../config';
 import { clearPermissionCache, hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { logAdmin, logAuth, logData } from '../../services/activityLog.service';
+import { notifyAccountSuspended } from '../../services/notification.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
@@ -178,6 +179,12 @@ export async function update(req: Request, res: Response) {
         redis.del(`perms:${id}`),
         redis.del(`has_session:${id}`),
       ]);
+
+      // BUG-73: notify the user (in-app + email) when their account is suspended/deactivated,
+      // surfacing the optional reason. No DB column exists for the reason (users has only
+      // `status`), so it is passed straight to the notification. Fire-and-forget; never block.
+      const reason = typeof req.body.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : undefined;
+      notifyAccountSuspended(id, reason).catch(() => {});
     }
   }
 

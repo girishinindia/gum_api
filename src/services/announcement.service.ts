@@ -31,10 +31,13 @@ export async function resolveTargetUsers(
   switch (targetScope) {
     case 'all': {
       // Get all users, filtered by audience type
-      let query = supabase.from('users').select('id').is('deleted_at', null).eq('is_active', true);
+      // BUG-71: column is `status` ('active'/'inactive'/'suspended'), not `is_active`.
+      let query = supabase.from('users').select('id').is('deleted_at', null).eq('status', 'active');
       if (targetAudience === 'students') query = query.eq('type', 'student');
       else if (targetAudience === 'instructors') query = query.eq('type', 'instructor');
-      const { data } = await query;
+      const { data, error } = await query;
+      // BUG-71: surface lookup failures instead of silently resolving to 0 recipients.
+      if (error) throw new Error(`Failed to resolve 'all' audience: ${error.message}`);
       userIds = data?.map((u: any) => u.id) || [];
       break;
     }
@@ -142,23 +145,27 @@ export async function resolveTargetUsers(
     }
 
     case 'instructors': {
-      const { data } = await supabase
+      // BUG-71: use `status='active'` (real column) + surface lookup errors.
+      const { data, error } = await supabase
         .from('users')
         .select('id')
         .eq('type', 'instructor')
         .is('deleted_at', null)
-        .eq('is_active', true);
+        .eq('status', 'active');
+      if (error) throw new Error(`Failed to resolve instructors audience: ${error.message}`);
       userIds = data?.map((u: any) => u.id) || [];
       break;
     }
 
     case 'students': {
-      const { data } = await supabase
+      // BUG-71: use `status='active'` (real column) + surface lookup errors.
+      const { data, error } = await supabase
         .from('users')
         .select('id')
         .eq('type', 'student')
         .is('deleted_at', null)
-        .eq('is_active', true);
+        .eq('status', 'active');
+      if (error) throw new Error(`Failed to resolve students audience: ${error.message}`);
       userIds = data?.map((u: any) => u.id) || [];
       break;
     }

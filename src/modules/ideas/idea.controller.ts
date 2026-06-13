@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
+import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
+import { redis } from '../../config/redis';
 import { ok, err, paginated } from '../../utils/response';
-import { generateUniqueSlug } from '../../utils/helpers';
+import { generateUniqueSlug, getClientIp } from '../../utils/helpers';
 import { sendNotification } from '../../services/notification.service';
 import { creditWallet } from '../../services/wallet.service';
 import { processAndUploadImage, uploadRawFile } from '../../services/storage.service';
@@ -130,6 +132,23 @@ export async function publicList(req: Request, res: Response) {
   } catch (e: any) { return err(res, e.message, 500); }
 }
 
+// BUG-79: only count a view once per viewer per idea within a TTL window.
+// Viewer key = authed user id (if optionalAuth resolved one), else a hash of IP+UA.
+// Best-effort: any Redis failure falls through to counting the view (never blocks the page).
+const VIEW_DEDUP_TTL_SECONDS = 6 * 60 * 60; // 6h
+async function shouldCountView(req: Request, ideaId: number): Promise<boolean> {
+  try {
+    const viewer = req.user?.id
+      ? `u${req.user.id}`
+      : createHash('sha256').update(`${getClientIp(req) || 'unknown'}|${req.headers['user-agent'] || ''}`).digest('hex').slice(0, 32);
+    // SET NX → returns 'OK' only when the key was new; null when it already exists.
+    const set = await redis.set(`idea:view:${ideaId}:${viewer}`, '1', 'EX', VIEW_DEDUP_TTL_SECONDS, 'NX');
+    return set === 'OK';
+  } catch {
+    return true; // Redis down — degrade to counting the view rather than dropping it.
+  }
+}
+
 // GET /ideas/public/:slug
 export async function publicBySlug(req: Request, res: Response) {
   try {
@@ -141,8 +160,10 @@ export async function publicBySlug(req: Request, res: Response) {
     if (e) return err(res, e.message, 500);
     if (!data) return err(res, 'Idea not found', 404);
 
-    // fire-and-forget view counter
-    supabase.from('ideas').update({ views_count: ((data as any).views_count || 0) + 1 }).eq('id', (data as any).id).then(() => {});
+    // BUG-79: fire-and-forget view counter, deduped per viewer per idea (6h TTL).
+    shouldCountView(req, (data as any).id).then((count) => {
+      if (count) supabase.from('ideas').update({ views_count: ((data as any).views_count || 0) + 1 }).eq('id', (data as any).id).then(() => {});
+    }).catch(() => {});
 
     return ok(res, { ...(data as any), ...badgeFlags(data), idea_rewards: undefined, idea_partnerships: undefined });
   } catch (e: any) { return err(res, e.message, 500); }
@@ -281,6 +302,20 @@ export async function uploadAttachment(req: Request, res: Response) {
 }
 
 // ════════════════ LIKES ════════════════
+
+// BUG-80: GET /ideas/my-likes — authed-only. Returns the ids of ideas the current
+// user has liked, so the (cacheable, unauth) public list/detail can hydrate hearts
+// client-side without baking per-user state into the ISR payloads.
+export async function myLikes(req: Request, res: Response) {
+  try {
+    const { data, error: e } = await supabase
+      .from('idea_likes')
+      .select('idea_id')
+      .eq('user_id', req.user!.id);
+    if (e) return err(res, e.message, 500);
+    return ok(res, (data || []).map((r: any) => r.idea_id));
+  } catch (e: any) { return err(res, e.message, 500); }
+}
 
 // POST /ideas/:id/like — public ideas only, once per user
 export async function like(req: Request, res: Response) {

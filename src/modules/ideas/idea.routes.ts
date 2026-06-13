@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as ctrl from './idea.controller';
-import { authMiddleware } from '../../middleware/auth';
+import { authMiddleware, optionalAuth } from '../../middleware/auth';
 import { attachPermissions, requirePermission } from '../../middleware/rbac';
 
 /**
@@ -30,10 +30,13 @@ const attachmentUpload = multer({
 
 // ── Public showcase (no auth) ──
 r.get('/public', ctrl.publicList);
-r.get('/public/:slug', ctrl.publicBySlug);
+// BUG-79: optionalAuth so an authed viewer dedups views by user id (else by IP+UA hash).
+r.get('/public/:slug', optionalAuth, ctrl.publicBySlug);
 
 // ── Authenticated self-serve (students + instructors) ──
 r.use(authMiddleware);
+// BUG-80: must precede the `/:id/like` (and admin `/:id`) param routes so it isn't shadowed.
+r.get('/my-likes', ctrl.myLikes);
 r.post('/', ctrl.submit);
 r.get('/me', ctrl.listMine);
 r.get('/me/:id', ctrl.getMine);

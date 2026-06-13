@@ -10,6 +10,8 @@ r.get('/', ctrl.list);
 
 // Admin management
 r.use(authMiddleware, attachPermissions());
+// BUG-81: usage count — admin read guard; declared before `/:id` routes (no shadowing issue, but keep grouped).
+r.get('/:id/usage', requirePermission('idea_category', 'read'), ctrl.usage);
 r.post('/', requirePermission('idea_category', 'create'), ctrl.create);
 r.patch('/:id/restore', requirePermission('idea_category', 'restore'), ctrl.restore);
 r.patch('/:id', requirePermission('idea_category', 'update'), ctrl.update);

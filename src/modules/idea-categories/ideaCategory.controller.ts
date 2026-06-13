@@ -33,6 +33,22 @@ export async function list(req: Request, res: Response) {
   } catch (e: any) { return err(res, e.message, 500); }
 }
 
+// BUG-81: GET /idea-categories/:id/usage — admin-only. Returns how many non-deleted
+// ideas reference this category so the UI can warn before a permanent delete.
+// Mirrors the count query used as the guard inside `remove`.
+export async function usage(req: Request, res: Response) {
+  try {
+    const id = parseInt(req.params.id);
+    const { count, error: e } = await supabase
+      .from('ideas')
+      .select('id', { count: 'exact', head: true })
+      .eq('category_id', id)
+      .is('deleted_at', null);
+    if (e) return err(res, e.message, 500);
+    return ok(res, { ideas_using: count || 0 });
+  } catch (e: any) { return err(res, e.message, 500); }
+}
+
 export async function create(req: Request, res: Response) {
   try {
     const body = parseBody(req);
