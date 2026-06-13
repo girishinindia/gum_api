@@ -49,11 +49,14 @@ async function insertAutoReply(ticketId: number, ticketNumber: string): Promise<
 async function notifyAdmins(ticketId: number, ticketNumber: string, subject: string, opts?: { title?: string; message?: string; notificationType?: string }): Promise<void> {
   try {
     // Find users with admin or super_admin roles
+    // BUG-62: instructors are now level 60, so the old `>= 50` threshold sent
+    // them support-ticket notifications. Raise to 80 so only admin (80) and
+    // super_admin (100) are notified.
     const { data: adminUsers } = await supabase
       .from('user_roles')
       .select('user_id, roles!inner(level)')
       .eq('is_active', true)
-      .gte('roles.level', 50); // admin level 50+, super_admin 100
+      .gte('roles.level', 80); // admin level 80+, super_admin 100
 
     if (!adminUsers || adminUsers.length === 0) return;
 

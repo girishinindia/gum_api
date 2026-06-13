@@ -54,13 +54,15 @@ export async function runCourseReminder(): Promise<{ reminded: number; skipped: 
   }
 
   // Check user preferences — skip users who opted out of reminders
+  // BUG-60/BUG-62: notification_preferences has no deleted_at column; the
+  // phantom filter errored the query so optedOut stayed empty and reminders
+  // were emailed to users who disabled them. Drop the filter.
   const userIds = [...new Set(stale.map((e: any) => e.user_id))];
   const { data: prefs } = await supabase
     .from('notification_preferences')
     .select('user_id, email_enabled')
     .in('user_id', userIds)
-    .eq('notification_type', 'course_reminder')
-    .is('deleted_at', null);
+    .eq('notification_type', 'course_reminder');
 
   const optedOut = new Set<number>();
   for (const p of prefs || []) {

@@ -50,12 +50,14 @@ async function getUserPreference(
   notificationType: string,
   channel: 'email' | 'sms' | 'in_app' | 'push',
 ): Promise<boolean> {
+  // BUG-60/BUG-62: notification_preferences has no deleted_at column; the
+  // phantom-column filter errored the query → data came back null → every
+  // channel silently defaulted to "enabled". Drop the filter.
   const { data } = await supabase
     .from('notification_preferences')
     .select('email_enabled, sms_enabled, in_app_enabled, push_enabled')
     .eq('user_id', userId)
     .eq('notification_type', notificationType)
-    .is('deleted_at', null)
     .single();
 
   if (!data) return true; // Default: all enabled

@@ -40,8 +40,14 @@ export async function listForItem(req: Request, res: Response) {
   const userIds = [...new Set((rows || []).map((r: any) => r.user_id).filter(Boolean))];
   const userMap: Record<number, { name: string; image: string | null }> = {};
   if (userIds.length) {
-    const { data: users } = await supabase.from('users').select('id, full_name, email, profile_image_url').in('id', userIds);
-    if (users) for (const u of users as any[]) userMap[u.id] = { name: u.full_name || u.email || 'User', image: u.profile_image_url || null };
+    // BUG-66: registered users populate first_name/last_name, not full_name, so
+    // the reviewer name fell through to 'User'. Compose from whichever exists;
+    // drop email from the public-facing display for privacy.
+    const { data: users } = await supabase.from('users').select('id, full_name, first_name, last_name, profile_image_url').in('id', userIds);
+    if (users) for (const u of users as any[]) {
+      const name = (u.full_name && u.full_name.trim()) || [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || 'User';
+      userMap[u.id] = { name, image: u.profile_image_url || null };
+    }
   }
   const reviews = (rows || []).map((r: any) => ({
     id: r.id,

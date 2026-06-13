@@ -47,12 +47,14 @@ export async function runNotificationDigest(): Promise<{ usersSent: number; tota
     if (count < 2) continue;
 
     // Check user email preference for digests
+    // BUG-60/BUG-62: notification_preferences has no deleted_at column; the
+    // phantom filter errored the query so the opt-out below never fired and
+    // digests were emailed to users who disabled them. Drop the filter.
     const { data: pref } = await supabase
       .from('notification_preferences')
       .select('email_enabled')
       .eq('user_id', userId)
       .eq('notification_type', 'digest')
-      .is('deleted_at', null)
       .maybeSingle();
 
     // If explicit preference exists and email is disabled, skip

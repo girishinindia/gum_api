@@ -108,16 +108,19 @@ export async function create(req: Request, res: Response) {
 
     // BUG-04 fix: admin-created in-app notifications must respect the user's
     // notification settings — don't create rows for opted-out types.
+    // BUG-60: notification_preferences has no deleted_at column; the phantom
+    // filter errored the query so the skip check never fired. Drop it so the
+    // opt-out is actually honored, and surface a `skipped` flag the admin UI
+    // can branch on to show a "skipped" message.
     if ((body.channel ?? 'in_app') === 'in_app' && body.notification_type) {
       const { data: pref } = await supabase
         .from('notification_preferences')
         .select('in_app_enabled')
         .eq('user_id', body.user_id)
         .eq('notification_type', body.notification_type)
-        .is('deleted_at', null)
         .maybeSingle();
       if (pref && pref.in_app_enabled === false) {
-        return ok(res, { skipped: true }, 'Skipped — this user has turned off in-app notifications for this type.');
+        return ok(res, { skipped: true, reason: 'user_disabled_in_app' }, 'Skipped — the user turned off in-app notifications for this type');
       }
     }
 
@@ -295,12 +298,14 @@ export async function getUnreadCount(req: Request, res: Response) {
  * Returns the notification types this user has turned OFF for in-app.
  */
 async function disabledInAppTypes(userId: number): Promise<string[]> {
+  // BUG-60/BUG-62: notification_preferences has no deleted_at column; the
+  // phantom filter errored the query → no types returned → the inbox showed
+  // everything, including types the user disabled. Drop the filter.
   const { data } = await supabase
     .from('notification_preferences')
     .select('notification_type')
     .eq('user_id', userId)
-    .eq('in_app_enabled', false)
-    .is('deleted_at', null);
+    .eq('in_app_enabled', false);
   return (data || []).map((p: any) => String(p.notification_type)).filter(Boolean);
 }
 
