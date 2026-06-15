@@ -825,12 +825,19 @@ export async function getBySlug(req: Request, res: Response) {
     const userIds = [...new Set(reviewRows.map((r: any) => r.user_id))];
     const reviewerMap: Record<string, any> = {};
     if (userIds.length > 0) {
-      const { data: users } = await supabase.from('users').select('id, full_name, profile_image_url').in('id', userIds);
+      const { data: users } = await supabase.from('users').select('id, full_name, display_name, first_name, last_name, profile_image_url').in('id', userIds);
       if (users) for (const u of users) reviewerMap[u.id] = u;
     }
+    // BUG-66: registered users populate first_name/last_name (not always full_name);
+    // resolve the real name consistently with /public-reviews instead of 'Anonymous'.
+    const reviewerName = (u: any): string =>
+      (u?.full_name && u.full_name.trim())
+      || (u?.display_name && u.display_name.trim())
+      || [u?.first_name, u?.last_name].filter(Boolean).join(' ').trim()
+      || 'User';
     reviews = reviewRows.map((r: any) => ({
       ...r,
-      reviewer_name: reviewerMap[r.user_id]?.full_name || 'Anonymous',
+      reviewer_name: reviewerName(reviewerMap[r.user_id]),
       reviewer_image: reviewerMap[r.user_id]?.profile_image_url || null,
     }));
     let ratingSum = 0;

@@ -12,6 +12,7 @@ r.use(authMiddleware, attachPermissions());
 // Reads use the same permission as analytics dashboards; refresh is a
 // mutation but a cheap one, so we gate it behind 'read' too (admins only).
 r.get('/daily',    requirePermission('analytics', 'read'), ctrl.dailyRevenue);
+r.get('/platform', requirePermission('analytics', 'read'), ctrl.platformRevenue);
 r.post('/refresh', requirePermission('analytics', 'read'), ctrl.refreshNow);
 
 export default r;

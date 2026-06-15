@@ -207,6 +207,15 @@ export async function create(req: Request, res: Response) {
 
   body.created_by = req.user!.id;
 
+  // Admin-created promos are authoritative: when created with status 'active',
+  // approve them immediately so the code works at checkout right away — no
+  // separate approval step (mirrors the approve() handler). With an empty
+  // Valid From the checkout has no lower time bound, so it applies instantly.
+  if (body.promotion_status === 'active' && !body.approved_at) {
+    body.approved_at = new Date().toISOString();
+    body.approved_by = req.user!.id;
+  }
+
   // Auto-generate promo_code if not provided (use slug-style format)
   if (!body.promo_code && body.promotion_name) {
     const base = body.promotion_name.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');

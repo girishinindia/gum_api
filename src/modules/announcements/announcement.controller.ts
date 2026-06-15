@@ -106,6 +106,13 @@ export async function update(req: Request, res: Response) {
 
     const updates = parseBody(req);
     updates.updated_by = req.user!.id;
+    // Allow changing status directly from the edit form; when an admin sets it to
+    // 'published' and it wasn't published before, stamp published_at/by so it
+    // orders correctly and shows a publish time (the Publish action still handles dispatch).
+    if (updates.status === 'published' && !old.published_at && !updates.published_at) {
+      updates.published_at = new Date().toISOString();
+      if (!updates.published_by) updates.published_by = req.user!.id;
+    }
 
     const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
     if (e) return err(res, e.message, 500);

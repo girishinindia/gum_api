@@ -19,12 +19,24 @@ export async function announcementsPublic(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
   const nowIso = new Date().toISOString();
 
+  // Scope visibility: this public/news feed shows only 'all'-scoped announcements
+  // by default, so role-targeted ones (instructors/students) don't leak to the
+  // wrong audience or to anonymous visitors. Those are delivered to the right
+  // users via in-app/email/push notifications (see dispatchAnnouncement). A
+  // signed-in client may pass ?audience=instructors|students to also receive
+  // that role's announcements on the page.
+  const scopes = ['all'];
+  const audience = String(req.query.audience || '').toLowerCase();
+  if (audience === 'instructors' || audience === 'instructor') scopes.push('instructors');
+  else if (audience === 'students' || audience === 'student') scopes.push('students');
+
   const { data, error: e } = await supabase
     .from('announcements')
-    .select('id, title, content, announcement_type, priority, is_pinned, published_at, expires_at')
+    .select('id, title, content, announcement_type, priority, is_pinned, published_at, expires_at, target_scope')
     .eq('status', 'published')
     .eq('is_active', true)
     .is('deleted_at', null)
+    .in('target_scope', scopes)
     .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
     .order('is_pinned', { ascending: false })
     .order('published_at', { ascending: false, nullsFirst: false })
