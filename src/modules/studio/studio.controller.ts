@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { ok, err, paginated } from '../../utils/response';
+import { processAndUploadImage } from '../../services/storage.service';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -27,6 +28,8 @@ interface TypeConfig {
   required: string[];                     // must be present on create
   intCols?: string[];
   numCols?: string[];
+  zeroCols?: string[];                     // NOT-NULL numeric cols → coerce null/blank to 0 (never null)
+  freeCol?: string;                        // boolean "is free" flag → forces zeroCols to 0 when true
   boolCols?: string[];
   jsonCols?: string[];
   select?: string;                        // list select (default *)
@@ -40,7 +43,7 @@ const TYPES: Record<string, TypeConfig> = {
     allowed: ['title', 'course_id', 'is_free', 'price', 'scheduled_at', 'duration_minutes', 'max_attendees', 'meeting_platform', 'meeting_url', 'meeting_id', 'meeting_password', 'recording_url', 'webinar_status', 'display_order', 'is_active'],
     required: ['title'],
     intCols: ['course_id', 'duration_minutes', 'max_attendees', 'display_order'],
-    numCols: ['price'], boolCols: ['is_free', 'is_active'],
+    numCols: ['price'], zeroCols: ['price'], freeCol: 'is_free', boolCols: ['is_free', 'is_active'],
     defaultSort: 'scheduled_at',
   },
   sessions: {
@@ -57,7 +60,7 @@ const TYPES: Record<string, TypeConfig> = {
     allowed: ['title', 'course_id', 'batch_status', 'max_students', 'price', 'is_free', 'includes_course_access', 'start_date', 'end_date', 'meeting_platform', 'meeting_link', 'schedule', 'display_order', 'is_active'],
     required: ['title', 'course_id'],
     intCols: ['course_id', 'max_students', 'display_order'],
-    numCols: ['price'], boolCols: ['is_free', 'includes_course_access', 'is_active'],
+    numCols: ['price'], zeroCols: ['price'], freeCol: 'is_free', boolCols: ['is_free', 'includes_course_access', 'is_active'],
     defaultSort: 'start_date',
   },
   blog: {
@@ -109,7 +112,7 @@ function sanitize(cfg: TypeConfig, raw: any): any {
   const b: any = {};
   for (const k of cfg.allowed) if (raw[k] !== undefined) b[k] = raw[k];
   for (const k of cfg.intCols || []) if (typeof b[k] === 'string') b[k] = b[k] === '' ? null : parseInt(b[k]) || null;
-  for (const k of cfg.numCols || []) if (typeof b[k] === 'string') b[k] = b[k] === '' ? null : Number(b[k]) || null;
+  for (const k of cfg.numCols || []) if (typeof b[k] === 'string') { const n = Number(b[k]); b[k] = (b[k] === '' || isNaN(n)) ? null : n; }
   for (const k of cfg.boolCols || []) if (typeof b[k] === 'string') b[k] = b[k] === 'true';
   for (const k of cfg.jsonCols || []) if (typeof b[k] === 'string') { try { b[k] = JSON.parse(b[k]); } catch { b[k] = null; } }
   for (const k of Object.keys(b)) if (b[k] === '') b[k] = null;
@@ -154,6 +157,10 @@ export async function create(req: Request, res: Response) {
   if (!cfg) return err(res, 'Unknown content type', 404);
   try {
     const body = sanitize(cfg, req.body || {});
+    // NOT-NULL numeric cols (e.g. webinar/batch price): a free item or a blank
+    // field must become 0, never null (the DB column rejects null).
+    if (cfg.freeCol && body[cfg.freeCol] === true) for (const k of cfg.zeroCols || []) body[k] = 0;
+    for (const k of cfg.zeroCols || []) if (body[k] === null || body[k] === undefined) body[k] = 0;
     for (const k of cfg.required) {
       if (body[k] === undefined || body[k] === null) return err(res, `${k} is required`, 400);
     }
@@ -190,6 +197,9 @@ export async function update(req: Request, res: Response) {
     if ('error' in own) return err(res, own.error, own.status);
 
     const updates = sanitize(cfg, req.body || {});
+    // Same NOT-NULL price guard as create — only touch keys actually present.
+    if (cfg.freeCol && updates[cfg.freeCol] === true) for (const k of cfg.zeroCols || []) updates[k] = 0;
+    for (const k of cfg.zeroCols || []) if (k in updates && updates[k] === null) updates[k] = 0;
     if (cfg.table === 'course_batches' && updates.course_id) {
       const { data: course } = await supabase.from('courses').select('id, instructor_id').eq('id', updates.course_id).maybeSingle();
       if (!course || Number(course.instructor_id) !== req.user!.id) return err(res, 'You can only attach your own courses', 400);
@@ -277,5 +287,21 @@ export async function myCourses(req: Request, res: Response) {
     return ok(res, data || []);
   } catch (e: any) {
     return err(res, e.message, 500);
+  }
+}
+
+// ── POST /studio/upload-image — upload an image to the CDN and return its URL.
+//    Lets studio forms (e.g. podcast thumbnail) attach an image before the row
+//    exists, instead of forcing the instructor to paste an external link. ──
+export async function uploadImage(req: Request, res: Response) {
+  try {
+    const file = (req as any).file;
+    if (!file) return err(res, 'Image file is required', 400);
+    const safe = String(file.originalname || 'image').toLowerCase().replace(/[^a-z0-9.]+/g, '-').slice(0, 48);
+    const path = `studio/${req.user!.id}/${Date.now()}-${safe}`;
+    const url = await processAndUploadImage(file.buffer, path, { width: 1280, quality: 82 });
+    return ok(res, { url }, 'Uploaded');
+  } catch (e: any) {
+    return err(res, e.message || 'Upload failed', 500);
   }
 }

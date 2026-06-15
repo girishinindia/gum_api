@@ -117,7 +117,7 @@ export async function create(req: Request, res: Response) {
         .from('notification_preferences')
         .select('in_app_enabled')
         .eq('user_id', body.user_id)
-        .eq('notification_type', body.notification_type)
+        .eq('notification_type', canonType(String(body.notification_type)))
         .maybeSingle();
       if (pref && pref.in_app_enabled === false) {
         return ok(res, { skipped: true, reason: 'user_disabled_in_app' }, 'Skipped — the user turned off in-app notifications for this type');
@@ -293,6 +293,29 @@ export async function getUnreadCount(req: Request, res: Response) {
 // The "inbox" is the in_app channel; email/push rows are delivery records.
 // ══════════════════════════════════════════════════
 
+// Legacy/admin short keys ↔ canonical preference keys. The settings panel and
+// system notifiers use canonical keys (enrollment_confirmed, …); some older
+// admin-created rows used short keys ('enrollment', …). Normalizing both ways
+// means a user's in-app opt-out applies no matter which key variant was used.
+const TYPE_TO_CANON: Record<string, string> = {
+  enrollment: 'enrollment_confirmed',
+  payment: 'payment_received',
+  refund: 'refund_processed',
+  reminder: 'course_reminder',
+  class_reminder: 'course_reminder',
+};
+const CANON_TO_VARIANTS: Record<string, string[]> = (() => {
+  const m: Record<string, string[]> = {};
+  for (const [short, canon] of Object.entries(TYPE_TO_CANON)) { (m[canon] ||= [canon]).push(short); }
+  return m;
+})();
+function canonType(t: string): string { return TYPE_TO_CANON[t] || t; }
+function expandDisabled(types: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of types) { out.add(t); const c = canonType(t); for (const v of (CANON_TO_VARIANTS[c] || [c])) out.add(v); }
+  return [...out];
+}
+
 /**
  * BUG-04 fix (June 2026): the inbox must respect notification settings.
  * Returns the notification types this user has turned OFF for in-app.
@@ -329,7 +352,7 @@ export async function listMine(req: Request, res: Response) {
     if (req.query.notification_type)   q = q.eq('notification_type', String(req.query.notification_type));
 
     // BUG-04: hide types the user disabled (covers rows created before opt-out too)
-    const disabled = await disabledInAppTypes(userId);
+    const disabled = expandDisabled(await disabledInAppTypes(userId));
     if (disabled.length) q = q.not('notification_type', 'in', notInTypes(disabled));
 
     q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
@@ -354,7 +377,7 @@ export async function unreadCountMine(req: Request, res: Response) {
       .eq('is_read', false)
       .is('deleted_at', null);
     // BUG-04: badge must match the filtered inbox
-    const disabled = await disabledInAppTypes(userId);
+    const disabled = expandDisabled(await disabledInAppTypes(userId));
     if (disabled.length) q = q.not('notification_type', 'in', notInTypes(disabled));
     const { count, error: e } = await q;
     if (e) return err(res, e.message, 500);

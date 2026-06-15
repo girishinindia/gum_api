@@ -55,10 +55,14 @@ export async function list(req: Request, res: Response) {
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
 
-  // Fetch English translation names
+  // Fetch English translation names (the `name` columns are null — i18n lives
+  // in *_translations). Resolve both the sub-category name AND its parent
+  // category name so dropdowns can show "Category › Sub-category".
   const scIds = (data || []).map((sc: any) => sc.id);
+  const catIds = [...new Set((data || []).map((sc: any) => sc.category_id).filter(Boolean))] as number[];
   const isTrash = req.query.show_deleted === 'true';
   let englishNameMap: Record<number, string> = {};
+  let categoryNameMap: Record<number, string> = {};
   if (scIds.length > 0) {
     const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
     if (enLang) {
@@ -74,12 +78,23 @@ export async function list(req: Request, res: Response) {
           englishNameMap[t.sub_category_id] = t.name;
         }
       }
+      if (catIds.length > 0) {
+        const { data: catTr } = await supabase
+          .from('category_translations')
+          .select('category_id, name')
+          .in('category_id', catIds)
+          .eq('language_id', enLang.id);
+        if (catTr) {
+          for (const t of catTr) categoryNameMap[t.category_id] = t.name;
+        }
+      }
     }
   }
 
   const enriched = (data || []).map((sc: any) => ({
     ...sc,
     english_name: englishNameMap[sc.id] || null,
+    category_name: categoryNameMap[sc.category_id] || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);

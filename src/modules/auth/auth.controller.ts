@@ -13,7 +13,7 @@ import { ok, err } from '../../utils/response';
 import { normalizeMobile, generatePendingId, hashSha256, maskEmail, maskMobile, getClientIp, getDeviceType } from '../../utils/helpers';
 
 export async function register(req: Request, res: Response) {
-  const { first_name, last_name, email, mobile, password } = (req as any).validated;
+  const { first_name, last_name, email, mobile, password, referral_code } = (req as any).validated;
   const cleanEmail = email.trim().toLowerCase();
   const cleanMobile = normalizeMobile(mobile);
   const ip = getClientIp(req);
@@ -32,7 +32,7 @@ export async function register(req: Request, res: Response) {
   const passwordHash = await bcrypt.hash(password, config.bcrypt.saltRounds);
   const pendingId = generatePendingId();
 
-  await otpSvc.storeRegistration(pendingId, { first_name: first_name.trim(), last_name: last_name.trim(), email: cleanEmail, mobile: cleanMobile, password_hash: passwordHash, email_verified: false, mobile_verified: false });
+  await otpSvc.storeRegistration(pendingId, { first_name: first_name.trim(), last_name: last_name.trim(), email: cleanEmail, mobile: cleanMobile, password_hash: passwordHash, email_verified: false, mobile_verified: false, referral_code: referral_code ? String(referral_code).trim().toUpperCase() : null });
 
   const emailOtp = await otpSvc.storeAndGetOTP(pendingId, 'email');
   const mobileOtp = await otpSvc.storeAndGetOTP(pendingId, 'sms');
@@ -86,6 +86,32 @@ export async function verifyOtp(req: Request, res: Response) {
     try {
       userId = await db.callFn('create_verified_user', { p_first_name: reg.first_name, p_last_name: reg.last_name, p_email: reg.email, p_mobile: reg.mobile, p_password_hash: reg.password_hash }) as unknown as number;
     } catch { return err(res, 'Account creation failed', 500); }
+
+    // Referral attribution (best-effort): a user who signed up via a referral
+    // link becomes a PENDING referral usage that converts to a reward on their
+    // first purchase (see postPayment.processReferralRewards).
+    if (reg.referral_code) {
+      try {
+        const { data: rc } = await supabase
+          .from('referral_codes')
+          .select('id, student_id, total_referrals, usage_count')
+          .eq('referral_code', String(reg.referral_code).toUpperCase())
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (rc && Number(rc.student_id) !== userId) {
+          const { error: insErr } = await supabase.from('referral_usages').insert({
+            referral_code_id: rc.id, referred_user_id: userId, usage_status: 'pending', created_by: userId,
+          });
+          if (!insErr) {
+            await supabase.from('referral_codes').update({
+              total_referrals: (Number(rc.total_referrals) || 0) + 1,
+              usage_count: (Number(rc.usage_count) || 0) + 1,
+            }).eq('id', rc.id);
+          }
+        }
+      } catch (e) { console.error('[Register] referral attribution failed:', e); }
+    }
 
     const tokens = generateTokens(userId);
     await db.callFn('create_session', { p_user_id: userId, p_login_method: 'email_password', p_refresh_hash: hashSha256(tokens.refresh_token), p_ip: ip, p_user_agent: req.headers['user-agent'] || null, p_device_type: getDeviceType(req.headers['user-agent']) }).catch(() => {/* best-effort */});

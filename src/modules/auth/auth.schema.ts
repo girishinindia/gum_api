@@ -6,6 +6,7 @@ export const registerSchema = z.object({
   email: z.string().email().max(255).trim().toLowerCase(),
   mobile: z.string().min(10).max(15).trim(),
   password: z.string().min(8).max(128),
+  referral_code: z.string().trim().max(40).optional(),
 });
 
 export const verifyOtpSchema = z.object({

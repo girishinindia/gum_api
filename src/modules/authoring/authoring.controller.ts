@@ -195,7 +195,7 @@ async function loadReadiness(id: number) {
   const { data: course } = await supabase.from('authoring_courses').select('*').eq('id', id).single();
   if (!course) return null;
   const { data: units } = await supabase.from('authoring_units')
-    .select('id, unit_type, parent_unit_id, topic_type, video, youtube_url, article_pdf, exercise_pdf, assignment_pdf, project_pdf, project_solution_file_url')
+    .select('id, title, unit_type, parent_unit_id, topic_type, video, youtube_url, article_pdf, exercise_pdf, assignment_pdf, project_pdf, project_solution_file_url')
     .eq('authoring_course_id', id).is('deleted_at', null);
   const { data: highlights } = await supabase.from('authoring_course_highlights').select('id, kind').eq('authoring_course_id', id);
   const problems = readinessProblems(course, units || [], highlights || []);

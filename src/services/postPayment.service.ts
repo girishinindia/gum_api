@@ -490,16 +490,61 @@ async function incrementPromotionUsage(promotionId: number) {
 // Referral Rewards
 // ──────────────────────────────────────────────
 async function processReferralRewards(
-  _userId: number,
-  _orderId: number,
-  _orderTotal: number,
+  userId: number,
+  orderId: number,
+  orderTotal: number,
 ): Promise<boolean> {
-  // Phase 13 — student_profiles (which held signup-time referral attribution
-  // via `referred_by_user_id` and `referral_code_used`) is dropped. The
-  // dedicated referral_codes / referral_usages / referral_rewards tables
-  // are still in place but unused (0 rows). When the referral product
-  // actually launches, reintroduce attribution as a column on `users`
-  // (e.g. `signup_referral_code_id`) and rebuild this function around the
-  // existing referral_usages insert/update flow.
-  return false;
+  // Attribution is created at signup (auth.verifyOtp) as a PENDING referral_usage.
+  // On the referred user's first purchase we convert it: mark completed, credit
+  // the referrer's wallet, and bump the code's headline counters. Idempotent —
+  // a re-run finds no 'pending' usage, and creditWallet dedupes on source.
+  try {
+    const { data: usage } = await supabase
+      .from('referral_usages')
+      .select('id, referral_code_id')
+      .eq('referred_user_id', userId)
+      .eq('usage_status', 'pending')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!usage) return false;
+
+    const { data: rc } = await supabase
+      .from('referral_codes')
+      .select('id, student_id, referrer_reward_percentage, referrer_reward_amount, successful_referrals, total_earnings')
+      .eq('id', usage.referral_code_id)
+      .maybeSingle();
+    if (!rc || Number(rc.student_id) === userId) return false;
+
+    const pct = Number(rc.referrer_reward_percentage) || 0;
+    const fixed = Number(rc.referrer_reward_amount) || 0;
+    const reward = fixed > 0 ? fixed : Math.round((orderTotal * pct / 100) * 100) / 100;
+
+    await supabase.from('referral_usages').update({
+      usage_status: 'completed', order_id: orderId, order_amount: orderTotal, converted_at: new Date().toISOString(),
+    }).eq('id', usage.id);
+
+    await supabase.from('referral_codes').update({
+      successful_referrals: (Number(rc.successful_referrals) || 0) + 1,
+      total_earnings: (Number(rc.total_earnings) || 0) + (reward > 0 ? reward : 0),
+    }).eq('id', rc.id);
+
+    if (reward > 0) {
+      await supabase.from('referral_rewards').insert({
+        referral_code_id: rc.id, referral_usage_id: usage.id,
+        reward_type: 'wallet_credit', reward_amount: reward, status: 'credited', credited_at: new Date().toISOString(),
+      });
+      await creditWallet({
+        userId: Number(rc.student_id), amount: reward,
+        sourceType: 'referral', sourceId: usage.id,
+        description: 'Referral reward', metadata: { referral_usage_id: usage.id, order_id: orderId },
+        createdBy: userId,
+      }).catch(e => console.error('[POST-PAYMENT] Referral wallet credit failed:', e));
+    }
+    return true;
+  } catch (e) {
+    console.error('[POST-PAYMENT] Referral processing failed:', e);
+    return false;
+  }
 }
