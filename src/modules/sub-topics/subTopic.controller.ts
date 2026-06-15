@@ -6,7 +6,7 @@ import { hasPermission } from '../../middleware/rbac';
 import { logAdmin, logData } from '../../services/activityLog.service';
 import { uploadVideoToStream, deleteVideoFromStream, getVideoStatus, findOrCreateCollection, buildCollectionName } from '../../services/video.service';
 import { ok, err, paginated } from '../../utils/response';
-import { parseListParams } from '../../utils/pagination';
+import { parseListParams, isRangeNotSatisfiable } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { signEmbedUrl, signStreamFileUrl } from '../../services/bunnyToken.service';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
@@ -80,6 +80,10 @@ export async function list(req: Request, res: Response) {
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;
+  // A page beyond the filtered row count makes PostgREST return 416 (PGRST103).
+  // Treat it as an empty page so a stale client resets to page 1 instead of
+  // crashing with "Requested range not satisfiable".
+  if (e && isRangeNotSatisfiable(e)) return paginated(res, [], 0, page, limit);
   if (e) return err(res, e.message, 500);
 
   // Fetch English translation names for all sub-topics in this page

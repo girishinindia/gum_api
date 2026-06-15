@@ -35,3 +35,16 @@ export function parseListParams(
     : (req.query.order as string) !== 'desc'; // BUG-25: some admin pages send ?ascending=
   return { page, limit, offset: (page - 1) * limit, search, sort, ascending };
 }
+
+/**
+ * PostgREST returns HTTP 416 (error code PGRST103, message "Requested range
+ * not satisfiable") when a paginated `.range(from, …)` starts past the last
+ * row — e.g. a client still on page 3 after a filter narrows the result set to
+ * 5 rows. That's an empty page, not a server error. List endpoints should
+ * detect this and return an empty page with the normal pagination envelope so
+ * the client can correct itself to page 1 instead of crashing on a 500.
+ */
+export function isRangeNotSatisfiable(e: any): boolean {
+  if (!e) return false;
+  return e.code === 'PGRST103' || /range not satisfiable/i.test(e.message || '');
+}
