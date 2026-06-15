@@ -180,9 +180,13 @@ async function applyPromo(code: string, orderItems: any[], remainingSubtotal: nu
     const share = await resolveShare(Number(promo.instructor_id), 'course');
     const instructorMax = Math.round(eligible * (share.instructorSharePct / 100) * 100) / 100;
     if (discount > instructorMax + 0.01) {
+      // The promo exceeding the instructor's share is a MISCONFIGURATION the
+      // instructor/admin must fix — the buyer should never see internal share or
+      // earnings detail. Show a neutral message; log the specifics for ops.
+      console.warn(`[checkout] Promo #${promo.id} rejected: discount ₹${discount} > instructor max ₹${instructorMax} (${share.instructorSharePct}% of eligible ₹${Math.round(eligible)})`);
       return {
         valid: false, discount: 0, promotionId: null,
-        message: `This promo can discount at most ₹${instructorMax} — the instructor's ${share.instructorSharePct}% share of the eligible ₹${Math.round(eligible)}. Lower the discount value or the max-discount amount.`,
+        message: `This promo code can’t be applied to this order.`,
       };
     }
   }

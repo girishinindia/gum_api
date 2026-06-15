@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { ok, err, paginated } from '../../utils/response';
 import { processAndUploadImage } from '../../services/storage.service';
+import { resolveShare } from '../../services/revenueShare.service';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -171,6 +172,14 @@ export async function create(req: Request, res: Response) {
       if (!course || Number(course.instructor_id) !== req.user!.id) return err(res, 'You can only create batches for your own courses', 400);
     }
     if (cfg.table === 'instructor_promotions' && body.promo_code) body.promo_code = String(body.promo_code).toLowerCase();
+    // Don't allow a percentage promo to exceed the instructor's OWN revenue share
+    // (it would make earnings irreconcilable) — block at creation with a clear alert.
+    if (cfg.table === 'instructor_promotions' && body.discount_type === 'percentage' && body.discount_value != null) {
+      const share = await resolveShare(req.user!.id, 'course');
+      if (Number(body.discount_value) > share.instructorSharePct) {
+        return err(res, `A percentage promo can't exceed your ${share.instructorSharePct}% revenue share — set the discount to ${share.instructorSharePct}% or lower.`, 400);
+      }
+    }
     if (cfg.table === 'faqs' && !body.item_type) body.item_type = 'general';
 
     const insert: any = {
@@ -205,6 +214,12 @@ export async function update(req: Request, res: Response) {
       if (!course || Number(course.instructor_id) !== req.user!.id) return err(res, 'You can only attach your own courses', 400);
     }
     if (cfg.table === 'instructor_promotions' && updates.promo_code) updates.promo_code = String(updates.promo_code).toLowerCase();
+    if (cfg.table === 'instructor_promotions' && updates.discount_type === 'percentage' && updates.discount_value != null) {
+      const share = await resolveShare(req.user!.id, 'course');
+      if (Number(updates.discount_value) > share.instructorSharePct) {
+        return err(res, `A percentage promo can't exceed your ${share.instructorSharePct}% revenue share — set the discount to ${share.instructorSharePct}% or lower.`, 400);
+      }
+    }
     if (cfg.audit) (updates as any).updated_by = req.user!.id;
     (updates as any).updated_at = new Date().toISOString();
 

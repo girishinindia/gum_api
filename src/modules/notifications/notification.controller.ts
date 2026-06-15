@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { redis } from '../../config/redis';
 import { enqueuePush } from '../../services/push.service';
+import { sendEmailDirect } from '../../services/email.service';
 import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
@@ -112,15 +113,26 @@ export async function create(req: Request, res: Response) {
     // filter errored the query so the skip check never fired. Drop it so the
     // opt-out is actually honored, and surface a `skipped` flag the admin UI
     // can branch on to show a "skipped" message.
-    if ((body.channel ?? 'in_app') === 'in_app' && body.notification_type) {
-      const { data: pref } = await supabase
-        .from('notification_preferences')
-        .select('in_app_enabled')
-        .eq('user_id', body.user_id)
-        .eq('notification_type', canonType(String(body.notification_type)))
-        .maybeSingle();
-      if (pref && pref.in_app_enabled === false) {
-        return ok(res, { skipped: true, reason: 'user_disabled_in_app' }, 'Skipped — the user turned off in-app notifications for this type');
+    // Respect the user's per-type opt-out for the TARGET channel — not just
+    // in-app. email/push default ON, sms defaults OFF (matches the settings UI).
+    if (body.notification_type) {
+      const channel = String(body.channel ?? 'in_app');
+      const COL: Record<string, string> = { in_app: 'in_app_enabled', email: 'email_enabled', push: 'push_enabled', sms: 'sms_enabled' };
+      const DEFAULT_ON: Record<string, boolean> = { in_app_enabled: true, email_enabled: true, push_enabled: true, sms_enabled: false };
+      const col = COL[channel];
+      if (col) {
+        const { data: pref } = await supabase
+          .from('notification_preferences')
+          .select(col)
+          .eq('user_id', body.user_id)
+          .eq('notification_type', canonType(String(body.notification_type)))
+          .maybeSingle();
+        const raw = pref ? (pref as any)[col] : undefined;
+        const enabled = raw == null ? DEFAULT_ON[col] : raw;
+        if (enabled === false) {
+          const nice = channel === 'in_app' ? 'in-app' : channel;
+          return ok(res, { skipped: true, reason: `user_disabled_${channel}` }, `Skipped — the user turned off ${nice} notifications for this type`);
+        }
       }
     }
 
@@ -139,6 +151,26 @@ export async function create(req: Request, res: Response) {
       }).then(async (r) => {
         await supabase.from(TABLE).update({ delivery_status: r.enqueued > 0 ? 'delivered' : 'failed', sent_at: new Date().toISOString() }).eq('id', data.id);
       }).catch(() => {});
+    }
+
+    // Channel=Email now actually DELIVERS by email — previously the row was just
+    // inserted ("SENT AT —", never sent). Fire-and-forget; stamp delivery_status/sent_at.
+    if ((body.channel ?? 'in_app') === 'email') {
+      (async () => {
+        const { data: u } = await supabase.from('users').select('email, full_name, first_name').eq('id', body.user_id).maybeSingle();
+        if (!u?.email) { await supabase.from(TABLE).update({ delivery_status: 'failed' }).eq('id', data.id); return; }
+        const name = u.full_name || u.first_name || 'there';
+        const subject = String(body.title || 'Notification from GrowUpMore');
+        const safeMsg = String(body.message || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>');
+        const html = `<p>Hi ${name},</p><p>${safeMsg}</p>${body.action_url ? `<p><a href="${body.action_url}">View</a></p>` : ''}<p>— GrowUpMore</p>`;
+        try {
+          await sendEmailDirect(u.email, name, subject, html);
+          await supabase.from(TABLE).update({ delivery_status: 'delivered', sent_at: new Date().toISOString() }).eq('id', data.id);
+        } catch (mailErr) {
+          await supabase.from(TABLE).update({ delivery_status: 'failed' }).eq('id', data.id);
+          console.error('[notification email] send failed:', mailErr);
+        }
+      })();
     }
 
     await clearCache();

@@ -73,6 +73,11 @@ export async function policyByCode(req: Request, res: Response) {
     version: policy.version,
     effective_from: policy.effective_from,
     updated_at: policy.published_at || policy.updated_at,
+    // SEO metadata set in the admin Policy editor — the legal page reads these
+    // for <title>/<meta description>; previously omitted so the page fell back
+    // to the default site metadata.
+    meta_title: policy.meta_title || null,
+    meta_description: policy.meta_description || null,
   });
 }
 
