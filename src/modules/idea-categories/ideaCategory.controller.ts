@@ -23,7 +23,8 @@ export async function list(req: Request, res: Response) {
     const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 100, 1), 200);
     const offset = (page - 1) * limit;
 
-    let q = supabase.from(TABLE).select('*', { count: 'exact' }).is('deleted_at', null);
+    let q = supabase.from(TABLE).select('*', { count: 'exact' });
+    if (req.query.include_deleted !== 'true') q = q.is('deleted_at', null); // admin Trash tab passes include_deleted=true
     if (req.query.include_inactive !== 'true') q = q.eq('is_active', true);
     q = q.order('display_order').order('name').range(offset, offset + limit - 1);
 
