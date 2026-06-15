@@ -179,6 +179,10 @@ function readinessProblems(course: any, units: any[], highlights: any[]): string
   const validUnitIds = new Set(units.map(u => u.id));
   for (const t of topics) {
     if (!t.parent_unit_id || !validUnitIds.has(t.parent_unit_id)) continue;
+    // Also skip a topic whose chapter's MODULE was deleted — pre-cascade data
+    // could leave a live chapter under a deleted module; don't count those.
+    const moduleId = chapterParent.get(t.parent_unit_id);
+    if (moduleId != null && !validUnitIds.has(moduleId)) continue;
     const hasVideo = t.video || t.youtube_url;
     const hasFile = t.exercise_pdf || t.assignment_pdf || t.article_pdf
       || t.project_pdf || t.project_solution_file_url;
@@ -400,7 +404,17 @@ export async function updateUnit(req: Request, res: Response) {
 export async function softDeleteUnit(req: Request, res: Response) {
   const uId = parseInt(req.params.id);
   await requireReApprovalForChild('authoring_units', uId);
-  const { error: e } = await supabase.from('authoring_units').update({ deleted_at: new Date().toISOString() }).eq('id', uId);
+  // Cascade — soft-delete this unit AND its whole subtree (module → chapters →
+  // topics). Deleting only the clicked row left orphaned children that still
+  // counted against readiness ("… has no content uploaded") and lingered.
+  const { data: self } = await supabase.from('authoring_units').select('authoring_course_id').eq('id', uId).single();
+  let ids: number[] = [uId];
+  if (self?.authoring_course_id) {
+    const { data: all } = await supabase.from('authoring_units')
+      .select('id, parent_unit_id').eq('authoring_course_id', self.authoring_course_id).is('deleted_at', null);
+    ids = [...collectUnitSubtree(all || [], uId)];
+  }
+  const { error: e } = await supabase.from('authoring_units').update({ deleted_at: new Date().toISOString() }).in('id', ids);
   if (e) return err(res, e.message, 500);
   return ok(res, null, 'Unit removed');
 }

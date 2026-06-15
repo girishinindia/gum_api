@@ -180,6 +180,12 @@ export async function create(req: Request, res: Response) {
         return err(res, `A percentage promo can't exceed your ${share.instructorSharePct}% revenue share — set the discount to ${share.instructorSharePct}% or lower.`, 400);
       }
     }
+    // Date-only promo validity: make valid_until inclusive through the end date
+    // (end of day) instead of expiring at that date's midnight.
+    if (cfg.table === 'instructor_promotions' && body.valid_until) {
+      const d = new Date(body.valid_until);
+      if (!isNaN(d.getTime())) { d.setUTCHours(23, 59, 59, 999); body.valid_until = d.toISOString(); }
+    }
     if (cfg.table === 'faqs' && !body.item_type) body.item_type = 'general';
 
     const insert: any = {
@@ -219,6 +225,10 @@ export async function update(req: Request, res: Response) {
       if (Number(updates.discount_value) > share.instructorSharePct) {
         return err(res, `A percentage promo can't exceed your ${share.instructorSharePct}% revenue share — set the discount to ${share.instructorSharePct}% or lower.`, 400);
       }
+    }
+    if (cfg.table === 'instructor_promotions' && updates.valid_until) {
+      const d = new Date(updates.valid_until);
+      if (!isNaN(d.getTime())) { d.setUTCHours(23, 59, 59, 999); updates.valid_until = d.toISOString(); }
     }
     if (cfg.audit) (updates as any).updated_by = req.user!.id;
     (updates as any).updated_at = new Date().toISOString();
