@@ -140,7 +140,7 @@ export async function list(req: Request, res: Response) {
       ...st,
       video_url,
       video_thumbnail_url,
-      english_name: englishNameMap[st.id] || null,
+      english_name: englishNameMap[st.id] || st.name || null,
       has_yt_description: !!ytDesc,
       yt_description_id: ytDesc?.id || null,
       yt_video_title: ytDesc?.video_title || null,

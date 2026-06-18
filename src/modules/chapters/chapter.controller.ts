@@ -78,7 +78,7 @@ export async function list(req: Request, res: Response) {
 
   const enriched = (data || []).map((c: any) => ({
     ...c,
-    english_name: englishNameMap[c.id] || null,
+    english_name: englishNameMap[c.id] || c.name || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
@@ -91,7 +91,23 @@ export async function getById(req: Request, res: Response) {
     .eq('id', req.params.id)
     .single();
   if (e || !data) return err(res, 'Chapter not found', 404);
-  return ok(res, data);
+
+  // Attach English translation name (mirrors the list enrichment), falling back
+  // to the row's own name column so detail views always show a readable name.
+  let englishName: string | null = null;
+  const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+  if (enLang) {
+    const { data: trans } = await supabase
+      .from('chapter_translations')
+      .select('name')
+      .eq('chapter_id', data.id)
+      .eq('language_id', enLang.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    englishName = trans?.name || null;
+  }
+
+  return ok(res, { ...data, english_name: englishName || data.name || null });
 }
 
 export async function create(req: Request, res: Response) {

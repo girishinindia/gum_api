@@ -73,7 +73,7 @@ export async function list(req: Request, res: Response) {
 
   const enriched = (data || []).map((s: any) => ({
     ...s,
-    english_name: englishNameMap[s.id] || null,
+    english_name: englishNameMap[s.id] || s.name || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
@@ -82,7 +82,23 @@ export async function list(req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from('subjects').select('*').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Subject not found', 404);
-  return ok(res, data);
+
+  // Attach English translation name (mirrors the list enrichment), falling back
+  // to the row's own name column so detail views always show a readable name.
+  let englishName: string | null = null;
+  const { data: enLang } = await supabase.from('languages').select('id').eq('iso_code', 'en').single();
+  if (enLang) {
+    const { data: trans } = await supabase
+      .from('subject_translations')
+      .select('name')
+      .eq('subject_id', data.id)
+      .eq('language_id', enLang.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    englishName = trans?.name || null;
+  }
+
+  return ok(res, { ...data, english_name: englishName || data.name || null });
 }
 
 export async function create(req: Request, res: Response) {

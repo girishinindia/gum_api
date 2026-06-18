@@ -93,7 +93,7 @@ export async function list(req: Request, res: Response) {
 
   const enriched = (data || []).map((sc: any) => ({
     ...sc,
-    english_name: englishNameMap[sc.id] || null,
+    english_name: englishNameMap[sc.id] || sc.name || null,
     category_name: categoryNameMap[sc.category_id] || null,
   }));
 

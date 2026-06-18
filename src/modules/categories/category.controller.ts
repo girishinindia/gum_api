@@ -74,7 +74,7 @@ export async function list(req: Request, res: Response) {
 
   const enriched = (data || []).map((c: any) => ({
     ...c,
-    english_name: englishNameMap[c.id] || null,
+    english_name: englishNameMap[c.id] || c.name || null,
   }));
 
   return paginated(res, enriched, count || 0, page, limit);
