@@ -38,7 +38,7 @@ export const config = {
     streamWebhookSecret: process.env.BUNNY_STREAM_WEBHOOK_SECRET || '',
   },
 
-  rateLimit: { windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), max: parseInt(process.env.RATE_LIMIT_MAX || '1000') },
+  rateLimit: { windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), max: parseInt(process.env.RATE_LIMIT_MAX || '1000'), disabled: process.env.RATE_LIMIT_DISABLED === 'true' },
 
   cors: { origins: (process.env.CORS_ORIGINS || '*').split(',').map((s: string) => s.trim()) },
 

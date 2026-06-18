@@ -196,6 +196,13 @@ import pushPublicRoutes from './modules/push-devices/pushPublic.routes';
 
 const app = express();
 
+// ── Trust the reverse proxy (Nginx) ──
+// Without this, Express reads req.ip as the proxy address (127.0.0.1), so every
+// client collapses into ONE rate-limit bucket and limits trip almost instantly.
+// '1' = trust the first hop (Nginx); also lets express-rate-limit read the real
+// client IP from X-Forwarded-For (silences its v8 XFF validation error).
+app.set('trust proxy', 1);
+
 // ── Security ──
 app.use(helmet());
 app.use(hpp());
@@ -269,6 +276,7 @@ app.use(rateLimit({
   max: config.rateLimit.max,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled, // RATE_LIMIT_DISABLED=true bypasses limiting (testing)
   store: new RedisRateLimitStore('global'), // cluster-safe (shared via Redis)
 }));
 

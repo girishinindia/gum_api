@@ -8,6 +8,7 @@
 
 import rateLimit from 'express-rate-limit';
 import { RedisRateLimitStore } from './redisRateLimitStore';
+import { config } from '../config';
 
 /**
  * Auth endpoints: login, register, forgot-password
@@ -18,6 +19,7 @@ export const authLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many attempts. Please try again in 15 minutes.' },
   store: new RedisRateLimitStore('auth'),
 });
@@ -31,6 +33,7 @@ export const otpLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many OTP attempts. Please try again in 10 minutes.' },
   store: new RedisRateLimitStore('otp'),
 });
@@ -44,6 +47,7 @@ export const passwordResetLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many password reset attempts. Please try again later.' },
   store: new RedisRateLimitStore('pwreset'),
 });
@@ -57,6 +61,7 @@ export const checkoutLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many checkout attempts. Please try again later.' },
   store: new RedisRateLimitStore('checkout'),
 });
@@ -71,6 +76,7 @@ export const publicVerifyLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many requests. Please slow down.' },
   store: new RedisRateLimitStore('pubverify'),
 });
@@ -86,6 +92,7 @@ export const publicSearchLimiter = rateLimit({
   max: 90,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
   message: { success: false, error: 'Too many search requests. Please slow down.' },
   store: new RedisRateLimitStore('pubsearch'),
 });
