@@ -1173,6 +1173,17 @@ export async function restore(req: Request, res: Response) {
   if (!old) return err(res, 'Course not found', 404);
   if (!old.deleted_at) return err(res, 'Course is not in trash', 400);
 
+  // Block restore if the course's sub-category is itself in trash — restoring a
+  // course under a trashed sub-category would resurrect an orphaned link.
+  const { data: scLinks } = await supabase.from('course_sub_categories').select('sub_category_id').eq('course_id', id);
+  const subCategoryIds = [...new Set((scLinks || []).map((l: any) => l.sub_category_id))] as number[];
+  if (subCategoryIds.length > 0) {
+    const { data: trashedSubCats } = await supabase.from('sub_categories').select('id').in('id', subCategoryIds).not('deleted_at', 'is', null);
+    if (trashedSubCats && trashedSubCats.length > 0) {
+      return err(res, 'Cannot restore: its sub-category is in trash. Restore the sub-category first.', 400);
+    }
+  }
+
   const { data, error: e } = await supabase
     .from('courses')
     .update({ deleted_at: null, is_active: true })

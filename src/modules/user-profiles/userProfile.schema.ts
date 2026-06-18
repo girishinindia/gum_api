@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { multipartBool } from "../../utils/zod-helpers";
 
+// Map blank / null → undefined so a cleared field passes, but a non-empty
+// value must satisfy the format regex.
+const blankToUndef = (v: unknown) => (v === '' || v === null ? undefined : v);
+
 export const upsertUserProfileSchema = z.object({
   // Personal Information
   date_of_birth: z.string().optional().nullable(),
@@ -35,7 +39,7 @@ export const upsertUserProfileSchema = z.object({
   emergency_contact_email: z.string().email().max(255).optional().nullable(),
 
   // Identity / KYC
-  aadhar_number: z.string().max(12).optional().nullable(),
+  aadhar_number: z.preprocess(blankToUndef, z.string().regex(/^\d{12}$/, 'Aadhaar must be 12 digits').optional()),
   pan_number: z.string().max(10).optional().nullable(),
   passport_number: z.string().max(20).optional().nullable(),
   driving_license_number: z.string().max(20).optional().nullable(),
@@ -43,14 +47,14 @@ export const upsertUserProfileSchema = z.object({
 
   // Bank Details
   bank_account_name: z.string().max(100).optional().nullable(),
-  bank_account_number: z.string().max(30).optional().nullable(),
+  bank_account_number: z.preprocess(blankToUndef, z.string().regex(/^\d+$/, 'Account number must be digits only').max(30).optional()),
   bank_ifsc_code: z.string().max(11).optional().nullable(),
   bank_name: z.string().max(100).optional().nullable(),
   bank_branch: z.string().max(100).optional().nullable(),
 
   // UPI
-  upi_id: z.string().max(100).optional().nullable(),
-  upi_number: z.string().max(20).optional().nullable(),
+  upi_id: z.preprocess(blankToUndef, z.string().regex(/^[\w.\-]+@[\w.\-]+$/, 'UPI ID must contain "@"').max(100).optional()),
+  upi_number: z.preprocess(blankToUndef, z.string().regex(/^\d+$/, 'UPI number must be digits only').max(20).optional()),
 
   // Preferences
   preferred_language_id: z.coerce.number().optional().nullable(),

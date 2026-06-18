@@ -126,6 +126,8 @@ export async function createCourse(req: Request, res: Response) {
   const body = parseCourse(req);
   const vErr = validateCourseBasics(body);
   if (vErr) return err(res, vErr, 400);
+  if (!body.language_id) return err(res, 'Language is required', 400);
+  if (!body.category_id) return err(res, 'Category / sub-category is required', 400);
   if (!body.instructor_id) body.instructor_id = req.user!.id;
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from('authoring_courses').insert(body).select().single();
@@ -594,6 +596,10 @@ export async function uploadUnitFile(req: Request, res: Response) {
     : ['application/pdf'];
   if (req.file.mimetype && !allowedMimes.includes(req.file.mimetype)) {
     return err(res, kind === 'project_solution' ? 'File must be a PDF or ZIP' : 'File must be a PDF', 400);
+  }
+  // A Solution PDF only makes sense once its Exercise PDF exists — enforce the pairing.
+  if (kind === 'exercise_solution' && !(row as any).exercise_pdf) {
+    return err(res, 'Add the Exercise PDF before its Solution PDF', 400);
   }
   try {
     const old = (row as any)[column];

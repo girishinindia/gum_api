@@ -4,7 +4,12 @@ import { multipartBool } from "../../utils/zod-helpers";
 export const EMPLOYMENT_TYPES = ['full_time','part_time','contract','internship','freelance','self_employed','volunteer','apprenticeship','other'] as const;
 export const WORK_MODES = ['on_site','remote','hybrid'] as const;
 
-export const createUserExperienceSchema = z.object({
+// Dates are ISO 'YYYY-MM-DD' strings, so a plain string compare is correct.
+const endOnOrAfterStart = (d: { start_date?: string | null; end_date?: string | null }) =>
+  !d.start_date || !d.end_date || d.end_date >= d.start_date;
+const endOnOrAfterStartOpts = { message: 'End date must be on or after the start date', path: ['end_date'] };
+
+const userExperienceBase = z.object({
   user_id: z.coerce.number().int().positive(),
   designation_id: z.coerce.number().int().positive().optional().nullable(),
   company_name: z.string().min(1, 'Company name is required').max(500),
@@ -25,4 +30,11 @@ export const createUserExperienceSchema = z.object({
   reference_email: z.string().email().optional().nullable(),
 });
 
-export const updateUserExperienceSchema = createUserExperienceSchema.partial().omit({ user_id: true });
+export const createUserExperienceSchema = userExperienceBase.refine(endOnOrAfterStart, endOnOrAfterStartOpts);
+
+// `.refine(...)` returns a ZodEffects which has no `.partial()`, so partial off the
+// base object and re-apply the same cross-field date check to the update schema.
+export const updateUserExperienceSchema = userExperienceBase
+  .partial()
+  .omit({ user_id: true })
+  .refine(endOnOrAfterStart, endOnOrAfterStartOpts);

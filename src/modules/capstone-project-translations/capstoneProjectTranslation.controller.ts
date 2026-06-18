@@ -31,7 +31,7 @@ function parseMultipartBody(req: Request): any {
   return body;
 }
 
-const FK_SELECT = `*, ${PARENT_TABLE}!assesment_capstone_projects_translations_capstone_project_id_fkey(slug, course_id), languages(name, native_name, iso_code)`;
+const FK_SELECT = `*, ${PARENT_TABLE}(slug, course_id), languages(name, native_name, iso_code)`;
 
 /**
  * Build CDN path for capstone project translation HTML.

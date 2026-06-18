@@ -87,7 +87,7 @@ export async function create(req: Request, res: Response) {
     body.image = imageUrl;
   }
 
-  const { data, error: e } = await supabase.from('topic_translations').insert(body).select('*, topics(slug, chapter_id, chapters(slug, subject_id)), languages(name, native_name, iso_code)').single();
+  const { data, error: e } = await supabase.from('topic_translations').upsert(body, { onConflict: 'topic_id,language_id' }).select('*, topics(slug, chapter_id, chapters(slug, subject_id)), languages(name, native_name, iso_code)').single();
   if (e) {
     if (imageUrl) { try { await deleteImage(extractBunnyPath(imageUrl), imageUrl); } catch {} }
     if (e.code === '23505') return err(res, 'Translation for this topic and language already exists', 409);

@@ -57,6 +57,25 @@ function parseBody(req: Request): any {
   return body;
 }
 
+// Minimal server-side guard for rate/share fields. Returns an error message
+// when out of range, or null when the body is valid. (PATCH may omit fields,
+// so only values that are actually present are checked.)
+function validateRates(body: any): string | null {
+  if (body.revenue_share_percentage != null) {
+    const v = Number(body.revenue_share_percentage);
+    if (!Number.isNaN(v) && (v < 0 || v > 100)) return 'Revenue share must be 0–100';
+  }
+  if (body.hourly_rate != null) {
+    const v = Number(body.hourly_rate);
+    if (!Number.isNaN(v) && v < 0) return 'Hourly rate must be 0 or more';
+  }
+  if (body.fixed_rate_per_course != null) {
+    const v = Number(body.fixed_rate_per_course);
+    if (!Number.isNaN(v) && v < 0) return 'Fixed rate per course must be 0 or more';
+  }
+  return null;
+}
+
 // GET /instructor-profiles/public — no auth, returns featured active instructors with user info
 export async function listPublic(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });
@@ -88,8 +107,9 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('instructor_profiles').select(SELECT_QUERY, { count: 'exact' });
 
-  // Search
-  if (search) q = q.or(`instructor_code.ilike.%${search}%,user.full_name.ilike.%${search}%`);
+  // Search (by instructor code — the SELECT has no embedded `user` relation,
+  // so a `user.full_name` filter would 500 from PostgREST; match listPublic).
+  if (search) q = q.ilike('instructor_code', `%${search}%`);
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -126,6 +146,9 @@ export async function getById(req: Request, res: Response) {
 // POST /instructor-profiles
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+
+  const rateErr = validateRates(body);
+  if (rateErr) return err(res, rateErr, 400);
 
   // Verify user_id exists
   if (!body.user_id) return err(res, 'user_id is required', 400);
@@ -194,6 +217,9 @@ export async function update(req: Request, res: Response) {
   const updates = parseBody(req);
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);
+
+  const rateErr = validateRates(updates);
+  if (rateErr) return err(res, rateErr, 400);
 
   // Verify foreign keys if changed
   if ('designation_id' in updates && updates.designation_id !== old.designation_id && updates.designation_id) {
@@ -320,6 +346,10 @@ export async function upsertByUserId(req: Request, res: Response) {
   if (!user) return err(res, 'User not found', 404);
 
   const body = parseBody(req);
+
+  const rateErr = validateRates(body);
+  if (rateErr) return err(res, rateErr, 400);
+
   const { data: existing } = await supabase.from('instructor_profiles').select('id').eq('user_id', userId).maybeSingle();
 
   let data: any;

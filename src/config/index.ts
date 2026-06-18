@@ -127,4 +127,16 @@ export const config = {
     /** When unset, push.service falls back to direct fanout (no queue). */
     queueEnabled:    (process.env.PUSH_QUEUE_ENABLED || process.env.QUEUE_ENABLED || 'true') === 'true',
   },
+
+  /**
+   * Phase 45 — Mobile push via Firebase Cloud Messaging (Android + iOS).
+   * Web push stays on VAPID above; Firebase is ONLY the mobile transport.
+   * Prod: paste the full service-account JSON into FIREBASE_SERVICE_ACCOUNT_JSON
+   * (one line). Dev: drop firebase-service-account.json in the API root.
+   * When neither is present, mobile push is silently disabled (web unaffected).
+   */
+  firebase: {
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
+    projectId:          process.env.FIREBASE_PROJECT_ID           || '',
+  },
 } as const;

@@ -238,6 +238,28 @@ export async function softDelete(req: Request, res: Response) {
   // Cascade soft-delete to sub-category translations
   await supabase.from('sub_category_translations').update({ deleted_at: now, is_active: false }).eq('sub_category_id', id).is('deleted_at', null);
 
+  // Cascade soft-delete the course↔sub-category links, then trash any course that
+  // is left with no other active sub-category. Courses linked to a different
+  // active sub-category stay live.
+  const { data: links } = await supabase.from('course_sub_categories').select('course_id').eq('sub_category_id', id).is('deleted_at', null);
+  const courseIds = [...new Set((links || []).map((l: any) => l.course_id))] as number[];
+  await supabase.from('course_sub_categories').update({ deleted_at: now, is_active: false }).eq('sub_category_id', id).is('deleted_at', null);
+
+  const orphanedCourseIds: number[] = [];
+  for (const courseId of courseIds) {
+    const { data: otherLink } = await supabase.from('course_sub_categories')
+      .select('id')
+      .eq('course_id', courseId)
+      .neq('sub_category_id', id)
+      .is('deleted_at', null)
+      .limit(1)
+      .maybeSingle();
+    if (!otherLink) orphanedCourseIds.push(courseId);
+  }
+  if (orphanedCourseIds.length > 0) {
+    await supabase.from('courses').update({ deleted_at: now, is_active: false }).in('id', orphanedCourseIds).is('deleted_at', null);
+  }
+
   await clearCache(old.category_id);
   logAdmin({ actorId: req.user!.id, action: 'sub_category_soft_deleted', targetType: 'sub_category', targetId: id, targetName: old.code, ip: getClientIp(req) });
   return ok(res, data, 'Sub-category moved to trash');

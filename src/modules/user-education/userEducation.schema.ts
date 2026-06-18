@@ -17,7 +17,12 @@ const nullableEnum = <T extends [string, ...string[]]>(values: T) =>
     z.enum(values).nullable().optional(),
   );
 
-export const createUserEducationSchema = z.object({
+// Dates are ISO 'YYYY-MM-DD' strings, so a plain string compare is correct.
+const endOnOrAfterStart = (d: { start_date?: string | null; end_date?: string | null }) =>
+  !d.start_date || !d.end_date || d.end_date >= d.start_date;
+const endOnOrAfterStartOpts = { message: 'End date must be on or after the start date', path: ['end_date'] };
+
+const userEducationBase = z.object({
   user_id: z.coerce.number().int().positive(),
   education_level_id: z.coerce.number().int().positive(),
   institution_name: z.string().min(1, 'Institution name is required').max(500),
@@ -36,4 +41,11 @@ export const createUserEducationSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
 });
 
-export const updateUserEducationSchema = createUserEducationSchema.partial().omit({ user_id: true });
+export const createUserEducationSchema = userEducationBase.refine(endOnOrAfterStart, endOnOrAfterStartOpts);
+
+// `.refine(...)` returns a ZodEffects which has no `.partial()`, so partial off the
+// base object and re-apply the same cross-field date check to the update schema.
+export const updateUserEducationSchema = userEducationBase
+  .partial()
+  .omit({ user_id: true })
+  .refine(endOnOrAfterStart, endOnOrAfterStartOpts);

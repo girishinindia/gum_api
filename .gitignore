@@ -30,3 +30,9 @@ tests/**/__tmp__/
 # be committed though:
 local-db-dump-*.sql
 *.dump
+
+# ── Deployment scripts & Firebase credentials — environment-specific / secrets.
+# Distribute deploy scripts to the server manually (scp); never commit secrets.
+hosting/deploy.sh
+hosting/setup-growupmore-api.sh
+firebase-service-account.json

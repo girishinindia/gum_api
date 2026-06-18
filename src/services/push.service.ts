@@ -22,6 +22,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { supabase } from '../config/supabase';
 import { enqueue } from './queue.service';
+import { getMessaging } from './firebase';
 
 let _configured = false;
 function ensureConfigured() {
@@ -105,6 +106,71 @@ export async function sendPushDirect(
   }
 }
 
+/** A push_devices row that carries an FCM token (mobile). */
+export interface FcmDevice {
+  id:        number;
+  fcm_token: string;
+}
+
+/** FCM data payloads must be flat string→string maps. */
+function fcmData(payload: PushPayload): Record<string, string> {
+  const out: Record<string, string> = { url: payload.url ?? '/' };
+  if (payload.tag) out.tag = payload.tag;
+  for (const [k, v] of Object.entries(payload.data ?? {})) {
+    out[k] = typeof v === 'string' ? v : JSON.stringify(v);
+  }
+  return out;
+}
+
+/**
+ * Best-effort multicast to a user's mobile (FCM) devices. No-ops when Firebase
+ * isn't configured. Unregistered / invalid tokens are deactivated so the table
+ * self-prunes, mirroring the 404/410 handling for web push.
+ */
+export async function sendFcmToDevices(
+  devices: FcmDevice[],
+  payload: PushPayload,
+): Promise<{ sent: number; pruned: number }> {
+  const messaging = getMessaging();
+  if (!messaging || devices.length === 0) return { sent: 0, pruned: 0 };
+
+  try {
+    const resp = await messaging.sendEachForMulticast({
+      tokens: devices.map((d) => d.fcm_token),
+      notification: { title: payload.title, body: payload.body },
+      data: fcmData(payload),
+      android: { priority: 'high', notification: { sound: 'default' } },
+      apns: { payload: { aps: { sound: 'default' } } },
+    });
+
+    const dead: number[] = [];
+    const alive: number[] = [];
+    resp.responses.forEach((r: any, i: number) => {
+      if (r.success) { alive.push(devices[i].id); return; }
+      const code: string = r.error?.code || r.error?.errorInfo?.code || '';
+      if (
+        code.includes('registration-token-not-registered') ||
+        code.includes('invalid-registration-token') ||
+        code.includes('invalid-argument')
+      ) dead.push(devices[i].id);
+    });
+
+    if (dead.length) {
+      await supabase.from('push_devices').update({ is_active: false }).in('id', dead);
+      logger.info({ count: dead.length }, '[fcm] deactivated dead tokens');
+    }
+    if (alive.length) {
+      await supabase.from('push_devices')
+        .update({ last_used_at: new Date().toISOString() })
+        .in('id', alive);
+    }
+    return { sent: alive.length, pruned: dead.length };
+  } catch (e) {
+    logger.error({ err: e }, '[fcm] multicast send failed');
+    return { sent: 0, pruned: 0 };
+  }
+}
+
 /**
  * Fan a push out to every active device for a user. Each device gets its
  * own queue job so failures are isolated. Returns the number of devices
@@ -120,7 +186,7 @@ export async function enqueuePush(
   // Fetch active devices for the user (service-role bypasses RLS).
   const { data: devices, error } = await supabase
     .from('push_devices')
-    .select('id, endpoint, p256dh, auth')
+    .select('id, provider, endpoint, p256dh, auth, fcm_token')
     .eq('user_id', userId)
     .eq('is_active', true)
     .is('deleted_at', null);
@@ -134,12 +200,19 @@ export async function enqueuePush(
     return { enqueued: 0 };
   }
 
-  // Enqueue one job per device — failure isolation.
-  for (const d of devices) {
+  // Split by transport: web push (VAPID) vs mobile push (FCM).
+  const webDevices = (devices as any[]).filter((d) => d.provider !== 'fcm' && d.endpoint) as PushDevice[];
+  const fcmDevices = (devices as any[]).filter((d) => d.provider === 'fcm' && d.fcm_token) as FcmDevice[];
+
+  // Mobile (FCM): best-effort multicast — no per-device queue needed.
+  if (fcmDevices.length) await sendFcmToDevices(fcmDevices, payload);
+
+  // Web (VAPID): one queue job per device — failure isolation.
+  for (const d of webDevices) {
     await enqueue<{ device: PushDevice; payload: PushPayload }>(
       'push',
       'send',
-      { device: d as PushDevice, payload },
+      { device: d, payload },
       {
         // Stable job id keeps double-enqueues idempotent for short windows.
         jobId: `push:${d.id}:${payload.tag ?? Date.now()}`,
@@ -151,7 +224,7 @@ export async function enqueuePush(
     );
   }
 
-  return { enqueued: devices.length };
+  return { enqueued: webDevices.length + fcmDevices.length };
 }
 
 /**

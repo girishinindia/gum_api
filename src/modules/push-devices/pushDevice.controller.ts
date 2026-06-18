@@ -26,21 +26,51 @@ export async function getVapidPublicKey(_req: Request, res: Response) {
   return ok(res, { vapidPublicKey: config.push.vapidPublicKey });
 }
 
-/** POST /push-devices/register — auth'd. Upserts on endpoint. */
+/** POST /push-devices/register — auth'd. Web push upserts on endpoint; FCM on token. */
 export async function register(req: Request, res: Response) {
   const parsed = registerPushDeviceSchema.safeParse(req.body);
   if (!parsed.success) return err(res, parsed.error.issues[0].message, 400);
 
   const userId = req.user!.id;
-  const { endpoint, keys, user_agent, platform } = parsed.data;
+  const d = parsed.data;
 
-  // Upsert on the unique endpoint constraint. If a different user previously
-  // registered this endpoint (shared device), bind it to the current user.
+  // ── Mobile (FCM) registration — upsert on the unique fcm_token ──
+  if ('fcm_token' in d) {
+    const { data, error } = await supabase
+      .from('push_devices')
+      .upsert(
+        {
+          user_id:    userId,
+          provider:   'fcm',
+          fcm_token:  d.fcm_token,
+          user_agent: d.user_agent ?? null,
+          platform:   d.platform,
+          is_active:  true,
+          deleted_at: null,
+        },
+        { onConflict: 'fcm_token' },
+      )
+      .select('id, provider, platform, is_active, last_used_at, created_at')
+      .single();
+
+    if (error) {
+      logger.error({ err: error, userId }, '[push-devices] FCM register failed');
+      return err(res, error.message, 500);
+    }
+    logger.info({ userId, deviceId: data?.id, platform: d.platform }, '[push-devices] FCM registered');
+    return ok(res, { device: data }, 'Push device registered');
+  }
+
+  // ── Web Push (VAPID) registration — upsert on the unique endpoint ──
+  // If a different user previously registered this endpoint (shared device),
+  // bind it to the current user.
+  const { endpoint, keys, user_agent, platform } = d;
   const { data, error } = await supabase
     .from('push_devices')
     .upsert(
       {
         user_id:    userId,
+        provider:   'webpush',
         endpoint,
         p256dh:     keys.p256dh,
         auth:       keys.auth,
@@ -77,18 +107,25 @@ export async function listMine(req: Request, res: Response) {
   return ok(res, { devices: data ?? [], count: data?.length ?? 0 });
 }
 
-/** DELETE /push-devices/:endpoint — soft-delete + deactivate. */
+/**
+ * DELETE /push-devices/:id — soft-delete + deactivate.
+ * Accepts either a web-push endpoint URL (starts with http) or an FCM token
+ * (anything else), URL-encoded by the client. Used on logout.
+ */
 export async function unregister(req: Request, res: Response) {
   const userId = req.user!.id;
-  const rawEndpoint = decodeURIComponent(req.params.endpoint);
+  const raw = decodeURIComponent(req.params.endpoint);
 
-  if (!rawEndpoint.startsWith('http')) return err(res, 'Invalid endpoint', 400);
+  if (!raw || raw.length < 8) return err(res, 'Invalid device identifier', 400);
+
+  // Web push endpoints are URLs; FCM tokens are opaque strings.
+  const column = raw.startsWith('http') ? 'endpoint' : 'fcm_token';
 
   const { data, error } = await supabase
     .from('push_devices')
     .update({ is_active: false, deleted_at: new Date().toISOString() })
     .eq('user_id', userId)
-    .eq('endpoint', rawEndpoint)
+    .eq(column, raw)
     .select('id')
     .maybeSingle();
 

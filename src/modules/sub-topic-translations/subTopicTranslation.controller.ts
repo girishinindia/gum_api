@@ -241,7 +241,7 @@ export async function create(req: Request, res: Response) {
     focusKeyword: body.focus_keyword,
   });
 
-  const { data, error: e } = await supabase.from('sub_topic_translations').insert(body).select(FK_SELECT).single();
+  const { data, error: e } = await supabase.from('sub_topic_translations').upsert(body, { onConflict: 'sub_topic_id,language_id' }).select(FK_SELECT).single();
   if (e) {
     for (const url of uploadedUrls) { try { await deleteImage(extractBunnyPath(url), url); } catch {} }
     if (e.code === '23505') return err(res, 'Translation for this sub-topic and language already exists', 409);

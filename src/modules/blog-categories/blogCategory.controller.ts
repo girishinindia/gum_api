@@ -66,7 +66,10 @@ export async function create(req: Request, res: Response) {
   }
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select().single();
-  if (e) return err(res, e.message, 500);
+  if (e) {
+    if (e.code === '23505') return err(res, 'A category with this slug already exists', 409);
+    return err(res, e.message, 500);
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'blog_category_created', targetType: 'blog_category', targetId: data.id, targetName: body.name, ip: getClientIp(req) });
@@ -90,7 +93,10 @@ export async function update(req: Request, res: Response) {
   }
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select().single();
-  if (e) return err(res, e.message, 500);
+  if (e) {
+    if (e.code === '23505') return err(res, 'A category with this slug already exists', 409);
+    return err(res, e.message, 500);
+  }
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'blog_category_updated', targetType: 'blog_category', targetId: id, targetName: updates.name || old.name, ip: getClientIp(req) });
