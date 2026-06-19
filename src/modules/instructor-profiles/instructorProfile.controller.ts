@@ -29,28 +29,27 @@ function parseBody(req: Request): any {
   delete body.updated_by;
   delete body.deleted_by;
 
-  // Phase 13 — drop fields that no longer exist on the trimmed table.
-  const DROPPED_AT_PHASE13 = [
-    'tagline','instructor_bio','demo_video_url','intro_video_duration_sec',
-    'teaching_mode','teaching_experience_years','total_teaching_hours','industry_experience_years',
-    'specialization_id','secondary_specialization_id','preferred_teaching_language_id','preferred_time_slots',
-    'highest_qualification','certifications_summary','awards_and_recognition',
-    'max_concurrent_courses','available_from','available_until','available_hours_per_week','is_available',
-    'total_courses_created','total_courses_published','total_students_taught',
-    'completion_rate','total_content_minutes','patents_count','publications_count',
-    'joining_date','branch_id','department_id','designation_id','total_experience_years',
-  ];
-  for (const f of DROPPED_AT_PHASE13) delete body[f];
+  // The Phase-13 fields are restored — coerce types instead of stripping them.
 
-  // Parse booleans
-  if (typeof body.is_active === 'string')    body.is_active   = body.is_active   === 'true';
-  if (typeof body.is_verified === 'string')  body.is_verified = body.is_verified === 'true';
-  if (typeof body.is_featured === 'string')  body.is_featured = body.is_featured === 'true';
-  if (typeof body.pan_verified === 'string') body.pan_verified = body.pan_verified === 'true';
+  // FK / id fields → integer or null
+  for (const k of ['designation_id', 'department_id', 'branch_id', 'specialization_id', 'secondary_specialization_id', 'preferred_teaching_language_id', 'approved_by', 'total_reviews_received']) {
+    if (typeof body[k] === 'string') { const t = body[k].trim(); const n = t === '' ? null : parseInt(t); body[k] = (n === null || Number.isNaN(n)) ? null : n; }
+  }
 
-  // Parse numbers
-  if (typeof body.total_reviews_received === 'string') body.total_reviews_received = parseInt(body.total_reviews_received) || null;
-  if (typeof body.approved_by === 'string')            body.approved_by = parseInt(body.approved_by) || null;
+  // Integer fields → integer or null
+  for (const k of ['intro_video_duration_sec', 'teaching_experience_years', 'industry_experience_years', 'total_experience_years', 'total_teaching_hours', 'available_hours_per_week', 'max_concurrent_courses', 'total_courses_created', 'total_courses_published', 'total_students_taught', 'total_content_minutes', 'patents_count', 'publications_count']) {
+    if (typeof body[k] === 'string') { const t = body[k].trim(); const n = t === '' ? null : parseInt(t); body[k] = (n === null || Number.isNaN(n)) ? null : n; }
+  }
+
+  // Decimal fields → number or null
+  for (const k of ['revenue_share_percentage', 'fixed_rate_per_course', 'hourly_rate', 'completion_rate']) {
+    if (typeof body[k] === 'string') { const t = body[k].trim(); const n = t === '' ? null : Number(t); body[k] = (n === null || Number.isNaN(n)) ? null : n; }
+  }
+
+  // Booleans
+  for (const k of ['is_active', 'is_verified', 'is_featured', 'pan_verified', 'is_available']) {
+    if (typeof body[k] === 'string') body[k] = body[k] === 'true';
+  }
 
   // Empty strings to null
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
@@ -72,6 +71,50 @@ function validateRates(body: any): string | null {
   if (body.fixed_rate_per_course != null) {
     const v = Number(body.fixed_rate_per_course);
     if (!Number.isNaN(v) && v < 0) return 'Fixed rate per course must be 0 or more';
+  }
+  return null;
+}
+
+// Range / format validation for the restored instructor fields. Only checks
+// values that are actually present (PATCH/upsert may omit fields).
+const TEACHING_MODES = ['online', 'offline', 'hybrid', 'blended'];
+function validateInstructorFields(body: any): string | null {
+  const nonNegInt = (k: string, label: string, max?: number): string | null => {
+    if (body[k] == null) return null;
+    const v = Number(body[k]);
+    if (Number.isNaN(v) || v < 0) return `${label} must be 0 or more`;
+    if (max != null && v > max) return `${label} must be ${max} or less`;
+    return null;
+  };
+  for (const [k, label, max] of [
+    ['teaching_experience_years', 'Teaching experience (years)', 80],
+    ['industry_experience_years', 'Industry experience (years)', 80],
+    ['total_experience_years', 'Total experience (years)', 80],
+    ['available_hours_per_week', 'Available hours per week', 168],
+    ['max_concurrent_courses', 'Max concurrent courses', 1000],
+    ['total_teaching_hours', 'Total teaching hours', undefined],
+    ['total_courses_created', 'Total courses created', undefined],
+    ['total_courses_published', 'Total courses published', undefined],
+    ['total_students_taught', 'Total students taught', undefined],
+    ['total_content_minutes', 'Total content minutes', undefined],
+    ['patents_count', 'Patents count', undefined],
+    ['publications_count', 'Publications count', undefined],
+    ['intro_video_duration_sec', 'Intro video duration', undefined],
+  ] as [string, string, number | undefined][]) {
+    const e = nonNegInt(k, label, max);
+    if (e) return e;
+  }
+  if (body.completion_rate != null) {
+    const v = Number(body.completion_rate);
+    if (Number.isNaN(v) || v < 0 || v > 100) return 'Completion rate must be 0–100';
+  }
+  if (body.teaching_mode != null && body.teaching_mode !== '' && !TEACHING_MODES.includes(String(body.teaching_mode))) {
+    return `Teaching mode must be one of: ${TEACHING_MODES.join(', ')}`;
+  }
+  if (body.available_from && body.available_until) {
+    const a = new Date(body.available_from).getTime();
+    const b = new Date(body.available_until).getTime();
+    if (!Number.isNaN(a) && !Number.isNaN(b) && b < a) return 'Available Until must be on or after Available From';
   }
   return null;
 }
@@ -149,6 +192,8 @@ export async function create(req: Request, res: Response) {
 
   const rateErr = validateRates(body);
   if (rateErr) return err(res, rateErr, 400);
+  const fieldErr = validateInstructorFields(body);
+  if (fieldErr) return err(res, fieldErr, 400);
 
   // Verify user_id exists
   if (!body.user_id) return err(res, 'user_id is required', 400);
@@ -220,6 +265,8 @@ export async function update(req: Request, res: Response) {
 
   const rateErr = validateRates(updates);
   if (rateErr) return err(res, rateErr, 400);
+  const fieldErr = validateInstructorFields(updates);
+  if (fieldErr) return err(res, fieldErr, 400);
 
   // Verify foreign keys if changed
   if ('designation_id' in updates && updates.designation_id !== old.designation_id && updates.designation_id) {
@@ -349,6 +396,8 @@ export async function upsertByUserId(req: Request, res: Response) {
 
   const rateErr = validateRates(body);
   if (rateErr) return err(res, rateErr, 400);
+  const fieldErr = validateInstructorFields(body);
+  if (fieldErr) return err(res, fieldErr, 400);
 
   const { data: existing } = await supabase.from('instructor_profiles').select('id').eq('user_id', userId).maybeSingle();
 
