@@ -252,15 +252,42 @@ const DEV_ORIGIN_PATTERNS = [
   /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
   /^https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
 ];
+
+// First-party production safety net: the apex and ANY sub-domain of
+// growupmore.com over HTTPS (www, admin, app, …) are always allowed. This
+// means a missing/By-host CORS_ORIGINS entry — e.g. listing the apex but
+// forgetting the `www.` variant — can never block first-party login again.
+const FIRST_PARTY_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*growupmore\.com$/i;
+
+// Normalize an origin for comparison: strip a trailing slash + lower-case,
+// so `https://www.growupmore.com/` and `https://WWW.growupmore.com` both match.
+const normOrigin = (o: string) => o.trim().replace(/\/+$/, '').toLowerCase();
+
 const corsWhitelist = config.cors.origins;
 const corsOpen = corsWhitelist.includes('*');
+
+// Effective whitelist = configured entries (normalized) PLUS the apex↔www
+// counterpart of each host, so configuring one implicitly allows the other.
+const normalizedWhitelist = new Set<string>();
+for (const entry of corsWhitelist) {
+  if (entry === '*') continue;
+  const n = normOrigin(entry);
+  normalizedWhitelist.add(n);
+  const m = /^(https?:\/\/)(?:www\.)?(.+)$/i.exec(n);
+  if (m) {
+    normalizedWhitelist.add(`${m[1]}${m[2]}`);        // apex
+    normalizedWhitelist.add(`${m[1]}www.${m[2]}`);    // www
+  }
+}
 
 app.use(cors({
   origin(origin, callback) {
     // No Origin header → same-origin / curl / server-to-server. Allow.
     if (!origin) return callback(null, true);
     if (corsOpen) return callback(null, true);
-    if (corsWhitelist.includes(origin)) return callback(null, true);
+    const n = normOrigin(origin);
+    if (normalizedWhitelist.has(n)) return callback(null, true);
+    if (FIRST_PARTY_ORIGIN.test(n)) return callback(null, true);
     if (DEV_ORIGIN_PATTERNS.some((re) => re.test(origin))) return callback(null, true);
     // Reject — express-cors will omit the Allow-Origin header so the
     // browser blocks the response with a clear CORS error.
