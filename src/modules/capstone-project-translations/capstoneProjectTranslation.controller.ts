@@ -93,6 +93,19 @@ export async function create(req: Request, res: Response) {
   const { data: lang } = await supabase.from('languages').select('id, name, iso_code').eq('id', body.language_id).single();
   if (!lang) return err(res, 'Language not found', 404);
 
+  // An existing row (even soft-deleted) holds the (project, language) unique
+  // slot. Look it up so we can 409 on a live duplicate or REVIVE a trashed one
+  // instead of colliding with the unique index on re-add.
+  const { data: existing } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('capstone_project_id', body.capstone_project_id)
+    .eq('language_id', body.language_id)
+    .maybeSingle();
+  if (existing && !existing.deleted_at) {
+    return err(res, 'Translation already exists for this capstone project + language', 409);
+  }
+
   // Handle file upload
   if (files?.file?.[0]) {
     const cdnPath = await buildTranslationCdnPath(body.capstone_project_id, lang.iso_code);
@@ -100,6 +113,24 @@ export async function create(req: Request, res: Response) {
     const cdnUrl = await uploadToBunny(cdnPath, files.file[0].buffer);
     body.file_url = cdnUrl;
     body.file_name = files.file[0].originalname;
+  }
+
+  // HTML file is required for every translation (a fresh upload, or the file
+  // still attached to the trashed row we're about to revive).
+  const effectiveFileUrl = body.file_url ?? (existing?.file_url ?? null);
+  if (!effectiveFileUrl) return err(res, 'HTML file is required', 400);
+
+  // Revive a soft-deleted row in place so the unique slot stays valid.
+  if (existing && existing.deleted_at) {
+    const revive: any = { deleted_at: null, is_active: body.is_active ?? true, updated_by: req.user!.id };
+    if (body.name !== undefined) revive.name = body.name;
+    if (body.description !== undefined) revive.description = body.description;
+    if (body.file_url) { revive.file_url = body.file_url; revive.file_name = body.file_name; }
+    const { data: revived, error: er } = await supabase.from(TABLE).update(revive).eq('id', existing.id).select(FK_SELECT).single();
+    if (er) return err(res, er.message, 500);
+    await clearCache(body.capstone_project_id);
+    logAdmin({ actorId: req.user!.id, action: 'capstone_project_translation_created', targetType: 'capstone_project_translation', targetId: existing.id, targetName: `${project.slug}/${lang.iso_code}`, ip: getClientIp(req) });
+    return ok(res, revived, 'Capstone project translation created', 201);
   }
 
   const { data, error: e } = await supabase
@@ -131,6 +162,9 @@ export async function update(req: Request, res: Response) {
 
   const capstoneProjectId = updates.capstone_project_id || old.capstone_project_id;
 
+  // `remove_file` is a UI clear signal; it must never be written as a column.
+  delete updates.remove_file;
+
   // Handle file upload — delete old first
   if (files?.file?.[0]) {
     if (old.file_url) {
@@ -142,6 +176,9 @@ export async function update(req: Request, res: Response) {
     updates.file_url = cdnUrl;
     updates.file_name = files.file[0].originalname;
   }
+
+  // HTML file is required for every translation.
+  if (!files?.file?.[0] && !old.file_url) return err(res, 'HTML file is required', 400);
 
   updates.updated_by = req.user!.id;
 

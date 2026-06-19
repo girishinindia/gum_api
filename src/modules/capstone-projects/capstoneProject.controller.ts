@@ -310,8 +310,14 @@ export async function getFullById(req: Request, res: Response) {
     .eq('for_material', true)
     .order('name');
 
+  // Exclude soft-deleted translations from the editor + coverage so a trashed
+  // row never appears as an existing translation (it would otherwise look like
+  // a duplicate and block re-adding that language).
+  const activeTranslations = ((project as any)[TRANS_TABLE] || []).filter((t: any) => !t.deleted_at);
+  (project as any)[TRANS_TABLE] = activeTranslations;
+
   const existingLangIds = new Set(
-    ((project as any)[TRANS_TABLE] || []).map((t: any) => t.language_id)
+    activeTranslations.map((t: any) => t.language_id)
   );
 
   const translation_coverage = (allLanguages || []).map((lang: any) => ({
@@ -327,6 +333,9 @@ export async function getFullById(req: Request, res: Response) {
 export async function createFull(req: Request, res: Response) {
   const body = parseMultipartBody(req);
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+
+  // HTML file is required — every capstone project needs an English HTML file.
+  if (!files?.file?.[0]) return err(res, 'HTML file is required', 400);
 
   const projectData: any = {
     course_id: body.course_id,
@@ -398,6 +407,20 @@ export async function updateFull(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('*').eq('id', id).single();
   if (!old) return err(res, 'Capstone project not found', 404);
 
+  // File-removal flags (admin sends these when clearing an attached file).
+  const removeSolution = body.remove_file_solution === 'true' || body.remove_file_solution === '1';
+  const removeHtml = body.remove_file === 'true' || body.remove_file === '1';
+
+  // English HTML is required — validate BEFORE any write so we never half-save.
+  const { data: enTrans } = await supabase
+    .from(TRANS_TABLE)
+    .select('*')
+    .eq('capstone_project_id', id)
+    .eq('language_id', 7)
+    .maybeSingle();
+  const willHaveEnHtml = files?.file?.[0] ? true : (removeHtml ? false : !!enTrans?.file_url);
+  if (!willHaveEnHtml) return err(res, 'HTML file is required', 400);
+
   const projectUpdates: any = {};
   if (body.points !== undefined) projectUpdates.points = body.points;
   if (body.difficulty_level !== undefined) projectUpdates.difficulty_level = body.difficulty_level;
@@ -421,6 +444,13 @@ export async function updateFull(req: Request, res: Response) {
       projectUpdates.file_solution_url = `${cdnUrl}?v=${Date.now()}`;
       projectUpdates.file_solution_name = files.file_solution[0].originalname;
     }
+  } else if (removeSolution) {
+    // Remove the common Solution ZIP (optional file).
+    if (old.file_solution_url) {
+      try { await deleteFromBunny(cdnPathFromUrl(old.file_solution_url)); } catch (_) {}
+    }
+    projectUpdates.file_solution_url = null;
+    projectUpdates.file_solution_name = null;
   }
 
   projectUpdates.updated_by = req.user!.id;
@@ -436,13 +466,8 @@ export async function updateFull(req: Request, res: Response) {
     return err(res, exErr.message, 500);
   }
 
-  // Find or create English translation
-  const { data: existingTrans } = await supabase
-    .from(TRANS_TABLE)
-    .select('*')
-    .eq('capstone_project_id', id)
-    .eq('language_id', 7)
-    .single();
+  // English translation was already fetched above (enTrans) for the required check.
+  const existingTrans = enTrans;
 
   const translationUpdates: any = { updated_by: req.user!.id };
   if (body.name) translationUpdates.name = body.name;
