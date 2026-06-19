@@ -14,6 +14,7 @@ import { runFailedNotificationRetry } from './jobs/failedNotificationRetry';
 import { runCourseReminder } from './jobs/courseReminder';
 import { runStaleCartCleanup } from './jobs/staleCartCleanup';
 import { runCouponDeactivation } from './jobs/couponDeactivation';
+import { runReferralCodeDeactivation } from './jobs/referralCodeDeactivation';
 import { runOldNotificationCleanup } from './jobs/oldNotificationCleanup';
 import { runWalletReconciliation } from './jobs/walletReconciliation';
 import { runRevenueDailyRefresh } from './jobs/revenueDailyRefresh';
@@ -150,6 +151,14 @@ const jobs: CronJobDef[] = [
     schedule: '50 * * * *',          // Every hour at :50
     description: 'Deactivate expired or usage-exhausted coupons',
     handler: runCouponDeactivation,
+    lockTtl: 60,
+    enabled: true,
+  },
+  {
+    name: 'referral-code-deactivation',
+    schedule: '55 * * * *',          // Every hour at :55
+    description: 'Deactivate referral codes past their expiry',
+    handler: runReferralCodeDeactivation,
     lockTtl: 60,
     enabled: true,
   },

@@ -98,6 +98,7 @@ export async function verifyOtp(req: Request, res: Response) {
           .eq('referral_code', String(reg.referral_code).toUpperCase())
           .eq('is_active', true)
           .is('deleted_at', null)
+          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
           .maybeSingle();
         if (rc && Number(rc.student_id) !== userId) {
           const { error: insErr } = await supabase.from('referral_usages').insert({

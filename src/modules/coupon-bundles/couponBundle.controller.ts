@@ -45,6 +45,14 @@ export async function create(req: Request, res: Response) {
   const body = parseBody(req);
   if (!body.coupon_id) return err(res, 'coupon_id is required', 400);
   if (!body.bundle_id) return err(res, 'bundle_id is required', 400);
+
+  // A coupon can only be linked to its target type.
+  const { data: coupon } = await supabase.from('coupons').select('applicable_to, deleted_at').eq('id', body.coupon_id).is('deleted_at', null).maybeSingle();
+  if (!coupon) return err(res, 'Coupon not found', 404);
+  if (coupon.applicable_to !== 'all' && coupon.applicable_to !== 'bundle') {
+    return err(res, `This coupon applies to '${coupon.applicable_to}', so it can't be linked to a bundle`, 400);
+  }
+
   body.created_by = req.user!.id;
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);

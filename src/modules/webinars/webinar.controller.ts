@@ -288,7 +288,7 @@ export async function getBySlug(req: Request, res: Response) {
     if (instructor) {
       const { data: ip } = await supabase
         .from('instructor_profiles')
-        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average, profile_image_url')
+        .select('designation, bio, expertise, linkedin_url, website_url, total_students, total_courses, years_experience, rating_average')
         .eq('user_id', instructor.id)
         .is('deleted_at', null)
         .single();

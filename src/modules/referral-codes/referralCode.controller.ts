@@ -67,17 +67,30 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+  // Treat an expired code as inactive in the response (a cron persists this).
+  const nowMs = Date.now();
+  const rows = (data || []).map((r: any) =>
+    (r.is_active && r.expires_at && new Date(r.expires_at).getTime() < nowMs) ? { ...r, is_active: false } : r
+  );
+  return paginated(res, rows, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Referral code not found', 404);
-  return ok(res, data);
+  // Treat an expired code as inactive in the response.
+  const row = (data.is_active && data.expires_at && new Date(data.expires_at).getTime() < Date.now())
+    ? { ...data, is_active: false } : data;
+  return ok(res, row);
 }
 
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+
+  // expires_at must be a future date.
+  if (body.expires_at && new Date(body.expires_at) <= new Date()) {
+    return err(res, 'Expiry must be a future date', 400);
+  }
 
   // Verify student exists
   if (!body.student_id) return err(res, 'student_id is required', 400);
@@ -112,6 +125,10 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Referral code not found', 404);
 
   const updates = parseBody(req);
+  // expires_at must be a future date (only when provided).
+  if (updates.expires_at && new Date(updates.expires_at) <= new Date()) {
+    return err(res, 'Expiry must be a future date', 400);
+  }
   updates.updated_by = req.user!.id;
 
   // Verify student if changed

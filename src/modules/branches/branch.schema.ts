@@ -25,10 +25,10 @@ const optionalPincode = z.preprocess(
   z.string().trim().regex(/^[0-9]{4,10}$/, 'Enter a valid PIN/ZIP code (4–10 digits)').optional(),
 );
 
-/** Optional phone — +, digits, spaces, hyphens, parentheses; 7–20 chars. */
+/** Optional phone — exactly 10 digits. */
 const optionalPhone = z.preprocess(
   blankToUndef,
-  z.string().trim().regex(/^[+]?[\d\s()-]{7,20}$/, 'Enter a valid phone number').optional(),
+  z.string().trim().regex(/^[0-9]{10}$/, 'Enter a valid 10-digit phone number').optional(),
 );
 
 /**
