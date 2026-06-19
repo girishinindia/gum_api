@@ -61,6 +61,7 @@ export async function create(req: Request, res: Response) {
   if (!body.name?.trim()) return err(res, 'Name is required', 400);
   if (!body.shortcode?.trim()) return err(res, 'Shortcode is required', 400);
   if (!body.category_id) return err(res, 'Category is required', 400);
+  if (!req.file) return err(res, 'Emoji image is required', 400);
 
   body.created_by = req.user!.id;
 

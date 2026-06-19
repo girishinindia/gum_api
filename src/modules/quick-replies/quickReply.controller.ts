@@ -54,6 +54,10 @@ export async function create(req: Request, res: Response) {
   if (!body.title?.trim()) return err(res, 'Title is required', 400);
   if (!body.content?.trim()) return err(res, 'Content is required', 400);
 
+  const ALLOWED_SCOPES = ['global', 'personal'];
+  if (body.scope == null || body.scope === '') body.scope = 'personal';
+  if (!ALLOWED_SCOPES.includes(body.scope)) return err(res, "scope must be 'global' or 'personal'", 400);
+
   // Global quick replies don't have a user_id; personal ones do
   if (body.scope === 'personal' && !body.user_id) {
     body.user_id = req.user!.id;
@@ -73,12 +77,14 @@ export async function update(req: Request, res: Response) {
   const { data: old } = await supabase.from(TABLE).select('title').eq('id', id).single();
   if (!old) return err(res, 'Quick reply not found', 404);
 
-  const body = parseBody(req);
-  const { data, error: e } = await supabase.from(TABLE).update(body).eq('id', id).select(FK_SELECT).single();
+  const updates = parseBody(req);
+  if (updates.scope !== undefined && updates.scope !== null && !['global', 'personal'].includes(updates.scope)) return err(res, "scope must be 'global' or 'personal'", 400);
+
+  const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
 
   clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'quick_reply_updated', targetType: 'quick_reply', targetId: id, targetName: body.title || old.title, ip: getClientIp(req) });
+  logAdmin({ actorId: req.user!.id, action: 'quick_reply_updated', targetType: 'quick_reply', targetId: id, targetName: updates.title || old.title, ip: getClientIp(req) });
   return ok(res, data, 'Quick reply updated');
 }
 

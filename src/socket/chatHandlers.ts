@@ -305,4 +305,50 @@ export function registerChatHandlers(chatNs: Namespace, socket: Socket) {
       ack?.({ success: false, error: 'Failed to react' });
     }
   });
+
+  // ── pin_message ── (owner-only pin/unpin)
+  socket.on('pin_message', async (payload: { messageId: number; roomId: number; pin?: boolean }, ack?: (res: any) => void) => {
+    try {
+      const { messageId, roomId, pin } = payload;
+      if (!messageId || !roomId) return ack?.({ success: false, error: 'messageId and roomId required' });
+
+      // Only the room owner may pin/unpin.
+      const { data: room } = await supabase
+        .from('chat_rooms')
+        .select('id, created_by')
+        .eq('id', roomId)
+        .single();
+
+      if (!room) return ack?.({ success: false, error: 'Room not found' });
+      if (room.created_by !== userId) return ack?.({ success: false, error: 'Only the room owner can pin messages' });
+
+      // Load the message (scoped to the room) to resolve the toggle target.
+      const { data: msg } = await supabase
+        .from('chat_messages')
+        .select('id, room_id, is_pinned')
+        .eq('id', messageId)
+        .eq('room_id', roomId)
+        .single();
+
+      if (!msg) return ack?.({ success: false, error: 'Message not found' });
+
+      const isPinned = typeof pin === 'boolean' ? pin : !msg.is_pinned;
+
+      const { error: dbErr } = await supabase
+        .from('chat_messages')
+        .update({ is_pinned: isPinned })
+        .eq('id', messageId)
+        .eq('room_id', roomId);
+
+      if (dbErr) return ack?.({ success: false, error: 'Failed to update message' });
+
+      const roomKey = `room:${roomId}`;
+      chatNs.to(roomKey).emit('message_pin_toggled', { roomId, messageId, isPinned });
+
+      ack?.({ success: true, messageId, isPinned });
+    } catch (err: any) {
+      logger.error({ err: err.message, userId }, '[Chat] pin_message error');
+      ack?.({ success: false, error: 'Failed to pin message' });
+    }
+  });
 }
