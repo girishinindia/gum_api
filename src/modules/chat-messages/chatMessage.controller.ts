@@ -5,8 +5,9 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { processAndUploadImage } from '../../services/storage.service';
-import { emitNewMessage, emitMessageEdited, emitMessageDeleted, emitMessagePinToggled } from '../../socket/emitter';
+import { processAndUploadImage, uploadRawFile } from '../../services/storage.service';
+import { emitNewMessage, emitMessageEdited, emitMessageDeleted, emitMessagePinToggled, getChatNamespace } from '../../socket/emitter';
+import { notifyNewMessage } from '../../services/chatNotify.service';
 import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
@@ -87,16 +88,39 @@ export async function create(req: Request, res: Response) {
   const body = parseBody(req);
   if (!body.room_id) return err(res, 'Room ID is required', 400);
   if (!body.content?.trim() && body.message_type === 'text') return err(res, 'Content is required for text messages', 400);
+  if (typeof body.content === 'string' && body.content.length > 4000) return err(res, 'Message is too long (max 4000 characters)', 400);
 
   body.sender_id = body.sender_id || req.user!.id;
   body.message_type = body.message_type || 'text';
 
+  // When a user sends as themselves, enforce active membership + mute.
+  // (Admins/system posting on behalf of another sender_id bypass this.)
+  if (body.sender_id === req.user!.id) {
+    const { data: member } = await supabase
+      .from('chat_room_members')
+      .select('id, is_muted')
+      .eq('room_id', body.room_id)
+      .eq('user_id', body.sender_id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (!member) return err(res, 'You are not a member of this room', 403);
+    if (member.is_muted) return err(res, 'You are muted in this room', 403);
+  }
+
   const { data, error: e } = await supabase.from(TABLE).insert(body).select(MSG_WITH_REPLIES).single();
   if (e) return err(res, e.message, 500);
 
-  // Handle file attachment if uploaded
+  // Handle file attachment if uploaded (images → webp pipeline, others → raw upload)
   if (req.file) {
-    const cdnUrl = await processAndUploadImage(req.file.buffer, `chat/attachments/${body.room_id}`);
+    const isImage = (req.file.mimetype || '').startsWith('image/');
+    const safeName = (req.file.originalname || 'file').replace(/[^\w.\-]+/g, '_');
+    const path = `chat/attachments/${body.room_id}/${Date.now()}-${safeName}`;
+    let cdnUrl: string | null = null;
+    try {
+      cdnUrl = isImage
+        ? await processAndUploadImage(req.file.buffer, path)
+        : await uploadRawFile(req.file.buffer, path);
+    } catch { cdnUrl = null; }
     if (cdnUrl) {
       await supabase.from(ATTACHMENT_TABLE).insert({
         message_id: data.id,
@@ -111,6 +135,19 @@ export async function create(req: Request, res: Response) {
 
   clearCache();
   emitNewMessage(body.room_id, data);
+
+  // Alert away/offline members (in-app + push wake-up). Fire-and-forget.
+  const sender = (data as any)?.users;
+  const senderName = sender ? `${sender.first_name ?? ''} ${sender.last_name ?? ''}`.trim() : '';
+  notifyNewMessage(getChatNamespace(), {
+    roomId: body.room_id,
+    messageId: data.id,
+    senderId: data.sender_id,
+    senderName: senderName || 'Someone',
+    messageType: data.message_type,
+    content: data.content,
+  });
+
   return ok(res, data, 'Message sent', 201);
 }
 
@@ -210,4 +247,88 @@ export async function getThread(req: Request, res: Response) {
     .order('created_at', { ascending: true });
 
   return ok(res, { parent, replies: replies || [] });
+}
+
+// ══════════════════════════════════════════════════════════
+// MEMBER-FACING SEND (text or attachment) — membership-gated, spoof-safe
+// ══════════════════════════════════════════════════════════
+
+// ── POST /chat-messages/room/:roomId ──
+// A learner/member sends to a room they belong to. Unlike the admin POST /, this
+// requires no `chat_message:create` RBAC; the sender is always forced to the
+// caller (no spoofing) and active membership + mute are enforced.
+export async function createInRoom(req: Request, res: Response) {
+  const roomId = parseInt(req.params.roomId);
+  const senderId = req.user!.id;
+  if (!roomId) return err(res, 'Room ID is required', 400);
+
+  const body = parseBody(req);
+  const messageType = body.message_type
+    || (req.file ? ((req.file.mimetype || '').startsWith('image/') ? 'image' : 'file') : 'text');
+  if (messageType === 'text' && !body.content?.trim()) return err(res, 'Content is required for text messages', 400);
+  if (typeof body.content === 'string' && body.content.length > 4000) return err(res, 'Message is too long (max 4000 characters)', 400);
+
+  // Membership + mute (sender is always the caller — spoof-safe)
+  const { data: member } = await supabase
+    .from('chat_room_members')
+    .select('id, is_muted')
+    .eq('room_id', roomId)
+    .eq('user_id', senderId)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (!member) return err(res, 'You are not a member of this room', 403);
+  if (member.is_muted) return err(res, 'You are muted in this room', 403);
+
+  const insert: any = {
+    room_id: roomId,
+    sender_id: senderId,
+    message_type: messageType,
+    content: body.content?.trim() || null,
+  };
+  if (body.reply_to_id) insert.reply_to_id = body.reply_to_id;
+  if (body.metadata) insert.metadata = body.metadata;
+
+  const { data, error: e } = await supabase.from(TABLE).insert(insert).select(MSG_WITH_REPLIES).single();
+  if (e) return err(res, e.message, 500);
+
+  let finalMsg: any = data;
+
+  if (req.file) {
+    const isImage = (req.file.mimetype || '').startsWith('image/');
+    const safeName = (req.file.originalname || 'file').replace(/[^\w.\-]+/g, '_');
+    const path = `chat/attachments/${roomId}/${Date.now()}-${safeName}`;
+    let cdnUrl: string | null = null;
+    try {
+      cdnUrl = isImage
+        ? await processAndUploadImage(req.file.buffer, path)
+        : await uploadRawFile(req.file.buffer, path);
+    } catch { cdnUrl = null; }
+    if (cdnUrl) {
+      await supabase.from(ATTACHMENT_TABLE).insert({
+        message_id: data.id,
+        file_name: req.file.originalname,
+        file_url: cdnUrl,
+        file_size: req.file.size,
+        file_type: req.file.mimetype,
+        uploaded_by: senderId,
+      });
+      // Re-fetch so the broadcast carries the attachment
+      const { data: withAtt } = await supabase.from(TABLE).select(MSG_WITH_REPLIES).eq('id', data.id).single();
+      if (withAtt) finalMsg = withAtt;
+    }
+  }
+
+  clearCache();
+  emitNewMessage(roomId, finalMsg);
+  const s = finalMsg?.users;
+  const senderName = s ? `${s.first_name ?? ''} ${s.last_name ?? ''}`.trim() : '';
+  notifyNewMessage(getChatNamespace(), {
+    roomId,
+    messageId: finalMsg.id,
+    senderId,
+    senderName: senderName || 'Someone',
+    messageType: finalMsg.message_type,
+    content: finalMsg.content,
+  });
+  return ok(res, finalMsg, 'Message sent', 201);
 }

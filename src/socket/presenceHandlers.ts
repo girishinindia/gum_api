@@ -125,33 +125,31 @@ export function registerPresenceHandlers(chatNs: Namespace, socket: Socket) {
 
       if (!memberships || memberships.length === 0) return ack?.({ success: true, counts: [] });
 
-      const counts: { room_id: number; unread_count: number }[] = [];
+      const roomIds = memberships.map((m: any) => m.room_id as number);
 
-      for (const m of memberships) {
-        const { data: receipt } = await supabase
-          .from('chat_read_receipts')
-          .select('last_read_message_id')
-          .eq('room_id', m.room_id)
-          .eq('user_id', userId)
-          .maybeSingle();
+      // One query for all of this user's read receipts (was one per room).
+      const { data: receipts } = await supabase
+        .from('chat_read_receipts')
+        .select('room_id, last_read_message_id')
+        .eq('user_id', userId)
+        .in('room_id', roomIds);
+      const lastRead: Record<number, number> = {};
+      for (const r of receipts || []) lastRead[(r as any).room_id] = (r as any).last_read_message_id || 0;
 
+      // Per-room counts in parallel; exclude the user's own messages.
+      const all = await Promise.all(roomIds.map(async (roomId) => {
         let q = supabase
           .from('chat_messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('room_id', m.room_id)
-          .is('deleted_at', null);
-
-        if (receipt?.last_read_message_id) {
-          q = q.gt('id', receipt.last_read_message_id);
-        }
-
+          .select('id', { count: 'exact', head: true })
+          .eq('room_id', roomId)
+          .is('deleted_at', null)
+          .neq('sender_id', userId);
+        if (lastRead[roomId]) q = q.gt('id', lastRead[roomId]);
         const { count } = await q;
-        if ((count || 0) > 0) {
-          counts.push({ room_id: m.room_id, unread_count: count || 0 });
-        }
-      }
+        return { room_id: roomId, unread_count: count || 0 };
+      }));
 
-      ack?.({ success: true, counts });
+      ack?.({ success: true, counts: all.filter((c) => c.unread_count > 0) });
     } catch (err: any) {
       logger.error({ err: err.message, userId }, '[Presence] get_unread_counts error');
       ack?.({ success: false, error: 'Failed to get unread counts' });
@@ -304,14 +302,31 @@ export async function getOnlineUserCount(): Promise<number> {
 }
 
 /**
+ * Return the subset of `userIds` that are currently online (members of the
+ * cluster-safe ONLINE_SET). Used by chat notifications to choose between an
+ * in-app-only alert (user is online) and an in-app + push alert (offline).
+ */
+export async function getOnlineUserIds(userIds: number[]): Promise<Set<number>> {
+  const online = new Set<number>();
+  if (!userIds.length) return online;
+  const flags = await Promise.all(userIds.map((id) => redis.sismember(ONLINE_SET, String(id))));
+  flags.forEach((flag, i) => { if (flag) online.add(userIds[i]); });
+  return online;
+}
+
+/**
  * Get all online users (for admin dashboard).
  */
 export async function getAllOnlineUsers(): Promise<PresenceData[]> {
-  const keys = await redis.keys('presence:*');
-  if (keys.length === 0) return [];
+  // BUG-31 follow-up: derive the list from the authoritative ONLINE_SET
+  // (SMEMBERS) instead of redis.keys('presence:*'), which is unreliable on
+  // Upstash/clustered Redis. Then mget the matching presence blobs.
+  const ids = await redis.smembers(ONLINE_SET);
+  if (ids.length === 0) return [];
 
+  const keys = ids.map((id) => PRESENCE_KEY(Number(id)));
   const values = await redis.mget(...keys);
   return values
     .filter((v): v is string => v !== null)
-    .map(v => JSON.parse(v) as PresenceData);
+    .map((v) => JSON.parse(v) as PresenceData);
 }

@@ -96,3 +96,21 @@ export const publicSearchLimiter = rateLimit({
   message: { success: false, error: 'Too many search requests. Please slow down.' },
   store: new RedisRateLimitStore('pubsearch'),
 });
+
+/**
+ * Chat message send (REST POST /chat-messages).
+ * Keyed by the authenticated user (falls back to IP) so shared-IP testing isn't
+ * throttled per-network. ~30 sends / 10s — mirrors the socket-side Redis throttle
+ * so both transports are bounded equally. Honors RATE_LIMIT_DISABLED.
+ */
+export const chatSendLimiter = rateLimit({
+  windowMs: 10 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => config.rateLimit.disabled,
+  keyGenerator: (req: any) => (req.user?.id ? `u:${req.user.id}` : (req.ip || 'unknown')),
+  validate: false,
+  message: { success: false, error: 'You are sending messages too fast. Please slow down.' },
+  store: new RedisRateLimitStore('chatsend'),
+});

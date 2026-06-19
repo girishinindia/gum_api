@@ -1,3 +1,4 @@
+import type { Namespace } from 'socket.io';
 import { getIO } from './index';
 import { logger } from '../utils/logger';
 
@@ -23,6 +24,11 @@ function adminNs() {
   } catch {
     return null;
   }
+}
+
+/** Expose the /chat namespace so services can inspect who is currently in a room. */
+export function getChatNamespace(): Namespace | null {
+  return chatNs();
 }
 
 // ═══════════════════════════════════════════════
@@ -127,5 +133,23 @@ export function emitReadReceiptUpdated(roomId: number, userId: number, lastReadM
     });
   } catch (e: any) {
     logger.error({ err: e.message }, '[SocketEmitter] emitReadReceiptUpdated error');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Rooms
+// ═══════════════════════════════════════════════
+
+/** Notify everyone in a room that it was closed / frozen (soft-deleted, hard-deleted, or deactivated). */
+export function emitRoomClosed(roomId: number, reason?: string) {
+  try {
+    chatNs()?.to(`room:${roomId}`).emit('room_closed', { roomId, reason: reason ?? null });
+    adminNs()?.to('admin:monitor').emit('chat_activity', {
+      type: 'room_closed',
+      roomId,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    logger.error({ err: e.message }, '[SocketEmitter] emitRoomClosed error');
   }
 }

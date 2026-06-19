@@ -1,6 +1,9 @@
 import { Namespace, Socket } from 'socket.io';
 import { supabase } from '../config/supabase';
+import { redis } from '../config/redis';
+import { config } from '../config';
 import { logger } from '../utils/logger';
+import { notifyNewMessage } from '../services/chatNotify.service';
 
 const MSG_SELECT = `*, users!chat_messages_sender_id_fkey(id, first_name, last_name, email, profile_picture:avatar_url), chat_attachments(*), chat_message_reactions(id, emoji, user_id, users!chat_message_reactions_user_id_fkey(id, first_name, last_name))`;
 
@@ -87,17 +90,29 @@ export function registerChatHandlers(chatNs: Namespace, socket: Socket) {
 
       if (!roomId) return ack?.({ success: false, error: 'roomId required' });
       if (messageType === 'text' && !content?.trim()) return ack?.({ success: false, error: 'Content required for text messages' });
+      if (content && content.length > 4000) return ack?.({ success: false, error: 'Message is too long (max 4000 characters)' });
 
-      // Verify membership
+      // Rate limit: ~30 messages / 10s per user (cluster-safe via Redis). Fail-open on a Redis hiccup.
+      if (!config.rateLimit.disabled) {
+        try {
+          const rlKey = `chatrate:${userId}`;
+          const n = await redis.incr(rlKey);
+          if (n === 1) await redis.expire(rlKey, 10);
+          if (n > 30) return ack?.({ success: false, error: 'You are sending messages too fast. Please slow down.' });
+        } catch { /* ignore limiter errors */ }
+      }
+
+      // Verify membership (and mute status)
       const { data: member } = await supabase
         .from('chat_room_members')
-        .select('id')
+        .select('id, is_muted')
         .eq('room_id', roomId)
         .eq('user_id', userId)
         .eq('is_active', true)
         .maybeSingle();
 
       if (!member) return ack?.({ success: false, error: 'Not a member of this room' });
+      if (member.is_muted) return ack?.({ success: false, error: 'You are muted in this room' });
 
       // Persist to DB
       const insertData: Record<string, any> = {
@@ -137,6 +152,16 @@ export function registerChatHandlers(chatNs: Namespace, socket: Socket) {
           timestamp: new Date().toISOString(),
         });
       } catch { /* admin ns may not have listeners */ }
+
+      // Alert away/offline members (in-app + push wake-up). Fire-and-forget.
+      notifyNewMessage(chatNs, {
+        roomId,
+        messageId: message.id,
+        senderId: userId,
+        senderName: `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim() || 'Someone',
+        messageType,
+        content: message.content,
+      });
 
       logger.debug({ userId, roomId, messageId: message.id }, '[Chat] Message sent');
       ack?.({ success: true, message });
