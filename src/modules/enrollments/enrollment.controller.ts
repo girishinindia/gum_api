@@ -65,7 +65,10 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+  // Enrich each enrollment with its item (course/batch/webinar) details so
+  // consumers can show the real name instead of just item_type + item_id.
+  const enriched = await attachItems(data || []);
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 export async function getById(req: Request, res: Response) {

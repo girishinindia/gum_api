@@ -25,6 +25,8 @@ function parseBody(req: Request): any {
     if (typeof body[k] === 'string') body[k] = toIntOrNull(body[k]);
   }
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  // max_members is NOT NULL DEFAULT 100 — drop a null so the DB default applies (empty = default).
+  if (body.max_members === null) delete body.max_members;
   return body;
 }
 
@@ -88,6 +90,9 @@ export async function create(req: Request, res: Response) {
   const body = parseBody(req);
   if (!body.name?.trim()) return err(res, 'Room name is required', 400);
   if (!body.room_type) return err(res, 'Room type is required', 400);
+  if (body.max_members != null && (!Number.isInteger(body.max_members) || body.max_members < 1)) {
+    return err(res, 'Max members must be a positive whole number', 400);
+  }
 
   body.created_by = req.user!.id;
   body.invite_code = await generateInviteCode();
@@ -115,6 +120,9 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Chat room not found', 404);
 
   const body = parseBody(req);
+  if (body.max_members != null && (!Number.isInteger(body.max_members) || body.max_members < 1)) {
+    return err(res, 'Max members must be a positive whole number', 400);
+  }
   const { data, error: e } = await supabase.from(TABLE).update(body).eq('id', id).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
 
@@ -182,6 +190,9 @@ export async function createBatchRoom(req: Request, res: Response) {
 
   if (!body.batch_id) return err(res, 'Batch ID is required', 400);
   if (!body.name?.trim()) return err(res, 'Room name is required', 400);
+  if (body.max_members != null && (!Number.isInteger(body.max_members) || body.max_members < 1)) {
+    return err(res, 'Max members must be a positive whole number', 400);
+  }
 
   // Verify the instructor owns this batch
   // BUG-30 fix: course_batches has `title`, not `name` — selecting `name` errored out
