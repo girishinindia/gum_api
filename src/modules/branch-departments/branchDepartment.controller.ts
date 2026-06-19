@@ -40,6 +40,19 @@ export async function list(req: Request, res: Response) {
     q = q.is('deleted_at', null);
   }
 
+  // Search — branch/department names live in joined tables, so resolve the
+  // matching branch + department ids first, then filter assignments by them.
+  const search = (String(req.query.search ?? '')).replace(/[%_\\(),]/g, '').trim();
+  if (search) {
+    const [{ data: br }, { data: dp }] = await Promise.all([
+      supabase.from('branches').select('id').or(`name.ilike.%${search}%,code.ilike.%${search}%`).limit(1000),
+      supabase.from('departments').select('id').or(`name.ilike.%${search}%,code.ilike.%${search}%`).limit(1000),
+    ]);
+    const bids = (br || []).map((b: any) => b.id);
+    const dids = (dp || []).map((d: any) => d.id);
+    q = q.or(`branch_id.in.(${bids.length ? bids.join(',') : 0}),department_id.in.(${dids.length ? dids.join(',') : 0})`);
+  }
+
   // Filters
   if (req.query.branch_id) q = q.eq('branch_id', req.query.branch_id);
   if (req.query.department_id) q = q.eq('department_id', req.query.department_id);

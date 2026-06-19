@@ -39,7 +39,18 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = applySearch(q, search, SEARCH_CONFIGS.enrollments);
+  if (search) {
+    // User-aware search: the list shows learner name/email (joined from users),
+    // so resolve matching user ids first, then OR with the notes column.
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase.from('users').select('id')
+        .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,full_name.ilike.%${term}%`)
+        .limit(1000);
+      const ids = (us || []).map((u: any) => u.id);
+      q = q.or(`user_id.in.(${ids.length ? ids.join(',') : 0}),notes.ilike.%${term}%`);
+    }
+  }
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.item_type) q = q.eq('item_type', req.query.item_type as string);
   if (req.query.enrollment_status) q = q.eq('enrollment_status', req.query.enrollment_status as string);

@@ -46,7 +46,18 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = q.or(`user.first_name.ilike.%${search}%,user.last_name.ilike.%${search}%,user.email.ilike.%${search}%`);
+    if (search) {
+      // An embedded-column .or() can't filter the parent rows — resolve the
+      // matching user ids first, then filter wallets by them.
+      const term = String(search).replace(/[%_\\(),]/g, '').trim();
+      if (term) {
+        const { data: us } = await supabase.from('users').select('id')
+          .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,full_name.ilike.%${term}%`)
+          .limit(1000);
+        const ids = (us || []).map((u: any) => u.id);
+        q = q.in('user_id', ids.length ? ids : [0]);
+      }
+    }
     if (req.query.is_frozen === 'true') q = q.eq('is_frozen', true);
     if (req.query.is_frozen === 'false') q = q.eq('is_frozen', false);
     if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
