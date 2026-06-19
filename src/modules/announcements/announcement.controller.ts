@@ -47,6 +47,7 @@ export async function list(req: Request, res: Response) {
     if (req.query.announcement_type) q = q.eq('announcement_type', req.query.announcement_type as string);
     if (req.query.target_scope) q = q.eq('target_scope', req.query.target_scope as string);
     if (req.query.target_audience) q = q.eq('target_audience', req.query.target_audience as string);
+    if (req.query.priority !== undefined && req.query.priority !== '') q = q.eq('priority', parseInt(req.query.priority as string));
     if (req.query.is_pinned === 'true') q = q.eq('is_pinned', true);
     if (req.query.created_by) q = q.eq('created_by', parseInt(req.query.created_by as string));
 

@@ -41,7 +41,14 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['razorpay_payment_id', 'notes'] });
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase.from('users').select('id').or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%`).limit(1000);
+      const ids = (us || []).map((u: any) => u.id);
+      q = q.or(`razorpay_payment_id.ilike.%${term}%,notes.ilike.%${term}%,user_id.in.(${ids.length ? ids.join(',') : 0})`);
+    }
+  }
   if (req.query.order_id) q = q.eq('order_id', parseInt(req.query.order_id as string));
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.payment_status) q = q.eq('payment_status', req.query.payment_status as string);

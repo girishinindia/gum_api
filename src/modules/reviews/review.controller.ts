@@ -26,7 +26,7 @@ const RATING_TARGETS: Record<string, { table: string; avgCol: string; countCol: 
 // ── ITEM NAME LOOKUP ──
 const ITEM_TABLES: Record<string, { table: string; nameCol: string }> = {
   course:     { table: 'courses',             nameCol: 'name' },
-  batch:      { table: 'course_batches',      nameCol: 'batch_name' },
+  batch:      { table: 'course_batches',      nameCol: 'title' },
   webinar:    { table: 'webinars',            nameCol: 'title' },
   bundle:     { table: 'bundles',             nameCol: 'name' },
   instructor: { table: 'instructor_profiles', nameCol: 'user_id' }, // special — look up user name
@@ -136,7 +136,12 @@ export async function list(req: Request, res: Response) {
 
   // Search across title and review_text
   if (search) {
-    q = applySearch(q, search, { ilike: ['title', 'review_text'] });
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase.from('users').select('id').or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%`).limit(1000);
+      const ids = (us || []).map((u: any) => u.id);
+      q = q.or(`title.ilike.%${term}%,review_text.ilike.%${term}%,user_id.in.(${ids.length ? ids.join(',') : 0})`);
+    }
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);

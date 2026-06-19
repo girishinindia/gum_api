@@ -236,7 +236,7 @@ export async function orchestratePostPayment(params: PostPaymentParams): Promise
         for (const earning of earnings) {
           let itemName = 'an item';
           const tableMap: Record<string, string> = { course: 'courses', bundle: 'bundles', batch: 'course_batches', webinar: 'webinars' };
-          const nameCol: Record<string, string> = { course: 'name', bundle: 'name', batch: 'batch_name', webinar: 'title' };
+          const nameCol: Record<string, string> = { course: 'name', bundle: 'name', batch: 'title', webinar: 'title' };
           const tbl = tableMap[earning.item_type];
           const col = nameCol[earning.item_type];
           if (tbl && col) {

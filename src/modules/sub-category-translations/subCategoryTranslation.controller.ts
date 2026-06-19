@@ -8,6 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { applySearch } from '../../utils/search';
 
 const SITE_URL = 'https://growupmore.com';
 const SITE_NAME = 'GrowUpMore';
@@ -112,7 +113,7 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('sub_category_translations').select('*, sub_categories(code, slug, image, category_id, categories(code, slug)), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.textSearch('search_vector', search, { type: 'plain', config: 'simple' });
+  if (search) q = applySearch(q, search, { ilike: ['name'] });
   if (req.query.sub_category_id) q = q.eq('sub_category_id', req.query.sub_category_id);
   if (req.query.language_id) q = q.eq('language_id', req.query.language_id);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

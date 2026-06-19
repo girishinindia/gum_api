@@ -17,7 +17,7 @@ async function queryLog(table: string, req: Request, res: Response) {
   const actorCol = table === 'auth_activity_log' || table === 'system_activity_log' ? 'user_id' : 'actor_id';
 
   let q = supabase.from(table).select('*', { count: 'exact' });
-  if (req.query.action)  q = q.eq('action', req.query.action);
+  if (req.query.action)  q = q.ilike('action', `%${String(req.query.action).replace(/[%_,()]/g, '')}%`);
   if (req.query.user_id) q = q.eq(actorCol, req.query.user_id);
   if (req.query.from)    q = q.gte('created_at', req.query.from);
   if (req.query.to)      q = q.lte('created_at', req.query.to);

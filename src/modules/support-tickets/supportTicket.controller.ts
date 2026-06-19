@@ -83,6 +83,7 @@ export async function list(req: Request, res: Response) {
   }
 
   if (req.query.ticket_status) q = q.eq('ticket_status', req.query.ticket_status as string);
+  if (req.query.is_active === 'true') q = q.eq('is_active', true); else if (req.query.is_active === 'false') q = q.eq('is_active', false);
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
   if (req.query.priority_id) q = q.eq('priority_id', parseInt(req.query.priority_id as string));
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
