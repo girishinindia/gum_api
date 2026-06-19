@@ -71,6 +71,16 @@ export async function listByRoom(req: Request, res: Response) {
   const roomId = parseInt(req.params.roomId);
   const { page, limit, offset } = parseListParams(req, { sort: 'created_at' });
 
+  // Block access to a deleted/inactive room — its messages must not be
+  // reachable by direct URL after the room is removed.
+  const { data: room } = await supabase
+    .from('chat_rooms')
+    .select('id, is_active, deleted_at')
+    .eq('id', roomId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!room || (room as any).is_active === false) return err(res, 'Chat room not found', 404);
+
   const { data, count, error: e } = await supabase
     .from(TABLE)
     .select(MSG_WITH_REPLIES, { count: 'exact' })
@@ -218,6 +228,14 @@ export async function remove(req: Request, res: Response) {
 // ── GET /chat-messages/room/:roomId/pinned ── (Get pinned messages for a room)
 export async function listPinned(req: Request, res: Response) {
   const roomId = parseInt(req.params.roomId);
+  const { data: room } = await supabase
+    .from('chat_rooms')
+    .select('id, is_active, deleted_at')
+    .eq('id', roomId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!room || (room as any).is_active === false) return err(res, 'Chat room not found', 404);
+
   const { data, error: e } = await supabase
     .from(TABLE)
     .select(MSG_WITH_REPLIES)

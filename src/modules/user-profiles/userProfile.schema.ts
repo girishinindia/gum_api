@@ -30,12 +30,12 @@ export const upsertUserProfileSchema = z.object({
 
   // Alternate Contact
   alternate_email: z.string().email().max(255).optional().nullable(),
-  alternate_phone: z.string().max(20).optional().nullable(),
+  alternate_phone: z.preprocess(blankToUndef, z.string().regex(/^[+]?[\d\s\-()]{7,20}$/, 'Enter a valid phone number').optional()),
 
   // Emergency Contact
   emergency_contact_name: z.string().max(100).optional().nullable(),
   emergency_contact_relationship: z.string().max(50).optional().nullable(),
-  emergency_contact_phone: z.string().max(20).optional().nullable(),
+  emergency_contact_phone: z.preprocess(blankToUndef, z.string().regex(/^[+]?[\d\s\-()]{7,20}$/, 'Enter a valid phone number').optional()),
   emergency_contact_email: z.string().email().max(255).optional().nullable(),
 
   // Identity / KYC

@@ -18,9 +18,29 @@ let io: Server;
  * - Creates two namespaces: /chat (users) and /admin (admin monitoring).
  */
 export function initSocket(httpServer: HttpServer): Server {
+  // Mirror the Express CORS logic so the Socket.io handshake accepts the same
+  // origins (incl. first-party growupmore.com sub-domains + dev hosts). A
+  // blocked handshake silently kills live chat (typing, new messages).
+  const socketCorsOpen = config.cors.origins.includes('*');
+  const socketCorsWhitelist = new Set(config.cors.origins.map((o) => o.trim().replace(/\/+$/, '').toLowerCase()));
+  const SOCKET_FIRST_PARTY = /^https:\/\/([a-z0-9-]+\.)*growupmore\.com$/i;
+  const SOCKET_DEV_ORIGINS = [
+    /^https?:\/\/localhost(?::\d+)?$/i,
+    /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+    /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+    /^https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?$/i,
+  ];
+
   io = new Server(httpServer, {
     cors: {
-      origin: config.cors.origins.includes('*') ? '*' : config.cors.origins,
+      origin(origin, cb) {
+        if (!origin || socketCorsOpen) return cb(null, true);
+        const n = origin.trim().replace(/\/+$/, '').toLowerCase();
+        if (socketCorsWhitelist.has(n) || SOCKET_FIRST_PARTY.test(n) || SOCKET_DEV_ORIGINS.some((re) => re.test(origin))) {
+          return cb(null, true);
+        }
+        return cb(new Error(`Origin ${origin} not allowed by CORS`));
+      },
       credentials: true,
     },
     pingInterval: 25000,

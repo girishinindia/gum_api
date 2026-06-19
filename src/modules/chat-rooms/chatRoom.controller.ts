@@ -67,8 +67,11 @@ export async function list(req: Request, res: Response) {
 
 // ── GET /chat-rooms/:id ──
 export async function getById(req: Request, res: Response) {
-  const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
+  // Public endpoint: a soft-deleted or deactivated room must NOT be reachable
+  // by direct id/URL (the admin trash list uses show_deleted separately).
+  const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).is('deleted_at', null).maybeSingle();
   if (e || !data) return err(res, 'Chat room not found', 404);
+  if ((data as any).is_active === false) return err(res, 'Chat room not found', 404);
 
   // Also fetch member count
   const { count: memberCount } = await supabase
