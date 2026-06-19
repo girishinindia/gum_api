@@ -179,10 +179,23 @@ export async function sendFcmToDevices(
  * When the push queue is disabled (PUSH_QUEUE_ENABLED=false), sends
  * synchronously in-process via `syncFallback`.
  */
+export interface EnqueuePushResult {
+  /** Total devices targeted (web + fcm). */
+  enqueued: number;
+  /** Pushes confirmed sent in-process (sync path). 0 when queued to the worker. */
+  sent: number;
+  /** Dead subscriptions pruned (404/410 web, unregistered FCM) during this send. */
+  gone: number;
+  /** Sends that threw a transport error in-process. */
+  failed: number;
+}
+
 export async function enqueuePush(
   userId: number,
   payload: PushPayload,
-): Promise<{ enqueued: number }> {
+): Promise<EnqueuePushResult> {
+  const empty: EnqueuePushResult = { enqueued: 0, sent: 0, gone: 0, failed: 0 };
+
   // Fetch active devices for the user (service-role bypasses RLS).
   const { data: devices, error } = await supabase
     .from('push_devices')
@@ -193,21 +206,29 @@ export async function enqueuePush(
 
   if (error) {
     logger.error({ err: error, userId }, '[push] failed to load devices');
-    return { enqueued: 0 };
+    return empty;
   }
   if (!devices || devices.length === 0) {
     logger.debug({ userId }, '[push] no active devices');
-    return { enqueued: 0 };
+    return empty;
   }
 
   // Split by transport: web push (VAPID) vs mobile push (FCM).
   const webDevices = (devices as any[]).filter((d) => d.provider !== 'fcm' && d.endpoint) as PushDevice[];
   const fcmDevices = (devices as any[]).filter((d) => d.provider === 'fcm' && d.fcm_token) as FcmDevice[];
 
-  // Mobile (FCM): best-effort multicast — no per-device queue needed.
-  if (fcmDevices.length) await sendFcmToDevices(fcmDevices, payload);
+  let sent = 0, gone = 0, failed = 0;
 
-  // Web (VAPID): one queue job per device — failure isolation.
+  // Mobile (FCM): best-effort multicast — no per-device queue needed.
+  if (fcmDevices.length) {
+    const r = await sendFcmToDevices(fcmDevices, payload);
+    sent += r.sent;
+    gone += r.pruned;
+  }
+
+  // Web (VAPID): one queue job per device — failure isolation. When queues are
+  // disabled the syncFallback runs in-process (awaited), so we capture the real
+  // send outcome here — including dead subscriptions pruned to is_active=false.
   for (const d of webDevices) {
     await enqueue<{ device: PushDevice; payload: PushPayload }>(
       'push',
@@ -217,14 +238,21 @@ export async function enqueuePush(
         // Stable job id keeps double-enqueues idempotent for short windows.
         jobId: `push:${d.id}:${payload.tag ?? Date.now()}`,
         syncFallback: async ({ device, payload }) => {
-          try { await sendPushDirect(device, payload); }
-          catch (e) { logger.warn({ err: e, deviceId: device.id }, '[push] syncFallback delivery failed'); }
+          try {
+            const status = await sendPushDirect(device, payload);
+            if (status === 'gone') gone++; else sent++;
+          } catch (e) {
+            failed++;
+            logger.warn({ err: e, deviceId: device.id }, '[push] syncFallback delivery failed');
+          }
         },
       },
     );
   }
 
-  return { enqueued: webDevices.length + fcmDevices.length };
+  const enqueued = webDevices.length + fcmDevices.length;
+  if (gone > 0) logger.info({ userId, sent, gone, failed }, '[push] dead subscriptions pruned on send');
+  return { enqueued, sent, gone, failed };
 }
 
 /**

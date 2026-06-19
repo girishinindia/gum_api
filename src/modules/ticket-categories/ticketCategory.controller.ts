@@ -12,11 +12,18 @@ const CACHE_KEY = 'ticket_categories:all';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 
+/** Normalise a slug: lowercase, spaces/punctuation → single hyphens, trim hyphens. */
+function slugify(s: string): string {
+  return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.display_order === 'string') body.display_order = body.display_order ? parseInt(body.display_order) || 0 : 0;
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  // Slug must never contain spaces/uppercase — normalise any provided value.
+  if (body.slug) body.slug = slugify(body.slug);
   return body;
 }
 
@@ -54,6 +61,8 @@ export async function getById(req: Request, res: Response) {
 // POST /ticket-categories
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+  // Auto-generate a slug from the name when none was provided.
+  if (!body.slug && body.name) body.slug = slugify(body.name);
 
   const { data, error: e } = await supabase.from(TABLE).insert(body).select().single();
   if (e) {

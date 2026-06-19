@@ -149,8 +149,16 @@ export async function create(req: Request, res: Response) {
         body: String(body.message || ''),
         url: body.action_url || undefined,
       }).then(async (r) => {
-        await supabase.from(TABLE).update({ delivery_status: r.enqueued > 0 ? 'delivered' : 'failed', sent_at: new Date().toISOString() }).eq('id', data.id);
-      }).catch(() => {});
+        // Distinguish "user has no registered device" (the #1 reason a push
+        // never arrives) from a real send or failure. 'no_device' = nothing to
+        // send to; 'failed' = had device(s) but all were dead/errored.
+        let status: 'delivered' | 'sent' | 'failed' | 'no_device' = 'sent';
+        if (r.enqueued === 0) status = 'no_device';
+        else if (r.sent > 0) status = 'delivered';
+        else if (r.gone > 0 || r.failed > 0) status = 'failed';
+        const meta = { ...((data as any).metadata ?? {}), push_devices_targeted: r.enqueued, push_sent: r.sent, push_pruned: r.gone };
+        await supabase.from(TABLE).update({ delivery_status: status, sent_at: new Date().toISOString(), metadata: meta }).eq('id', data.id);
+      }).catch((e) => { console.error('[notification push] delivery failed:', e); });
     }
 
     // Channel=Email now actually DELIVERS by email — previously the row was just

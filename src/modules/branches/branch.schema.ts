@@ -19,6 +19,34 @@ const optionalId = z.preprocess(blankToUndef, z.coerce.number().int().positive()
 const optionalText = (max: number) =>
   z.preprocess(blankToUndef, z.string().trim().max(max).optional());
 
+/** Optional pincode — digits only, 4–10 chars (PIN / ZIP). */
+const optionalPincode = z.preprocess(
+  blankToUndef,
+  z.string().trim().regex(/^[0-9]{4,10}$/, 'Enter a valid PIN/ZIP code (4–10 digits)').optional(),
+);
+
+/** Optional phone — +, digits, spaces, hyphens, parentheses; 7–20 chars. */
+const optionalPhone = z.preprocess(
+  blankToUndef,
+  z.string().trim().regex(/^[+]?[\d\s()-]{7,20}$/, 'Enter a valid phone number').optional(),
+);
+
+/**
+ * Optional URL — accepts a scheme-less host (e.g. `growupmore.com`) by
+ * prepending `https://` BEFORE validation, so a missing protocol no longer
+ * 400s. Genuinely malformed URLs still fail with a clear error.
+ */
+const optionalHttpUrl = z.preprocess(
+  (v) => {
+    const s = v === '' || v === null ? undefined : v;
+    if (typeof s !== 'string') return s;
+    const t = s.trim();
+    if (!t) return undefined;
+    return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  },
+  z.string().url('Enter a valid URL').optional(),
+);
+
 export const createBranchSchema = z.object({
   country_id:        optionalId,
   state_id:          optionalId,
@@ -29,11 +57,11 @@ export const createBranchSchema = z.object({
   branch_type: z.preprocess(blankToUndef, z.enum(BRANCH_TYPES).optional().default('office')),
   address_line_1:  optionalText(255),
   address_line_2:  optionalText(255),
-  pincode:         optionalText(20),
-  phone:           optionalText(20),
-  email:           z.preprocess(blankToUndef, z.string().trim().email().optional()),
-  website:         z.preprocess(blankToUndef, z.string().trim().url().optional()),
-  google_maps_url: z.preprocess(blankToUndef, z.string().trim().url().optional()),
+  pincode:         optionalPincode,
+  phone:           optionalPhone,
+  email:           z.preprocess(blankToUndef, z.string().trim().email('Enter a valid email').optional()),
+  website:         optionalHttpUrl,
+  google_maps_url: optionalHttpUrl,
   is_active:   z.preprocess(
     (v) => (v === '' || v === null ? undefined : typeof v === 'string' ? v === 'true' : v),
     z.boolean().optional().default(true),

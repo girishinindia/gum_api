@@ -259,7 +259,7 @@ export async function sendNotification(params: SendNotificationParams): Promise<
     // Push delivery (Phase 11.2)
     if (channel === 'push') {
       try {
-        const { enqueued } = await enqueuePush(userId, {
+        const { enqueued, sent, gone } = await enqueuePush(userId, {
           title,
           body: message,
           url:  params.pushUrl ?? '/',
@@ -271,9 +271,11 @@ export async function sendNotification(params: SendNotificationParams): Promise<
           },
         });
         if (notification) {
+          // 'no_device' makes "user never enabled push" distinct from a real failure.
+          const status = enqueued === 0 ? 'no_device' : sent > 0 ? 'delivered' : gone > 0 ? 'failed' : 'sent';
           await supabase.from('notifications').update({
-            delivery_status: enqueued > 0 ? 'delivered' : 'failed',
-            metadata: { ...(metadata ?? {}), push_devices_targeted: enqueued },
+            delivery_status: status,
+            metadata: { ...(metadata ?? {}), push_devices_targeted: enqueued, push_sent: sent, push_pruned: gone },
           }).eq('id', notification.id);
         }
       } catch (e) {
