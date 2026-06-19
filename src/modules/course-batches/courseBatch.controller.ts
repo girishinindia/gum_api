@@ -5,7 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 import { validateOwnerInstructor } from '../../utils/ownerInstructor';
 
@@ -48,7 +48,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['title', 'code'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['title', 'code'],
+    translation: { table: 'batch_translations', fk: 'batch_id', cols: ['title'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
   else if (req.query.show_deleted !== 'true') q = q.neq('batch_status', 'cancelled'); // hide cancelled by default (Trash shows all)

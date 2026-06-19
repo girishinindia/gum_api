@@ -8,7 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 
 const CACHE_KEY = 'categories:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -31,7 +31,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('categories').select('*', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['code', 'slug'],
+    translation: { table: 'category_translations', fk: 'category_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

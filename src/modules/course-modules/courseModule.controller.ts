@@ -8,7 +8,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 function extractBunnyPath(cdnUrl: string): string {
@@ -36,7 +36,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('course_modules').select('*, courses(code, slug, name)', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['slug', 'name'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['slug', 'name'],
+    translation: { table: 'course_module_translations', fk: 'course_module_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

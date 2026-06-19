@@ -9,7 +9,7 @@ import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolders, deleteBunnyFolder } from '../../services/storage.service';
 import { buildCourseFolderName, buildCdnName } from '../../utils/courseParser';
 import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
-import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { applySearch, applyTranslatedSearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const CACHE_KEY = 'topics:all';
 const clearCache = async (chapterId?: number) => {
@@ -39,7 +39,12 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('topics').select('*, chapters(slug, subject_id)', { count: 'exact' });
 
   // Search
-  if (search) q = applySearch(q, search, SEARCH_CONFIGS.topics);
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['slug'],
+    translation: { table: 'topic_translations', fk: 'topic_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

@@ -5,7 +5,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'faqs';
@@ -37,7 +37,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['question', 'answer'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['question', 'answer'],
+    translation: { table: 'faq_translations', fk: 'faq_id', cols: ['question', 'answer'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
   if (req.query.category_id) q = q.eq('category_id', parseInt(req.query.category_id as string));
   if (req.query.item_type) q = q.eq('item_type', req.query.item_type as string);
   if (req.query.item_id) q = q.eq('item_id', parseInt(req.query.item_id as string));

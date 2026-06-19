@@ -162,3 +162,73 @@ export const SEARCH_CONFIGS: Record<string, SearchConfig> = {
   departments:      { ilike: ['name', 'code', 'description'] },
   countries:        { ilike: ['name', 'iso2', 'iso3', 'nationality'] },
 };
+
+// ════════════════════════════════════════════════════════════════════════
+// Translation-aware search
+// ────────────────────────────────────────────────────────────────────────
+// Many catalog entities keep their human-readable name ONLY in a
+// `*_translations` table (the base row has just code/slug). Base-table ILIKE
+// therefore never matches when an admin types the visible (translated) name.
+// These helpers fetch the base IDs whose translation name/title matches, so a
+// list query can OR them in alongside the normal base-column search — covering
+// English AND every localized language (Hindi/Gujarati/Marathi).
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * Return base-entity IDs whose translation row matches `search` on any of
+ * `cols` (ILIKE). All `*_translations` tables carry `deleted_at`, so
+ * soft-deleted rows are excluded unless `includeDeleted` is set.
+ */
+export async function matchTranslationIds(
+  client: { from: Function },
+  table: string,
+  fk: string,
+  cols: string[],
+  search: string,
+  opts: { includeDeleted?: boolean } = {},
+): Promise<number[]> {
+  const term = sanitize(search);
+  if (!term || cols.length === 0) return [];
+  let q = client
+    .from(table)
+    .select(fk)
+    .or(cols.map((c) => `${c}.ilike.%${term}%`).join(','));
+  if (!opts.includeDeleted) q = q.is('deleted_at', null);
+  const { data } = await q.limit(2000);
+  if (!data) return [];
+  const ids = [...new Set((data as any[]).map((r) => r[fk]).filter((v) => v != null))] as number[];
+  return ids.slice(0, 1000); // cap so the id.in.(…) filter can't blow the URL length
+}
+
+/**
+ * Translation-aware list search: ORs the base-column ILIKE matches with
+ * `id.in.(…)` for rows whose translation matched. With no translation config
+ * (or no translated match) it behaves like the plain base ILIKE search.
+ * Async — it may hit the DB for the translation lookup, so callers `await`.
+ */
+export async function applyTranslatedSearch<T extends { or: Function }>(
+  query: T,
+  client: { from: Function },
+  opts: {
+    search: string;
+    base: string[];
+    translation?: { table: string; fk: string; cols: string[] };
+    includeDeleted?: boolean;
+  },
+// Returns `{ query }` (NOT the bare builder) because a PostgREST builder is
+// itself thenable — returning it from an async fn and `await`ing would execute
+// the query and yield the response instead of the chainable builder. Callers
+// do: `q = (await applyTranslatedSearch(...)).query;`
+): Promise<{ query: T }> {
+  const term = sanitize(opts.search);
+  if (!term) return { query };
+  const clauses = opts.base.map((c) => `${c}.ilike.%${term}%`);
+  if (opts.translation) {
+    const ids = await matchTranslationIds(
+      client, opts.translation.table, opts.translation.fk, opts.translation.cols,
+      opts.search, { includeDeleted: opts.includeDeleted },
+    );
+    if (ids.length) clauses.push(`id.in.(${ids.join(',')})`);
+  }
+  return { query: query.or(clauses.join(',')) as T };
+}

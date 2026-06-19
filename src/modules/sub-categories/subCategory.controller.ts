@@ -8,7 +8,7 @@ import { logAdmin, logData } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 
 const CACHE_KEY = 'sub_categories:all';
 const clearCache = async (categoryId?: number) => {
@@ -35,7 +35,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('sub_categories').select('*, categories(code, slug)', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['code', 'slug'],
+    translation: { table: 'sub_category_translations', fk: 'sub_category_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

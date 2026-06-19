@@ -9,7 +9,7 @@ import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { createBunnyFolder, deleteBunnyFolder } from '../../services/storage.service';
 import { buildCourseFolderName } from '../../utils/courseParser';
 import { archiveYoutubeUrls } from '../../services/youtubeArchive.service';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 
 const CACHE_KEY = 'subjects:all';
 const clearCache = () => redis.del(CACHE_KEY);
@@ -30,7 +30,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('subjects').select('*', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['code', 'slug'],
+    translation: { table: 'subject_translations', fk: 'subject_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

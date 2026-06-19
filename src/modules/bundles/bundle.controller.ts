@@ -8,7 +8,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
-import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { applySearch, applyTranslatedSearch, SEARCH_CONFIGS } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 import { validateOwnerInstructor } from '../../utils/ownerInstructor';
 
@@ -45,7 +45,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('bundles').select('*', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, SEARCH_CONFIGS.bundles);
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['code', 'slug', 'name'],
+    translation: { table: 'bundle_translations', fk: 'bundle_id', cols: ['title'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {

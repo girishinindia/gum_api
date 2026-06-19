@@ -11,7 +11,7 @@ import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { signEmbedUrl, signStreamFileUrl } from '../../services/bunnyToken.service';
 import { sanitizeName, buildCdnName, buildCourseFolderName } from '../../utils/courseParser';
 import { archiveYoutubeUrls, deleteArchiveForSubTopic } from '../../services/youtubeArchive.service';
-import { applySearch, SEARCH_CONFIGS } from '../../utils/search';
+import { applySearch, applyTranslatedSearch, SEARCH_CONFIGS } from '../../utils/search';
 
 const CACHE_KEY = 'sub_topics:all';
 const clearCache = async (topicId?: number) => {
@@ -41,7 +41,12 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('sub_topics').select('*, topics(slug, chapter_id, chapters(subject_id))', { count: 'exact' });
 
   // Search
-  if (search) q = applySearch(q, search, SEARCH_CONFIGS.sub_topics);
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['slug'],
+    translation: { table: 'sub_topic_translations', fk: 'sub_topic_id', cols: ['name'] },
+    includeDeleted: req.query.show_deleted === 'true',
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
