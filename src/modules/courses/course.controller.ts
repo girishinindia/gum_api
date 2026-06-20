@@ -568,7 +568,52 @@ export async function courseLanguages(_req: Request, res: Response) {
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from('courses').select('*').eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Course not found', 404);
-  return ok(res, data);
+
+  // Live stats — the stored *_count columns on `courses` are stale/unmaintained,
+  // so compute them on read (admin Course Details modal shows these).
+  const courseId = data.id;
+  const [enr, asm, cap] = await Promise.all([
+    supabase.from('enrollments').select('id', { count: 'exact', head: true }).eq('item_type', 'course').eq('item_id', courseId).is('deleted_at', null),
+    supabase.from('assessments').select('id', { count: 'exact', head: true }).eq('course_id', courseId).is('deleted_at', null),
+    supabase.from('assesment_capstone_projects').select('id', { count: 'exact', head: true }).eq('course_id', courseId).is('deleted_at', null),
+  ]);
+
+  // Walk the curriculum tree for lesson (sub_topic) count + chapter ids (mini-projects).
+  let totalLessons = 0;
+  let miniCount = 0;
+  const { data: modules } = await supabase.from('course_modules').select('id').eq('course_id', courseId).eq('is_active', true).is('deleted_at', null);
+  const moduleIds = (modules || []).map((m: any) => m.id);
+  if (moduleIds.length) {
+    const { data: cms } = await supabase.from('course_module_subjects').select('id').eq('course_id', courseId).in('course_module_id', moduleIds).eq('is_active', true).is('deleted_at', null);
+    const cmsIds = (cms || []).map((s: any) => s.id);
+    let ccIds: number[] = [];
+    let chapterIds: number[] = [];
+    if (cmsIds.length) {
+      const { data: cc } = await supabase.from('course_chapters').select('id, chapter_id').eq('course_id', courseId).in('course_module_subject_id', cmsIds).eq('is_active', true).is('deleted_at', null);
+      ccIds = (cc || []).map((c: any) => c.id);
+      chapterIds = [...new Set((cc || []).map((c: any) => c.chapter_id))];
+    }
+    if (ccIds.length) {
+      const { data: cct } = await supabase.from('course_chapter_topics').select('topic_id').eq('course_id', courseId).in('course_chapter_id', ccIds).eq('is_active', true).is('deleted_at', null);
+      const topicIds = [...new Set((cct || []).map((t: any) => t.topic_id))];
+      if (topicIds.length) {
+        const { count: stCount } = await supabase.from('sub_topics').select('id', { count: 'exact', head: true }).in('topic_id', topicIds).eq('is_active', true);
+        totalLessons = stCount || 0;
+      }
+    }
+    if (chapterIds.length) {
+      const { count: mp } = await supabase.from('assesment_mini_projects').select('id', { count: 'exact', head: true }).in('chapter_id', chapterIds).is('deleted_at', null);
+      miniCount = mp || 0;
+    }
+  }
+
+  return ok(res, {
+    ...data,
+    enrollment_count: enr.count || 0,
+    total_lessons: totalLessons,
+    total_assignments: asm.count || 0,
+    total_projects: (cap.count || 0) + miniCount,
+  });
 }
 
 /**

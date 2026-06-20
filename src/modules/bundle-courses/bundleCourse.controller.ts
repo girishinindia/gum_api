@@ -70,8 +70,21 @@ export async function create(req: Request, res: Response) {
   }
 
   // Verify bundle exists
-  const { data: bundle } = await supabase.from('bundles').select('id, code, name').eq('id', body.bundle_id).single();
+  const { data: bundle } = await supabase.from('bundles').select('id, code, name, max_courses').eq('id', body.bundle_id).single();
   if (!bundle) return err(res, 'Bundle not found', 404);
+
+  // Enforce the bundle's Max Courses cap (count active, non-deleted links).
+  if (bundle.max_courses != null && body.is_active !== false) {
+    const { count } = await supabase
+      .from('bundle_courses')
+      .select('id', { count: 'exact', head: true })
+      .eq('bundle_id', body.bundle_id)
+      .eq('is_active', true)
+      .is('deleted_at', null);
+    if ((count || 0) >= bundle.max_courses) {
+      return err(res, `Bundle is at its maximum of ${bundle.max_courses} course${bundle.max_courses === 1 ? '' : 's'}`, 400);
+    }
+  }
 
   // Verify course exists
   const { data: course } = await supabase.from('courses').select('id, code, name').eq('id', body.course_id).single();

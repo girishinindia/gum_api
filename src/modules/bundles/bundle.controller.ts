@@ -62,7 +62,8 @@ export async function list(req: Request, res: Response) {
   // Filters — public list defaults to active. Pass is_active=false to override.
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
-  else if (req.query.show_deleted !== 'true') q = q.eq('is_active', true);
+  // Default to active-only for public callers; admin can pass is_active=all to see every bundle.
+  else if (req.query.is_active !== 'all' && req.query.show_deleted !== 'true') q = q.eq('is_active', true);
 
   if (req.query.bundle_owner) q = q.eq('bundle_owner', req.query.bundle_owner as string);
   if (req.query.is_featured === 'true') q = q.eq('is_featured', true);
@@ -286,6 +287,10 @@ export async function getBySlug(req: Request, res: Response) {
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
 
+  if (body.starts_at && body.expires_at && new Date(body.expires_at) < new Date(body.starts_at)) {
+    return err(res, 'Expires At must be on or after Starts At', 400);
+  }
+
   if (body.is_active === false && !hasPermission(req, 'bundle', 'activate')) {
     return err(res, 'Permission denied: bundle:activate required to create inactive', 403);
   }
@@ -320,6 +325,14 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Bundle not found', 404);
 
   const updates = parseBody(req);
+
+  {
+    const effStart = 'starts_at' in updates ? updates.starts_at : (old as any).starts_at;
+    const effExpiry = 'expires_at' in updates ? updates.expires_at : (old as any).expires_at;
+    if (effStart && effExpiry && new Date(effExpiry) < new Date(effStart)) {
+      return err(res, 'Expires At must be on or after Starts At', 400);
+    }
+  }
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {
     if (!hasPermission(req, 'bundle', 'activate')) {

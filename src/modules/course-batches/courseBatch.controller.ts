@@ -56,12 +56,12 @@ export async function list(req: Request, res: Response) {
   })).query;
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
   if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
-  else if (req.query.show_deleted !== 'true') q = q.neq('batch_status', 'cancelled'); // hide cancelled by default (Trash shows all)
+  else if (req.query.batch_status !== 'all' && req.query.show_deleted !== 'true') q = q.neq('batch_status', 'cancelled'); // hide cancelled by default; batch_status=all shows them
   if (req.query.batch_owner) q = q.eq('batch_owner', req.query.batch_owner as string);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
-  else if (req.query.show_deleted !== 'true') q = q.eq('is_active', true); // public list defaults to active; Trash shows inactive too
+  else if (req.query.is_active !== 'all' && req.query.show_deleted !== 'true') q = q.eq('is_active', true); // default active; is_active=all shows inactive too
   if (req.query.is_free === 'true') q = q.eq('is_free', true);
   else if (req.query.is_free === 'false') q = q.eq('is_free', false);
 

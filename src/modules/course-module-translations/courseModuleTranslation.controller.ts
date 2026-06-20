@@ -46,7 +46,11 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('course_module_translations').select('*, course_modules(slug, name, course_id, courses(code, slug, name)), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.textSearch('search_vector', search, { type: 'plain', config: 'simple' });
+  if (search) {
+    // Prefix match so "loop" finds "loops" (the 'simple' config does no stemming).
+    const prefix = String(search).trim().split(/\s+/).map((t) => t.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean).map((t) => `${t}:*`).join(' & ');
+    if (prefix) q = q.textSearch('search_vector', prefix, { config: 'simple' });
+  }
   if (req.query.course_module_id) q = q.eq('course_module_id', parseInt(req.query.course_module_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
