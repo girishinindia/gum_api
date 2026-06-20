@@ -37,9 +37,8 @@ export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'created_at' });
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
-  else q = q.is('deleted_at', null);
-
+  // chat_invites has no soft-delete (deleted_at) column — its lifecycle is
+  // status ('active'/'revoked') + is_active, so there is no deleted_at filter.
   if (search) q = applySearch(q, search, { ilike: ['invite_token'] });
   if (req.query.room_id) q = q.eq('room_id', parseInt(req.query.room_id as string));
   if (req.query.status) q = q.eq('status', req.query.status as string);
