@@ -375,8 +375,6 @@ export async function engagement(req: Request, res: Response) {
 
   try {
     const sinceWindow = nDaysAgo(days);
-    const since7d = nDaysAgo(7);
-    const since30d = nDaysAgo(30);
 
     const [
       activeLearners,
@@ -389,12 +387,12 @@ export async function engagement(req: Request, res: Response) {
       lowestRatedCourses,
       stuckEnrollments,
     ] = await Promise.all([
-      supabase.from('users').select('id', { count: 'exact', head: true }).gte('last_login_at', since7d).is('deleted_at', null),
+      supabase.from('users').select('id', { count: 'exact', head: true }).gte('last_login_at', sinceWindow).is('deleted_at', null),
       // completion_status doesn't exist — a non-null completed_at IS the completion marker
-      supabase.from('enrollments').select('id', { count: 'exact', head: true }).not('completed_at', 'is', null).gte('completed_at', since30d),
-      supabase.from('enrollments').select('id', { count: 'exact', head: true }).gte('created_at', since30d),
+      supabase.from('enrollments').select('id', { count: 'exact', head: true }).not('completed_at', 'is', null).gte('completed_at', sinceWindow),
+      supabase.from('enrollments').select('id', { count: 'exact', head: true }).gte('created_at', sinceWindow),
       supabase.from('reviews').select('rating', { count: 'exact' }).is('deleted_at', null),
-      supabase.from('issued_certificates').select('id', { count: 'exact', head: true }).gte('issued_at', since30d).is('revoked_at', null),
+      supabase.from('issued_certificates').select('id', { count: 'exact', head: true }).gte('issued_at', sinceWindow).is('revoked_at', null),
       supabase.from('reviews').select('id, rating, comment, user_id, course_id, created_at').eq('is_flagged', true).order('created_at', { ascending: false }).limit(10),
       supabase.from('reviews').select('id, rating, comment, course_id, user_id, created_at').is('deleted_at', null).order('created_at', { ascending: false }).limit(10),
       safeAwait<any[]>(() => supabase.rpc('fn_lowest_rated_courses'), []),

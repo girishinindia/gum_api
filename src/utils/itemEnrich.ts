@@ -56,12 +56,19 @@ export async function attachItems<T extends EnrichRow>(rows: T[]): Promise<(T & 
     const { data: tr } = await supabase.from('webinar_translations').select('webinar_id, short_description').in('webinar_id', byType.webinar).eq('language_id', 7);
     for (const t of (tr || []) as any[]) { const m = map[`webinar:${t.webinar_id}`]; if (m) m.short_description = t.short_description; }
   }
+  if (byType.live_session?.length) {
+    const { data } = await supabase.from('live_sessions')
+      .select('id, title, scheduled_at')
+      .in('id', byType.live_session);
+    for (const s of (data || []) as any[]) map[`live_session:${s.id}`] = { id: s.id, type: 'live_session', title: s.title, is_free: true, scheduled_at: s.scheduled_at };
+  }
 
   return rows.map((r) => ({ ...r, item: map[`${r.item_type}:${r.item_id}`] ?? null }));
 }
 
 /** True when the (item_type, item_id) is free (is_free flag or price ≤ 0). */
 export async function isItemFree(itemType: string, itemId: number): Promise<boolean> {
+  if (itemType === 'live_session') return true; // free RSVP; live_sessions has no price/is_free column
   const table: Record<string, string> = { course: 'courses', bundle: 'bundles', batch: 'course_batches', webinar: 'webinars' };
   const t = table[itemType];
   if (!t) return false;

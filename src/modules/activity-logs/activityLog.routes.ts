@@ -9,4 +9,6 @@ r.get('/auth',   ctrl.authLogs);
 r.get('/admin',  ctrl.adminLogs);
 r.get('/data',   ctrl.dataLogs);
 r.get('/system', ctrl.systemLogs);
+// Distinct action list per type (for the filter dropdown)
+r.get('/:type/actions', ctrl.logActions);
 export default r;

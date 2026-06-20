@@ -89,6 +89,11 @@ export async function create(req: Request, res: Response) {
     if (!body.requested_amount) return err(res, 'requested_amount is required', 400);
 
     body.created_by = req.user!.id;
+    // request_number is NOT NULL + UNIQUE with no DB default — generate it.
+    if (!body.request_number) {
+      const ds = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      body.request_number = `PAY-${ds}-${Date.now().toString(36).slice(-5).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    }
 
     const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
     if (e) return err(res, e.message, 500);
@@ -446,6 +451,7 @@ export async function createMine(req: Request, res: Response) {
         payment_method: req.body.payment_method || 'bank_transfer',
         bank_account_id: bankAccountId,
         notes: req.body.notes || null,
+        request_number: `PAY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Date.now().toString(36).slice(-5).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
         created_by: instructorId,
       })
       .select('*')

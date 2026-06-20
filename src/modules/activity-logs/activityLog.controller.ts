@@ -74,3 +74,16 @@ export const authLogs   = (req: Request, res: Response) => queryLog('auth_activi
 export const adminLogs  = (req: Request, res: Response) => queryLog('admin_activity_log', req, res);
 export const dataLogs   = (req: Request, res: Response) => queryLog('data_activity_log', req, res);
 export const systemLogs = (req: Request, res: Response) => queryLog('system_activity_log', req, res);
+
+// Distinct action values for a log type — powers the admin "action" filter dropdown.
+export async function logActions(req: Request, res: Response) {
+  const map: Record<string, string> = {
+    auth: 'auth_activity_log', admin: 'admin_activity_log', data: 'data_activity_log', system: 'system_activity_log',
+  };
+  const table = map[String(req.params.type)];
+  if (!table) return err(res, 'Invalid log type', 400);
+  const { data, error: e } = await supabase.from(table).select('action').not('action', 'is', null).limit(5000);
+  if (e) return err(res, e.message, 500);
+  const actions = Array.from(new Set((data ?? []).map((r: any) => r.action).filter(Boolean))).sort();
+  return ok(res, actions);
+}
