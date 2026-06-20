@@ -163,6 +163,7 @@ export async function list(req: Request, res: Response) {
 
   // Filters (Phase 13 — dropped cols removed from filter set)
   if (req.query.instructor_type) q = q.eq('instructor_type', req.query.instructor_type);
+  if (req.query.teaching_mode) q = q.eq('teaching_mode', req.query.teaching_mode as string);
   if (req.query.approval_status) q = q.eq('approval_status', req.query.approval_status);
   if (req.query.is_verified === 'true')  q = q.eq('is_verified', true);
   else if (req.query.is_verified === 'false') q = q.eq('is_verified', false);

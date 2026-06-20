@@ -46,7 +46,14 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['referral_code'] });
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase.from('users').select('id').or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%`).limit(1000);
+      const ids = (us || []).map((u: any) => u.id);
+      q = q.or(`referral_code.ilike.%${term}%,student_id.in.(${ids.length ? ids.join(',') : 0})`);
+    }
+  }
   if (req.query.student_id) q = q.eq('student_id', parseInt(req.query.student_id as string));
   if (req.query.referrer_reward_type) q = q.eq('referrer_reward_type', req.query.referrer_reward_type as string);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

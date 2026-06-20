@@ -47,14 +47,16 @@ export async function list(req: Request, res: Response) {
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+  // Surface the shareable invite URL alongside the raw token.
+  const rows = (data || []).map((r: any) => ({ ...r, invite_url: r.invite_token ? `${config.frontendUrl}/chat/join/${r.invite_token}` : null }));
+  return paginated(res, rows, count || 0, page, limit);
 }
 
 // ── GET /chat-invites/:id ──
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from(TABLE).select(FK_SELECT).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Invite not found', 404);
-  return ok(res, data);
+  return ok(res, { ...data, invite_url: (data as any).invite_token ? `${config.frontendUrl}/chat/join/${(data as any).invite_token}` : null });
 }
 
 // ── POST /chat-invites ── (Generate invite link or direct invite)

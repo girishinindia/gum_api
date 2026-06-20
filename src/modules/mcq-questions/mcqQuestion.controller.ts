@@ -8,7 +8,7 @@ import { parseListParams } from '../../utils/pagination';
 import { getClientIp, generateUniqueSlug } from '../../utils/helpers';
 import { config } from '../../config';
 import { deleteImage } from '../../services/storage.service';
-import { applySearch } from '../../utils/search';
+import { applySearch, applyTranslatedSearch } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -38,7 +38,11 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('mcq_questions').select('*', { count: 'exact' });
 
-  if (search) q = applySearch(q, search, { ilike: ['code', 'slug'] });
+  if (search) q = (await applyTranslatedSearch(q, supabase, {
+    search,
+    base: ['code', 'slug'],
+    translation: { table: 'mcq_question_translations', fk: 'mcq_question_id', cols: ['question_text', 'hint_text', 'explanation_text'] },
+  })).query;
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -54,7 +58,8 @@ export async function list(req: Request, res: Response) {
   if (req.query.is_active === 'true') q = q.eq('is_active', true);
   else if (req.query.is_active === 'false') q = q.eq('is_active', false);
 
-  q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
+  const sortCol = sort === 'difficulty_level' ? 'difficulty_rank' : sort;
+  q = q.order(sortCol, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
