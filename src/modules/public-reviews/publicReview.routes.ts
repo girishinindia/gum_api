@@ -12,4 +12,8 @@ r.get('/mine',    authMiddleware, ctrl.myReview);
 r.post('/',       authMiddleware, ctrl.upsertOwn);
 r.delete('/mine', authMiddleware, ctrl.deleteOwn);
 
+// Helpful votes (any signed-in user; scoped to the caller)
+r.get('/my-helpful', authMiddleware, ctrl.myHelpful);
+r.post('/helpful',   authMiddleware, ctrl.toggleHelpful);
+
 export default r;

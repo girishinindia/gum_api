@@ -25,6 +25,26 @@ export async function list(req: Request, res: Response) {
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.badge_id) q = q.eq('badge_id', parseInt(req.query.badge_id as string));
 
+  // Search by awardee name/email or badge name (both live on joined tables).
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase
+        .from('users')
+        .select('id')
+        .or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,mobile.ilike.%${term}%`)
+        .limit(1000);
+      const { data: bs } = await supabase.from('badges').select('id').ilike('name', `%${term}%`).limit(1000);
+      const uIds = [...new Set((us || []).map((u: any) => u.id))];
+      const bIds = [...new Set((bs || []).map((b: any) => b.id))];
+      if (uIds.length === 0 && bIds.length === 0) return paginated(res, [], 0, page, limit);
+      const clauses: string[] = [];
+      if (uIds.length) clauses.push(`user_id.in.(${uIds.join(',')})`);
+      if (bIds.length) clauses.push(`badge_id.in.(${bIds.join(',')})`);
+      q = q.or(clauses.join(','));
+    }
+  }
+
   q = q.order(sortCol, { ascending }).range(offset, offset + limit - 1);
 
   const { data, count, error: e } = await q;

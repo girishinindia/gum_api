@@ -181,3 +181,74 @@ export async function deleteOwn(req: Request, res: Response) {
   await recalculateRatings(item_type, item_id);
   return ok(res, null, 'Review removed');
 }
+
+// ── POST /public-reviews/helpful  { review_id } ── (auth, toggles the caller's own helpful vote)
+export async function toggleHelpful(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const reviewId = parseInt(req.body.review_id);
+  if (!reviewId) return err(res, 'review_id is required', 400);
+
+  // The review must exist, be published and not deleted.
+  const { data: review } = await supabase
+    .from('reviews')
+    .select('id')
+    .eq('id', reviewId)
+    .eq('status', 'published')
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!review) return err(res, 'Review not found', 404);
+
+  // Toggle: a second click removes the vote.
+  const { data: existing } = await supabase
+    .from('review_helpfulness')
+    .select('id')
+    .eq('review_id', reviewId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  let voted: boolean;
+  if (existing) {
+    await supabase.from('review_helpfulness').delete().eq('id', existing.id);
+    voted = false;
+  } else {
+    const { error: e } = await supabase
+      .from('review_helpfulness')
+      .insert({ review_id: reviewId, user_id: userId, is_helpful: true });
+    if (e) return err(res, e.message, 500);
+    voted = true;
+  }
+
+  // Recompute helpful_count = number of helpful votes.
+  const { count } = await supabase
+    .from('review_helpfulness')
+    .select('id', { count: 'exact', head: true })
+    .eq('review_id', reviewId)
+    .eq('is_helpful', true);
+  await supabase.from('reviews').update({ helpful_count: count || 0 }).eq('id', reviewId);
+
+  return ok(res, { review_id: reviewId, helpful_count: count || 0, viewer_has_voted: voted }, voted ? 'Marked helpful' : 'Vote removed');
+}
+
+// ── GET /public-reviews/my-helpful?item_type=&item_id= ── (auth) review ids the caller marked helpful
+export async function myHelpful(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const item_type = req.query.item_type as string;
+  const item_id = parseInt(req.query.item_id as string);
+  if (!item_type || !item_id) return err(res, 'item_type and item_id are required', 400);
+
+  const { data: revs } = await supabase
+    .from('reviews')
+    .select('id')
+    .eq('item_type', item_type)
+    .eq('item_id', item_id);
+  const ids = (revs || []).map((r: any) => r.id);
+  if (!ids.length) return ok(res, []);
+
+  const { data: votes } = await supabase
+    .from('review_helpfulness')
+    .select('review_id')
+    .eq('user_id', userId)
+    .eq('is_helpful', true)
+    .in('review_id', ids);
+  return ok(res, [...new Set((votes || []).map((v: any) => v.review_id))]);
+}

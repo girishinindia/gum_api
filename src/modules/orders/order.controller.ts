@@ -11,7 +11,7 @@ import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 const TABLE = 'orders';
 const CACHE_KEY = 'orders:all';
 
-const FK_SELECT = '*, users!orders_user_id_fkey(full_name, email), coupons(coupon_code, title), instructor_promotions(promo_code, title)';
+const FK_SELECT = '*, users!orders_user_id_fkey(full_name, email), coupons(coupon_code, title), instructor_promotions(promo_code, promotion_name)';
 
 const clearCache = async () => { await redis.del(CACHE_KEY); };
 

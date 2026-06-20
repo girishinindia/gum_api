@@ -5,7 +5,6 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
-import { applySearch } from '../../utils/search';
 import { toIntOrNull, toNumOrNull } from '../../utils/coerce';
 
 const TABLE = 'instructor_earnings';
@@ -45,7 +44,24 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select(FK_SELECT, { count: 'exact' });
 
-    if (search) q = applySearch(q, search, { ilike: ['item_type', 'earning_status'] });
+    if (search) {
+      // Name-aware: match item_type/earning_status OR any earning whose instructor/student matches.
+      const term = String(search).replace(/[%_\\(),]/g, '').trim();
+      if (term) {
+        const { data: us } = await supabase
+          .from('users')
+          .select('id')
+          .or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,mobile.ilike.%${term}%`)
+          .limit(1000);
+        const ids = (us || []).map((u: any) => u.id);
+        const clauses = [`item_type.ilike.%${term}%`, `earning_status.ilike.%${term}%`];
+        if (ids.length) {
+          clauses.push(`instructor_id.in.(${ids.join(',')})`);
+          clauses.push(`student_id.in.(${ids.join(',')})`);
+        }
+        q = q.or(clauses.join(','));
+      }
+    }
     if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
     if (req.query.order_id) q = q.eq('order_id', parseInt(req.query.order_id as string));
     if (req.query.item_type) q = q.eq('item_type', req.query.item_type as string);

@@ -28,7 +28,19 @@ export async function list(req: Request, res: Response) {
 
     let q = supabase.from(TABLE).select('*, users!inner(full_name, email)', { count: 'exact' });
 
-    if (search) q = q.or(`notification_type.ilike.%${search}%,users.full_name.ilike.%${search}%,users.email.ilike.%${search}%`);
+    if (search) {
+      // Resolve matching users first — embedded (users.*) columns can't go inside a base .or().
+      const term = String(search).replace(/[%_\\(),]/g, '').trim();
+      if (term) {
+        const { data: us } = await supabase
+          .from('users')
+          .select('id')
+          .or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,mobile.ilike.%${term}%`)
+          .limit(1000);
+        const ids = (us || []).map((u: any) => u.id);
+        q = q.or(`notification_type.ilike.%${term}%,user_id.in.(${ids.length ? ids.join(',') : 0})`);
+      }
+    }
     if (req.query.user_id) q = q.eq('user_id', Number(req.query.user_id));
     if (req.query.notification_type) q = q.eq('notification_type', String(req.query.notification_type));
     if (req.query.is_active === 'true') q = q.eq('is_active', true);
