@@ -455,3 +455,48 @@ export async function listMine(req: Request, res: Response) {
 
   return ok(res, enriched);
 }
+
+// ── POST /chat-rooms/:id/leave ── (member self-leave; group only, non-owner)
+// Soft-leave: deactivate the caller's own membership so they stop receiving the
+// room. Re-joining later via an invite reactivates the same row (mirrors
+// chatInvite.accept, which flips is_active back to true on an existing row).
+export async function leaveRoom(req: Request, res: Response) {
+  const me = req.user!.id;
+  const roomId = toIntOrNull(req.params.id);
+  if (!roomId) return err(res, 'Invalid room id', 400);
+
+  // Room must exist
+  const { data: room } = await supabase
+    .from(TABLE)
+    .select('id, room_type, created_by')
+    .eq('id', roomId)
+    .maybeSingle();
+  if (!room) return err(res, 'Room not found', 404);
+
+  // Can't "leave" a 1:1 direct conversation
+  if (room.room_type === 'direct') return err(res, "You can't leave a direct conversation", 400);
+
+  // The owner can't leave their own group (transfer ownership or delete instead)
+  if (room.created_by === me) {
+    return err(res, "As the group owner you can't leave — transfer ownership or delete the group", 400);
+  }
+
+  // Must currently be an active member
+  const { data: membership } = await supabase
+    .from(MEMBER_TABLE)
+    .select('id, is_active')
+    .eq('room_id', roomId)
+    .eq('user_id', me)
+    .maybeSingle();
+  if (!membership || !membership.is_active) return err(res, 'You are not a member of this group', 400);
+
+  // Soft-leave — keep the row so an invite can cleanly reactivate it later
+  const { error: e } = await supabase
+    .from(MEMBER_TABLE)
+    .update({ is_active: false })
+    .eq('id', membership.id);
+  if (e) return err(res, e.message, 500);
+
+  clearCache();
+  return ok(res, { room_id: roomId }, 'You left the group');
+}

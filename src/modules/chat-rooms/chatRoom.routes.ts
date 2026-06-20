@@ -15,6 +15,8 @@ r.get('/:id', ctrl.getById);
 r.use(authMiddleware, attachPermissions());
 // 1:1 DM — any authenticated user (no chat_room:create permission needed)
 r.post('/direct', ctrl.createOrGetDirect);
+// Member self-leave (group only, non-owner). Auth required; no admin permission.
+r.post('/:id/leave', ctrl.leaveRoom);
 r.post('/batch-room', requirePermission('chat_room', 'create'), ctrl.createBatchRoom);
 r.post('/:id/sync-batch', requirePermission('chat_room', 'update'), ctrl.syncBatchMembers);
 r.post('/', requirePermission('chat_room', 'create'), ctrl.create);
