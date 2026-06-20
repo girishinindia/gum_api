@@ -190,6 +190,9 @@ export async function getById(req: Request, res: Response) {
 // POST /instructor-profiles
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+  // parseBody() strips user_id (correct for update/upsert, which must not re-point
+  // an existing profile) — but a create legitimately needs it from the body.
+  if (req.body?.user_id != null && req.body.user_id !== '') body.user_id = parseInt(String(req.body.user_id));
 
   const rateErr = validateRates(body);
   if (rateErr) return err(res, rateErr, 400);

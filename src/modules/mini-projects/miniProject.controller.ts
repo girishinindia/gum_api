@@ -67,8 +67,8 @@ export async function list(req: Request, res: Response) {
 
   if (req.query.chapter_id) q = q.eq('chapter_id', parseInt(req.query.chapter_id as string));
   if (req.query.difficulty_level) q = q.eq('difficulty_level', req.query.difficulty_level as string);
-  if (req.query.is_active === 'true') q = q.eq('is_active', true);
-  else if (req.query.is_active === 'false') q = q.eq('is_active', false);
+  if (req.query.status === 'active' || req.query.is_active === 'true') q = q.eq('is_active', true);
+  else if (req.query.status === 'inactive' || req.query.is_active === 'false') q = q.eq('is_active', false);
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 
