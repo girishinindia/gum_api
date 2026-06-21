@@ -145,14 +145,50 @@ export async function listPublic(req: Request, res: Response) {
 }
 
 // GET /instructor-profiles?page=1&limit=20&search=foo&sort=instructor_code&order=asc
+// Attach users + specialization names by id. The list SELECT is '*' (no embeds,
+// to avoid PostgREST FK-name issues), so the admin's profile.users.full_name /
+// profile.specializations.name would be empty without this enrichment.
+async function enrichProfiles(rows: any[]): Promise<any[]> {
+  if (!rows.length) return rows;
+  const userIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+  const specIds = [...new Set(rows.flatMap((r) => [r.specialization_id, r.secondary_specialization_id]).filter(Boolean))];
+  const userMap: Record<number, any> = {};
+  const specMap: Record<number, any> = {};
+  if (userIds.length) {
+    const { data: us } = await supabase.from('users').select('id, full_name, email, avatar_url').in('id', userIds);
+    for (const u of (us || []) as any[]) userMap[u.id] = u;
+  }
+  if (specIds.length) {
+    const { data: sp } = await supabase.from('specializations').select('id, name').in('id', specIds);
+    for (const s of (sp || []) as any[]) specMap[s.id] = s;
+  }
+  return rows.map((r) => ({
+    ...r,
+    users: r.user_id ? (userMap[r.user_id] ?? null) : null,
+    specializations: r.specialization_id ? (specMap[r.specialization_id] ?? null) : null,
+    secondary_specializations: r.secondary_specialization_id ? (specMap[r.secondary_specialization_id] ?? null) : null,
+  }));
+}
+
 export async function list(req: Request, res: Response) {
   const { page, limit, offset, search, sort, ascending } = parseListParams(req, { sort: 'instructor_code' });
 
   let q = supabase.from('instructor_profiles').select(SELECT_QUERY, { count: 'exact' });
 
-  // Search (by instructor code — the SELECT has no embedded `user` relation,
-  // so a `user.full_name` filter would 500 from PostgREST; match listPublic).
-  if (search) q = q.ilike('instructor_code', `%${search}%`);
+  // Search by instructor code OR the instructor's user (name/email/mobile),
+  // resolved to user ids first (the base SELECT has no embedded user relation).
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      const { data: us } = await supabase
+        .from('users')
+        .select('id')
+        .or(`full_name.ilike.%${term}%,first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%,mobile.ilike.%${term}%`)
+        .limit(1000);
+      const ids = (us || []).map((u: any) => u.id);
+      q = q.or(`instructor_code.ilike.%${term}%,user_id.in.(${ids.length ? ids.join(',') : 0})`);
+    }
+  }
 
   // Soft-delete filter
   if (req.query.show_deleted === 'true') {
@@ -177,14 +213,16 @@ export async function list(req: Request, res: Response) {
 
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
-  return paginated(res, data || [], count || 0, page, limit);
+  const enriched = await enrichProfiles(data || []);
+  return paginated(res, enriched, count || 0, page, limit);
 }
 
 // GET /instructor-profiles/:id
 export async function getById(req: Request, res: Response) {
   const { data, error: e } = await supabase.from('instructor_profiles').select(SELECT_QUERY).eq('id', req.params.id).single();
   if (e || !data) return err(res, 'Instructor profile not found', 404);
-  return ok(res, data);
+  const [enriched] = await enrichProfiles([data]);
+  return ok(res, enriched);
 }
 
 // POST /instructor-profiles
