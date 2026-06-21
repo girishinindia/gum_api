@@ -55,7 +55,7 @@ export async function list(req: Request, res: Response) {
     includeDeleted: req.query.show_deleted === 'true',
   })).query;
   if (req.query.course_id) q = q.eq('course_id', parseInt(req.query.course_id as string));
-  if (req.query.batch_status) q = q.eq('batch_status', req.query.batch_status as string);
+  if (req.query.batch_status && req.query.batch_status !== 'all') q = q.eq('batch_status', req.query.batch_status as string);
   else if (req.query.batch_status !== 'all' && req.query.show_deleted !== 'true') q = q.neq('batch_status', 'cancelled'); // hide cancelled by default; batch_status=all shows them
   if (req.query.batch_owner) q = q.eq('batch_owner', req.query.batch_owner as string);
   if (req.query.instructor_id) q = q.eq('instructor_id', parseInt(req.query.instructor_id as string));
