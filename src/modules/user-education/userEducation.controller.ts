@@ -7,7 +7,6 @@ import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
 import { createUserEducationSchema, updateUserEducationSchema } from './userEducation.schema';
-import { applySearch } from '../../utils/search';
 
 function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
@@ -40,7 +39,15 @@ export async function list(req: Request, res: Response) {
 
   // Search
   if (search) {
-    q = applySearch(q, search, { ilike: ['institution_name', 'field_of_study', 'board_or_university', 'specialization'] });
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      // Also match the joined education-level name (the most prominent column).
+      const { data: lv } = await supabase.from('education_levels').select('id').ilike('name', `%${term}%`).limit(1000);
+      const lvIds = (lv || []).map((r: any) => r.id);
+      const clauses = ['institution_name', 'board_or_university', 'field_of_study', 'specialization', 'description'].map((c) => `${c}.ilike.%${term}%`);
+      if (lvIds.length) clauses.push(`education_level_id.in.(${lvIds.join(',')})`);
+      q = q.or(clauses.join(','));
+    }
   }
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
@@ -217,7 +224,15 @@ export async function listMyEducation(req: Request, res: Response) {
   }
   if (req.query.education_level_id) q = q.eq('education_level_id', Number(req.query.education_level_id));
   if (search) {
-    q = applySearch(q, search, { ilike: ['institution_name', 'field_of_study', 'board_or_university', 'specialization'] });
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      // Also match the joined education-level name (the most prominent column).
+      const { data: lv } = await supabase.from('education_levels').select('id').ilike('name', `%${term}%`).limit(1000);
+      const lvIds = (lv || []).map((r: any) => r.id);
+      const clauses = ['institution_name', 'board_or_university', 'field_of_study', 'specialization', 'description'].map((c) => `${c}.ilike.%${term}%`);
+      if (lvIds.length) clauses.push(`education_level_id.in.(${lvIds.join(',')})`);
+      q = q.or(clauses.join(','));
+    }
   }
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
 

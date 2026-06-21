@@ -22,7 +22,15 @@ export async function list(req: Request, res: Response) {
   if (req.query.user_id) q = q.eq('user_id', Number(req.query.user_id));
   if (req.query.skill_id) q = q.eq('skill_id', Number(req.query.skill_id));
   if (req.query.proficiency_level) q = q.eq('proficiency_level', req.query.proficiency_level);
-  if (search) q = q.or(`skill:skills.name.ilike.%${search}%`);
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      // Skill name lives on the joined `skills` table — resolve ids first.
+      const { data: sk } = await supabase.from('skills').select('id').ilike('name', `%${term}%`).limit(1000);
+      const skIds = (sk || []).map((r: any) => r.id);
+      q = q.or(`proficiency_level.ilike.%${term}%,skill_id.in.(${skIds.length ? skIds.join(',') : 0})`);
+    }
+  }
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
@@ -98,7 +106,15 @@ export async function listMy(req: Request, res: Response) {
   let q = supabase.from('user_skills').select(SELECT_WITH_JOINS, { count: 'exact' }).eq('user_id', userId);
   if (req.query.show_deleted === 'true') q = q.not('deleted_at', 'is', null);
   else q = q.is('deleted_at', null);
-  if (search) q = q.or(`skill:skills.name.ilike.%${search}%`);
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '').trim();
+    if (term) {
+      // Skill name lives on the joined `skills` table — resolve ids first.
+      const { data: sk } = await supabase.from('skills').select('id').ilike('name', `%${term}%`).limit(1000);
+      const skIds = (sk || []).map((r: any) => r.id);
+      q = q.or(`proficiency_level.ilike.%${term}%,skill_id.in.(${skIds.length ? skIds.join(',') : 0})`);
+    }
+  }
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
   if (e) return err(res, e.message, 500);
