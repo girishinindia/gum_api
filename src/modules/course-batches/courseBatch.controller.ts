@@ -184,6 +184,7 @@ export async function getBySlug(req: Request, res: Response) {
     .select(FK_SELECT)
     .eq('slug', slug)
     .eq('is_active', true)
+    .neq('batch_status', 'cancelled') // cancelled batches are not publicly viewable
     .is('deleted_at', null)
     .single();
   if (e1 || !batch) return err(res, 'Course batch not found', 404);
