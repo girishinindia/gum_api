@@ -73,6 +73,22 @@ export async function create(req: Request, res: Response) {
   const { data: bundle } = await supabase.from('bundles').select('id, code, name, max_courses').eq('id', body.bundle_id).single();
   if (!bundle) return err(res, 'Bundle not found', 404);
 
+  // Verify course exists
+  const { data: course } = await supabase.from('courses').select('id, code, name').eq('id', body.course_id).single();
+  if (!course) return err(res, 'Course not found', 404);
+
+  // The unique index on (bundle_id, course_id) spans soft-deleted rows, so a
+  // previously-removed course must be REACTIVATED, not re-inserted (which 23505'd).
+  const { data: existing } = await supabase
+    .from('bundle_courses')
+    .select('id, is_active, deleted_at')
+    .eq('bundle_id', body.bundle_id)
+    .eq('course_id', body.course_id)
+    .maybeSingle();
+  if (existing && !existing.deleted_at && existing.is_active) {
+    return err(res, 'This course is already assigned to this bundle', 409);
+  }
+
   // Enforce the bundle's Max Courses cap (count active, non-deleted links).
   if (bundle.max_courses != null && body.is_active !== false) {
     const { count } = await supabase
@@ -86,22 +102,22 @@ export async function create(req: Request, res: Response) {
     }
   }
 
-  // Verify course exists
-  const { data: course } = await supabase.from('courses').select('id, code, name').eq('id', body.course_id).single();
-  if (!course) return err(res, 'Course not found', 404);
-
   // Set audit field
   body.created_by = req.user!.id;
 
-  const { data, error: e } = await supabase.from('bundle_courses').insert(body).select(SELECT_FIELDS).single();
+  // Reactivate a removed/inactive link, otherwise insert a fresh one.
+  const result = existing
+    ? await supabase.from('bundle_courses').update({ deleted_at: null, is_active: body.is_active !== false, display_order: body.display_order ?? null }).eq('id', existing.id).select(SELECT_FIELDS).single()
+    : await supabase.from('bundle_courses').insert(body).select(SELECT_FIELDS).single();
+  const { data, error: e } = result;
   if (e) {
     if (e.code === '23505') return err(res, 'This course is already assigned to this bundle', 409);
     return err(res, e.message, 500);
   }
 
   await clearCache(body.bundle_id);
-  logAdmin({ actorId: req.user!.id, action: 'bundle_course_created', targetType: 'bundle_course', targetId: data.id, targetName: `${bundle.name || bundle.code} - ${course.name || course.code}`, ip: getClientIp(req) });
-  return ok(res, data, 'Bundle course link created', 201);
+  logAdmin({ actorId: req.user!.id, action: existing ? 'bundle_course_reactivated' : 'bundle_course_created', targetType: 'bundle_course', targetId: data.id, targetName: `${bundle.name || bundle.code} - ${course.name || course.code}`, ip: getClientIp(req) });
+  return ok(res, data, existing ? 'Course re-assigned to bundle' : 'Bundle course link created', existing ? 200 : 201);
 }
 
 // PATCH /bundle-courses/:id
