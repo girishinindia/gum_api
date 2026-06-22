@@ -154,6 +154,18 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'State not found', 404);
   if (old.deleted_at) return err(res, 'State is already in trash', 400);
 
+  // Block trashing a state that still owns city records (mirror of the country
+  // guard). cities.state_id is RESTRICT, so we guard soft-delete too so a
+  // state with cities can't be trashed and leave its cities orphaned.
+  const { count: cityCount } = await supabase
+    .from('cities')
+    .select('id', { count: 'exact', head: true })
+    .eq('state_id', id)
+    .is('deleted_at', null);
+  if (cityCount && cityCount > 0) {
+    return err(res, `Cannot delete: this state has ${cityCount === 1 ? '1 city' : `${cityCount} cities`}. Delete or reassign them first.`, 409);
+  }
+
   const { data, error: e } = await supabase
     .from('states')
     .update({ deleted_at: new Date().toISOString(), is_active: false })
@@ -192,6 +204,17 @@ export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('states').select('name, country_id').eq('id', id).single();
   if (!old) return err(res, 'State not found', 404);
+
+  // Pre-check the cities FK (RESTRICT) so we return a clean, counted 409 instead
+  // of a raw DB error. Counts ALL cities (incl. trashed) since the FK references
+  // the rows regardless of soft-delete state.
+  const { count: cityCount } = await supabase
+    .from('cities')
+    .select('id', { count: 'exact', head: true })
+    .eq('state_id', id);
+  if (cityCount && cityCount > 0) {
+    return err(res, `Cannot permanently delete: this state still has ${cityCount === 1 ? '1 city' : `${cityCount} cities`}. Delete those first.`, 409);
+  }
 
   const { error: e } = await supabase.from('states').delete().eq('id', id);
   if (e) {
