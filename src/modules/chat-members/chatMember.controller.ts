@@ -33,7 +33,11 @@ export async function list(req: Request, res: Response) {
   if (req.query.room_id) q = q.eq('room_id', parseInt(req.query.room_id as string));
   if (req.query.user_id) q = q.eq('user_id', parseInt(req.query.user_id as string));
   if (req.query.role) q = q.eq('role', req.query.role as string);
-  if (req.query.is_active !== undefined) q = q.eq('is_active', req.query.is_active === 'true');
+  // Default to current (active) members only — a member who left is kept as
+  // is_active=false and must not show in the moderation list. Pass ?is_active=all
+  // to include them, or ?is_active=false to see only those who left.
+  if (req.query.is_active === undefined) q = q.eq('is_active', true);
+  else if (req.query.is_active !== 'all') q = q.eq('is_active', req.query.is_active === 'true');
 
   q = q.order(sort, { ascending }).range(offset, offset + limit - 1);
   const { data, count, error: e } = await q;
@@ -58,14 +62,16 @@ export async function create(req: Request, res: Response) {
   const { data: room } = await supabase.from('chat_rooms').select('id, max_members').eq('id', body.room_id).single();
   if (!room) return err(res, 'Chat room not found', 404);
 
-  // Check if already a member
+  // A (room_id, user_id) row may already exist — possibly is_active=false because
+  // the user left. Reactivate that row instead of rejecting; only block if the
+  // person is still an active member.
   const { data: existing } = await supabase
     .from(TABLE)
-    .select('id')
+    .select('id, is_active')
     .eq('room_id', body.room_id)
     .eq('user_id', body.user_id)
-    .single();
-  if (existing) return err(res, 'User is already a member of this room', 400);
+    .maybeSingle();
+  if (existing && existing.is_active) return err(res, 'User is already a member of this room', 400);
 
   // Check max members
   if (room.max_members) {
@@ -77,7 +83,10 @@ export async function create(req: Request, res: Response) {
   body.role = body.role || 'member';
   body.is_active = true;
 
-  const { data, error: e } = await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
+  // Reactivate a prior (left) membership, otherwise insert a fresh row.
+  const { data, error: e } = existing
+    ? await supabase.from(TABLE).update({ is_active: true, role: body.role, invited_by: body.invited_by }).eq('id', existing.id).select(FK_SELECT).single()
+    : await supabase.from(TABLE).insert(body).select(FK_SELECT).single();
   if (e) return err(res, e.message, 500);
 
   clearCache();
@@ -124,25 +133,29 @@ export async function bulkAdd(req: Request, res: Response) {
   const { data: room } = await supabase.from('chat_rooms').select('id').eq('id', room_id).single();
   if (!room) return err(res, 'Chat room not found', 404);
 
-  // Get existing members
-  const { data: existing } = await supabase.from(TABLE).select('user_id').eq('room_id', room_id);
-  const existingIds = new Set((existing || []).map((m: any) => m.user_id));
+  // Existing rows in any state: active ones are skipped, left ones (is_active=false)
+  // are reactivated, and the rest are inserted fresh.
+  const { data: existing } = await supabase.from(TABLE).select('id, user_id, is_active').eq('room_id', room_id);
+  const activeIds = new Set((existing || []).filter((m: any) => m.is_active).map((m: any) => m.user_id));
+  const leftByUser = new Map((existing || []).filter((m: any) => !m.is_active).map((m: any) => [m.user_id, m.id]));
 
-  const newUserIds = user_ids.filter((uid: number) => !existingIds.has(uid));
-  if (newUserIds.length === 0) return ok(res, { added: 0 }, 'All users are already members');
+  const toReactivate = user_ids.filter((uid: number) => leftByUser.has(uid));
+  const toInsertIds = user_ids.filter((uid: number) => !activeIds.has(uid) && !leftByUser.has(uid));
+  if (toReactivate.length === 0 && toInsertIds.length === 0) return ok(res, { added: 0 }, 'All users are already members');
 
-  const inserts = newUserIds.map((uid: number) => ({
-    room_id,
-    user_id: uid,
-    role: 'member',
-    invited_by: req.user!.id,
-    is_active: true,
-  }));
+  if (toReactivate.length > 0) {
+    const ids = toReactivate.map((uid: number) => leftByUser.get(uid));
+    const { error: re } = await supabase.from(TABLE).update({ is_active: true }).in('id', ids as any);
+    if (re) return err(res, re.message, 500);
+  }
+  if (toInsertIds.length > 0) {
+    const inserts = toInsertIds.map((uid: number) => ({ room_id, user_id: uid, role: 'member', invited_by: req.user!.id, is_active: true }));
+    const { error: ie } = await supabase.from(TABLE).insert(inserts);
+    if (ie) return err(res, ie.message, 500);
+  }
 
-  const { error: e } = await supabase.from(TABLE).insert(inserts);
-  if (e) return err(res, e.message, 500);
-
+  const added = toReactivate.length + toInsertIds.length;
   clearCache();
-  logAdmin({ actorId: req.user!.id, action: 'chat_members_bulk_added', targetType: 'chat_room', targetId: room_id, targetName: `${newUserIds.length} members`, ip: getClientIp(req) });
-  return ok(res, { added: newUserIds.length, skipped: user_ids.length - newUserIds.length }, `${newUserIds.length} members added`, 201);
+  logAdmin({ actorId: req.user!.id, action: 'chat_members_bulk_added', targetType: 'chat_room', targetId: room_id, targetName: `${added} members`, ip: getClientIp(req) });
+  return ok(res, { added, skipped: user_ids.length - added }, `${added} members added`, 201);
 }

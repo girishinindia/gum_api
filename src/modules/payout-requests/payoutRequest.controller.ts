@@ -86,7 +86,9 @@ export async function create(req: Request, res: Response) {
   try {
     const body = parseBody(req);
     if (!body.instructor_id) return err(res, 'instructor_id is required', 400);
-    if (!body.requested_amount) return err(res, 'requested_amount is required', 400);
+    if (body.requested_amount == null || isNaN(Number(body.requested_amount)) || Number(body.requested_amount) <= 0) {
+      return err(res, 'requested_amount must be greater than 0', 400);
+    }
 
     body.created_by = req.user!.id;
     // request_number is NOT NULL + UNIQUE with no DB default — generate it.
