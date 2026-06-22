@@ -146,6 +146,19 @@ export async function softDelete(req: Request, res: Response) {
   if (!old) return err(res, 'Country not found', 404);
   if (old.deleted_at) return err(res, 'Country is already in trash', 400);
 
+  // Block deletion while the country still owns state records — the user must
+  // remove/reassign those first. (The states.country_id FK is RESTRICT, so the
+  // DB never cascades; we guard soft-delete too so a country with geography
+  // can't be trashed and leave its states orphaned.)
+  const { count: stateCount } = await supabase
+    .from('states')
+    .select('id', { count: 'exact', head: true })
+    .eq('country_id', id)
+    .is('deleted_at', null);
+  if (stateCount && stateCount > 0) {
+    return err(res, `Cannot delete: this country has ${stateCount} state(s). Delete or reassign them first.`, 409);
+  }
+
   const { data, error: e } = await supabase
     .from('countries')
     .update({ deleted_at: new Date().toISOString(), is_active: false })
@@ -184,6 +197,17 @@ export async function remove(req: Request, res: Response) {
   const id = parseInt(req.params.id);
   const { data: old } = await supabase.from('countries').select('name, flag_image').eq('id', id).single();
   if (!old) return err(res, 'Country not found', 404);
+
+  // Hard delete is RESTRICTed by the states FK — pre-check so we return a clean
+  // 409 instead of a raw DB error. Count ALL states (incl. trashed) since the
+  // FK references the rows regardless of their soft-delete state.
+  const { count: stateCount } = await supabase
+    .from('states')
+    .select('id', { count: 'exact', head: true })
+    .eq('country_id', id);
+  if (stateCount && stateCount > 0) {
+    return err(res, `Cannot permanently delete: this country still has ${stateCount} state(s). Delete those first.`, 409);
+  }
 
   if (old.flag_image) { try { await deleteImage(extractBunnyPath(old.flag_image), old.flag_image); } catch {} }
 
