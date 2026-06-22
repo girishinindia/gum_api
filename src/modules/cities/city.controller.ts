@@ -68,6 +68,7 @@ export async function getById(req: Request, res: Response) {
 // POST /cities
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+  if (typeof body.name === 'string') body.name = body.name.trim();
 
   if (body.is_active === false && !hasPermission(req, 'city', 'activate')) {
     return err(res, 'Permission denied: city:activate required to create inactive city', 403);
@@ -76,6 +77,13 @@ export async function create(req: Request, res: Response) {
   // Verify state exists
   const { data: state } = await supabase.from('states').select('id').eq('id', body.state_id).single();
   if (!state) return err(res, 'State not found', 404);
+
+  // Case-insensitive duplicate guard within the state (the DB unique index is
+  // case-sensitive, so "Surat" vs "surat"/extra spaces would otherwise slip through).
+  if (body.name) {
+    const { data: dup } = await supabase.from('cities').select('id').eq('state_id', body.state_id).ilike('name', body.name).is('deleted_at', null).maybeSingle();
+    if (dup) return err(res, 'A city with this name already exists in this state', 409);
+  }
 
   const { data, error: e } = await supabase.from('cities').insert(body).select('*, states(name, state_code, country_id, countries(name, iso2))').single();
   if (e) {
@@ -97,6 +105,7 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'City not found', 404);
 
   const updates = parseBody(req);
+  if (typeof updates.name === 'string') updates.name = updates.name.trim();
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {
     if (!hasPermission(req, 'city', 'activate')) {
@@ -108,6 +117,14 @@ export async function update(req: Request, res: Response) {
   if (updates.state_id && updates.state_id !== old.state_id) {
     const { data: state } = await supabase.from('states').select('id').eq('id', updates.state_id).single();
     if (!state) return err(res, 'State not found', 404);
+  }
+
+  // Case-insensitive duplicate guard within the (possibly new) state, excluding self.
+  const targetStateId = updates.state_id ?? old.state_id;
+  const targetName = (updates.name ?? old.name) as string | null;
+  if (targetName) {
+    const { data: dup } = await supabase.from('cities').select('id').eq('state_id', targetStateId).ilike('name', targetName).is('deleted_at', null).neq('id', id).maybeSingle();
+    if (dup) return err(res, 'A city with this name already exists in this state', 409);
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

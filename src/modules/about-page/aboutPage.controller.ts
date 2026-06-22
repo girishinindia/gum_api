@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../../config/supabase';
 import { ok, err } from '../../utils/response';
+import { revalidateWeb } from '../../utils/revalidate';
 
 const TABLE = 'about_page';
 const FIELDS = [
@@ -30,5 +31,6 @@ export async function update(req: Request, res: Response) {
 
   const { data, error: e } = await supabase.from(TABLE).upsert(row, { onConflict: 'id' }).select('*').single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('about-page');
   return ok(res, data, 'About page updated');
 }

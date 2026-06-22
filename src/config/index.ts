@@ -139,4 +139,18 @@ export const config = {
     serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '',
     projectId:          process.env.FIREBASE_PROJECT_ID           || '',
   },
+
+  /**
+   * Phase 46 — On-demand revalidation of the public site (gum_web).
+   * When an admin saves CMS / people content (About, Homepage, Team,
+   * Careers, instructor activation), the API pings gum_web's
+   * POST /api/revalidate so the change shows immediately instead of after
+   * the ISR window. Both apps must share REVALIDATE_SECRET; WEB_BASE_URL is
+   * the public site origin (e.g. https://growupmore.com). When either is
+   * unset, revalidation silently no-ops (dev / local).
+   */
+  web: {
+    baseUrl: (process.env.WEB_BASE_URL || process.env.PUBLIC_WEB_URL || '').replace(/\/+$/, ''),
+    revalidateSecret: process.env.REVALIDATE_SECRET || '',
+  },
 } as const;

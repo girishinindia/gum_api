@@ -111,7 +111,12 @@ export async function list(req: Request, res: Response) {
 
   let q = supabase.from('category_translations').select('*, categories(code, slug), languages(name, native_name, iso_code)', { count: 'exact' });
 
-  if (search) q = q.textSearch('search_vector', search, { type: 'plain', config: 'simple' });
+  // Precise name/description search — the search_vector full-text match misses
+  // common terms and is empty when the vector isn't populated.
+  if (search) {
+    const term = String(search).replace(/[%_\\(),]/g, '');
+    if (term) q = q.or(`name.ilike.%${term}%,description.ilike.%${term}%`);
+  }
   if (req.query.category_id) q = q.eq('category_id', req.query.category_id);
   if (req.query.language_id) q = q.eq('language_id', req.query.language_id);
   if (req.query.is_active === 'true') q = q.eq('is_active', true);

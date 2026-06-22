@@ -6,6 +6,7 @@ import { logAdmin } from '../../services/activityLog.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { getClientIp } from '../../utils/helpers';
+import { revalidateWeb } from '../../utils/revalidate';
 
 const CACHE_KEY = 'instructor_profiles:all';
 const clearCache = async () => {
@@ -292,6 +293,7 @@ export async function create(req: Request, res: Response) {
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'instructor_profile_created', targetType: 'instructor_profile', targetId: data.id, targetName: data.instructor_code, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:create');
   return ok(res, data, 'Instructor profile created', 201);
 }
 
@@ -364,6 +366,7 @@ export async function update(req: Request, res: Response) {
   await clearCache();
 
   logAdmin({ actorId: req.user!.id, action: 'instructor_profile_updated', targetType: 'instructor_profile', targetId: id, targetName: old.instructor_code, changes, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:update');
   return ok(res, data, 'Instructor profile updated');
 }
 
@@ -382,6 +385,7 @@ export async function softDelete(req: Request, res: Response) {
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'instructor_profile_soft_deleted', targetType: 'instructor_profile', targetId: id, targetName: old.instructor_code, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:delete');
   return ok(res, data, 'Instructor profile moved to trash');
 }
 
@@ -400,6 +404,7 @@ export async function restore(req: Request, res: Response) {
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'instructor_profile_restored', targetType: 'instructor_profile', targetId: id, targetName: old.instructor_code, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:restore');
   return ok(res, data, 'Instructor profile restored');
 }
 
@@ -414,6 +419,7 @@ export async function remove(req: Request, res: Response) {
 
   await clearCache();
   logAdmin({ actorId: req.user!.id, action: 'instructor_profile_deleted', targetType: 'instructor_profile', targetId: id, targetName: old.instructor_code, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:purge');
   return ok(res, null, 'Instructor profile deleted');
 }
 
@@ -469,5 +475,6 @@ export async function upsertByUserId(req: Request, res: Response) {
   }
 
   logAdmin({ actorId: req.user!.id, action, targetType: 'instructor_profile', targetId: userId, targetName: user.full_name, ip: getClientIp(req) });
+  revalidateWeb('instructor-profile:self-upsert');
   return ok(res, data, existing ? 'Profile updated' : 'Profile created');
 }

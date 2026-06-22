@@ -62,6 +62,7 @@ export async function getById(req: Request, res: Response) {
 // POST /states
 export async function create(req: Request, res: Response) {
   const body = parseBody(req);
+  if (typeof body.name === 'string') body.name = body.name.trim();
 
   if (body.is_active === false && !hasPermission(req, 'state', 'activate')) {
     return err(res, 'Permission denied: state:activate required to create inactive state', 403);
@@ -70,6 +71,13 @@ export async function create(req: Request, res: Response) {
   // Verify country exists
   const { data: country } = await supabase.from('countries').select('id').eq('id', body.country_id).single();
   if (!country) return err(res, 'Country not found', 404);
+
+  // Case-insensitive duplicate guard within the country (the DB unique index is
+  // case-sensitive, so "Gujarat" vs "gujarat"/extra spaces would otherwise slip through).
+  if (body.name) {
+    const { data: dup } = await supabase.from('states').select('id').eq('country_id', body.country_id).ilike('name', body.name).is('deleted_at', null).maybeSingle();
+    if (dup) return err(res, 'A state with this name already exists in this country', 409);
+  }
 
   const { data, error: e } = await supabase.from('states').insert(body).select('*, countries(name, iso2)').single();
   if (e) {
@@ -92,6 +100,7 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'State not found', 404);
 
   const updates = parseBody(req);
+  if (typeof updates.name === 'string') updates.name = updates.name.trim();
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {
     if (!hasPermission(req, 'state', 'activate')) {
@@ -103,6 +112,14 @@ export async function update(req: Request, res: Response) {
   if (updates.country_id && updates.country_id !== old.country_id) {
     const { data: country } = await supabase.from('countries').select('id').eq('id', updates.country_id).single();
     if (!country) return err(res, 'Country not found', 404);
+  }
+
+  // Case-insensitive duplicate guard within the (possibly new) country, excluding self.
+  const targetCountryId = updates.country_id ?? old.country_id;
+  const targetName = (updates.name ?? old.name) as string | null;
+  if (targetName) {
+    const { data: dup } = await supabase.from('states').select('id').eq('country_id', targetCountryId).ilike('name', targetName).is('deleted_at', null).neq('id', id).maybeSingle();
+    if (dup) return err(res, 'A state with this name already exists in this country', 409);
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

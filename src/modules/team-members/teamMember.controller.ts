@@ -5,6 +5,7 @@ import { hasPermission } from '../../middleware/rbac';
 import { processAndUploadImage, deleteImage } from '../../services/storage.service';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
+import { revalidateWeb } from '../../utils/revalidate';
 
 const TABLE = 'team_members';
 
@@ -91,6 +92,7 @@ export async function create(req: Request, res: Response) {
     if (uploadedUrl) { try { await deleteImage(extractBunnyPath(uploadedUrl), uploadedUrl); } catch {} }
     return err(res, e.message, 500);
   }
+  revalidateWeb('team-member:create');
   return ok(res, data, 'Team member created', 201);
 }
 
@@ -125,6 +127,7 @@ export async function update(req: Request, res: Response) {
 
   const { data, error: e } = await supabase.from(TABLE).update(updates).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('team-member:update');
   return ok(res, data, 'Team member updated');
 }
 
@@ -140,6 +143,7 @@ export async function softDelete(req: Request, res: Response) {
     .update({ deleted_at: new Date().toISOString(), is_active: false })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('team-member:delete');
   return ok(res, data, 'Team member moved to trash');
 }
 
@@ -155,6 +159,7 @@ export async function restore(req: Request, res: Response) {
     .update({ deleted_at: null, is_active: true })
     .eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('team-member:restore');
   return ok(res, data, 'Team member restored');
 }
 
@@ -168,5 +173,6 @@ export async function remove(req: Request, res: Response) {
 
   const { error: e } = await supabase.from(TABLE).delete().eq('id', id);
   if (e) return err(res, e.message, 500);
+  revalidateWeb('team-member:purge');
   return ok(res, null, 'Team member permanently deleted');
 }

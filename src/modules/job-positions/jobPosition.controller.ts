@@ -4,6 +4,7 @@ import { hasPermission } from '../../middleware/rbac';
 import { ok, err, paginated } from '../../utils/response';
 import { parseListParams } from '../../utils/pagination';
 import { generateUniqueSlug } from '../../utils/helpers';
+import { revalidateWeb } from '../../utils/revalidate';
 
 const TABLE = 'job_positions';
 
@@ -98,6 +99,7 @@ export async function create(req: Request, res: Response) {
     if (e.code === '23505') return err(res, 'A position with this slug already exists', 409);
     return err(res, e.message, 500);
   }
+  revalidateWeb('job-position:create');
   return ok(res, data, 'Position created', 201);
 }
 
@@ -128,6 +130,7 @@ export async function update(req: Request, res: Response) {
     if (e.code === '23505') return err(res, 'A position with this slug already exists', 409);
     return err(res, e.message, 500);
   }
+  revalidateWeb('job-position:update');
   return ok(res, data, 'Position updated');
 }
 
@@ -141,6 +144,7 @@ export async function softDelete(req: Request, res: Response) {
   const { data, error: e } = await supabase
     .from(TABLE).update({ deleted_at: new Date().toISOString(), is_active: false }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('job-position:delete');
   return ok(res, data, 'Position moved to trash');
 }
 
@@ -154,6 +158,7 @@ export async function restore(req: Request, res: Response) {
   const { data, error: e } = await supabase
     .from(TABLE).update({ deleted_at: null, is_active: true }).eq('id', id).select().single();
   if (e) return err(res, e.message, 500);
+  revalidateWeb('job-position:restore');
   return ok(res, data, 'Position restored');
 }
 
@@ -168,5 +173,6 @@ export async function remove(req: Request, res: Response) {
     if (e.code === '23503') return err(res, 'Cannot delete: applications reference this position', 409);
     return err(res, e.message, 500);
   }
+  revalidateWeb('job-position:purge');
   return ok(res, null, 'Position permanently deleted');
 }
