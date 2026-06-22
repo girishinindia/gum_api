@@ -67,6 +67,10 @@ export async function getById(req: Request, res: Response) {
 // POST /documents
 export async function create(req: Request, res: Response) {
   const body = parseMultipartBody(req);
+  // 'file' is the multipart upload field name, not a DB column — strip it
+  // (req.file carries the binary). Empty string means "remove the image".
+  const removeFile = body.file === null;
+  delete body.file;
 
   if (body.is_active === false && !hasPermission(req, 'document', 'activate')) {
     return err(res, 'Permission denied: document:activate required to create inactive document', 403);
@@ -83,6 +87,8 @@ export async function create(req: Request, res: Response) {
     const path = `documents/${slug}-${Date.now()}.webp`;
     fileUrl = await processAndUploadImage(req.file.buffer, path, { width: 800, height: 800, quality: 85 });
     body.file_url = fileUrl;
+  } else if (removeFile) {
+    body.file_url = null;
   }
 
   const { data, error: e } = await supabase.from('documents').insert(body).select('*, document_types(name)').single();
@@ -107,6 +113,10 @@ export async function update(req: Request, res: Response) {
   if (!old) return err(res, 'Document not found', 404);
 
   const updates = parseMultipartBody(req);
+  // 'file' is the multipart upload field name, not a DB column — strip it before
+  // the update (req.file carries the binary). Empty string means "remove the image".
+  const removeFile = updates.file === null;
+  delete updates.file;
 
   if ('is_active' in updates && updates.is_active !== old.is_active) {
     if (!hasPermission(req, 'document', 'activate')) {
@@ -126,6 +136,9 @@ export async function update(req: Request, res: Response) {
     const path = `documents/${slug}-${Date.now()}.webp`;
     updates.file_url = await processAndUploadImage(req.file.buffer, path, { width: 800, height: 800, quality: 85 });
     // Delete old AFTER new is uploaded
+    if (old.file_url) { try { await deleteImage(extractBunnyPath(old.file_url), old.file_url); } catch {} }
+  } else if (removeFile) {
+    updates.file_url = null;
     if (old.file_url) { try { await deleteImage(extractBunnyPath(old.file_url), old.file_url); } catch {} }
   }
 

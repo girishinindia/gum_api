@@ -12,12 +12,17 @@ import { applySearch } from '../../utils/search';
 const CACHE_KEY = 'cities:all';
 const clearCache = () => redis.del(CACHE_KEY);
 
+// Real, writable columns on `cities`. Anything else (e.g. latitude/longitude
+// produced by AI Generate) is dropped before insert/update.
+const CITY_COLUMNS = new Set(['state_id', 'name', 'phonecode', 'timezone', 'is_active', 'sort_order']);
+
 function parseBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   if (typeof body.state_id === 'string') body.state_id = parseInt(body.state_id) || 0;
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  for (const k of Object.keys(body)) { if (!CITY_COLUMNS.has(k)) delete body[k]; }
   return body;
 }
 

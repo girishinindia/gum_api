@@ -67,6 +67,12 @@ export async function create(req: Request, res: Response) {
     return err(res, 'Permission denied: language:activate required to create inactive language', 403);
   }
 
+  // ISO code must be unique (the DB only enforces unique name).
+  if (body.iso_code) {
+    const { data: dup } = await supabase.from('languages').select('id').ilike('iso_code', body.iso_code).is('deleted_at', null).maybeSingle();
+    if (dup) return err(res, 'ISO code already exists', 409);
+  }
+
   const { data, error: e } = await supabase.from('languages').insert(body).select().single();
   if (e) {
     if (e.code === '23505') return err(res, 'Language name already exists', 409);
@@ -91,6 +97,12 @@ export async function update(req: Request, res: Response) {
     if (!hasPermission(req, 'language', 'activate')) {
       return err(res, 'Permission denied: language:activate required to change active status', 403);
     }
+  }
+
+  // ISO code must stay unique across other languages.
+  if (updates.iso_code) {
+    const { data: dup } = await supabase.from('languages').select('id').ilike('iso_code', updates.iso_code).is('deleted_at', null).neq('id', id).maybeSingle();
+    if (dup) return err(res, 'ISO code already exists', 409);
   }
 
   if (Object.keys(updates).length === 0) return err(res, 'Nothing to update', 400);

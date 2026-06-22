@@ -17,12 +17,17 @@ function extractBunnyPath(cdnUrl: string): string {
   return cdnUrl.replace(config.bunny.cdnUrl + '/', '').split('?')[0];
 }
 
+// Real, writable columns on `countries`. Anything else (e.g. region/subregion/
+// latitude/longitude produced by AI Generate) is dropped before insert/update.
+const COUNTRY_COLUMNS = new Set(['name', 'iso2', 'iso3', 'phone_code', 'nationality', 'national_language', 'languages', 'tld', 'currency', 'currency_name', 'currency_symbol', 'flag_image', 'is_active', 'sort_order']);
+
 function parseMultipartBody(req: Request): any {
   const body: any = { ...req.body };
   if (typeof body.languages === 'string') { try { body.languages = JSON.parse(body.languages); } catch {} }
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
   if (typeof body.sort_order === 'string') body.sort_order = parseInt(body.sort_order) || 0;
   for (const k of Object.keys(body)) { if (body[k] === '') body[k] = null; }
+  for (const k of Object.keys(body)) { if (!COUNTRY_COLUMNS.has(k)) delete body[k]; }
   return body;
 }
 
