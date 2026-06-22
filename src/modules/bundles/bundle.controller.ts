@@ -241,11 +241,11 @@ export async function getBySlug(req: Request, res: Response) {
   {
     const { data: bc } = await supabase
       .from('bundle_courses')
-      .select('course_id, sort_order')
+      .select('course_id, display_order')
       .eq('bundle_id', bundle.id)
       .eq('is_active', true)
       .is('deleted_at', null)
-      .order('sort_order', { ascending: true });
+      .order('display_order', { ascending: true });
     if (bc && bc.length > 0) {
       const courseIds = bc.map((r: any) => r.course_id);
       const { data: courses } = await supabase
@@ -266,7 +266,7 @@ export async function getBySlug(req: Request, res: Response) {
           .is('deleted_at', null);
         if (ct) for (const t of ct) courseTransMap[t.course_id] = t;
       }
-      // Assemble in sort_order
+      // Assemble in display_order
       includedCourses = bc.map((r: any) => {
         const c = (courses || []).find((c: any) => c.id === r.course_id);
         const t = courseTransMap[r.course_id];
