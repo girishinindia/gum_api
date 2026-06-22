@@ -47,9 +47,11 @@ export async function list(req: Request, res: Response) {
   let q = supabase.from('course_module_translations').select('*, course_modules(slug, name, course_id, courses(code, slug, name)), languages(name, native_name, iso_code)', { count: 'exact' });
 
   if (search) {
-    // Prefix match so "loop" finds "loops" (the 'simple' config does no stemming).
-    const prefix = String(search).trim().split(/\s+/).map((t) => t.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean).map((t) => `${t}:*`).join(' & ');
-    if (prefix) q = q.textSearch('search_vector', prefix, { config: 'simple' });
+    // Match the translation name (substring). The full-text search_vector also
+    // indexes description/meta, so a common word like "programming" matched every
+    // row — name ilike keeps results precise to what's shown in the Name column.
+    const term = String(search).replace(/[%(),]/g, '').trim();
+    if (term) q = q.ilike('name', `%${term}%`);
   }
   if (req.query.course_module_id) q = q.eq('course_module_id', parseInt(req.query.course_module_id as string));
   if (req.query.language_id) q = q.eq('language_id', parseInt(req.query.language_id as string));
