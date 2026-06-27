@@ -14,6 +14,8 @@ r.get('/me',                                    ctrl.getMe);
 r.patch('/me', upload.single('avatar'),         ctrl.updateMe);
 r.get('/me/permissions',                        ctrl.getMyPermissions);
 r.post('/me/roles',     validate(assignSelfRoleSchema), ctrl.assignMyRole);
+// Self account deletion (store compliance). MUST stay above '/:id'.
+r.delete('/me',                                 ctrl.deleteMe);
 
 // Phase 45 — assignable-user lookup for owner-aware pickers (bundles /
 // webinars / batches). MUST come before '/:id'. Returns {id, full_name}.

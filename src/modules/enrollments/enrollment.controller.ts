@@ -214,8 +214,13 @@ export async function getProgress(req: Request, res: Response) {
 export async function updateProgress(req: Request, res: Response) {
   const enrollmentId = parseInt(req.params.id);
 
-  const { data: enrollment } = await supabase.from(TABLE).select('id').eq('id', enrollmentId).single();
+  const { data: enrollment } = await supabase.from(TABLE).select('id, user_id').eq('id', enrollmentId).single();
   if (!enrollment) return err(res, 'Enrollment not found', 404);
+  // The enrollment owner may record their own progress; everyone else needs
+  // the admin enrollment_progress:create permission.
+  if (enrollment.user_id !== req.user!.id && !hasPermission(req, 'enrollment_progress', 'create')) {
+    return err(res, 'Forbidden', 403);
+  }
 
   const body: any = { ...req.body };
   if (typeof body.is_active === 'string') body.is_active = body.is_active === 'true';
@@ -348,4 +353,168 @@ export async function getPlaybackUrl(req: Request, res: Response) {
     enrollment_id: enrollmentId,
     library_id: signed.libraryId,
   }, 'Signed playback URL');
+}
+
+// ──────────────────────────────────────────────
+// Phase 46 (content app) — enrolled-only course content
+//
+// GET /enrollments/:id/content
+// Returns the course's full curriculum tree WITH per-lesson Bunny video ids
+// and the user's completed sub-topics, so the mobile player can render and
+// gate playback. This is the ONLY place video ids are exposed; the public
+// /courses/by-slug curriculum stays video-id-free. Access is gated exactly
+// like getPlaybackUrl (owner or admin, active enrollment).
+// ──────────────────────────────────────────────
+
+/** Build the 4-level curriculum tree for a course, INCLUDING per-lesson
+ *  video_id / video_status. Mirrors course.getBySlug's tree assembly but adds
+ *  the video fields (kept here so the public endpoint is untouched). */
+async function buildCourseCurriculumWithVideo(courseId: number): Promise<{ tree: any[]; counts: { modules: number; chapters: number; topics: number; subtopics: number } }> {
+  const { data: modules } = await supabase.from('course_modules')
+    .select('id, name, display_order').eq('course_id', courseId).eq('is_active', true).is('deleted_at', null)
+    .order('display_order', { ascending: true });
+  if (!modules || modules.length === 0) return { tree: [], counts: { modules: 0, chapters: 0, topics: 0, subtopics: 0 } };
+  const moduleIds = modules.map((m: any) => m.id);
+
+  const { data: cms } = await supabase.from('course_module_subjects')
+    .select('id, course_module_id').eq('course_id', courseId).in('course_module_id', moduleIds).eq('is_active', true).is('deleted_at', null);
+  const cmsIds = (cms || []).map((s: any) => s.id);
+
+  let courseChapters: any[] = [];
+  if (cmsIds.length) {
+    const { data: cc } = await supabase.from('course_chapters')
+      .select('id, course_module_subject_id, chapter_id').eq('course_id', courseId).in('course_module_subject_id', cmsIds).eq('is_active', true).is('deleted_at', null);
+    courseChapters = cc || [];
+  }
+  const ccIds = courseChapters.map((c: any) => c.id);
+  const chapterIds = [...new Set(courseChapters.map((c: any) => c.chapter_id))];
+
+  const chapterMap: Record<number, any> = {};
+  if (chapterIds.length) {
+    const { data: chRows } = await supabase.from('chapters').select('id, name, display_order').in('id', chapterIds).eq('is_active', true);
+    for (const ch of (chRows || []) as any[]) chapterMap[ch.id] = ch;
+  }
+
+  let courseChapterTopics: any[] = [];
+  if (ccIds.length) {
+    const { data: cct } = await supabase.from('course_chapter_topics')
+      .select('id, course_chapter_id, topic_id').eq('course_id', courseId).in('course_chapter_id', ccIds).eq('is_active', true).is('deleted_at', null);
+    courseChapterTopics = cct || [];
+  }
+  const topicIds = [...new Set(courseChapterTopics.map((t: any) => t.topic_id))];
+
+  const topicMap: Record<number, any> = {};
+  if (topicIds.length) {
+    const { data: tRows } = await supabase.from('topics').select('id, name, display_order').in('id', topicIds).eq('is_active', true);
+    for (const t of (tRows || []) as any[]) topicMap[t.id] = t;
+  }
+
+  const subtopicsByTopic: Record<number, any[]> = {};
+  if (topicIds.length) {
+    const { data: stRows } = await supabase.from('sub_topics')
+      .select('id, topic_id, name, display_order, estimated_minutes, video_id, video_status')
+      .in('topic_id', topicIds).eq('is_active', true).is('deleted_at', null)
+      .order('display_order', { ascending: true });
+    for (const st of (stRows || []) as any[]) {
+      (subtopicsByTopic[st.topic_id] ??= []).push({
+        id: st.id,
+        name: st.name,
+        estimated_minutes: st.estimated_minutes,
+        video_id: st.video_id || null,
+        video_status: st.video_status || null,
+        has_video: !!st.video_id,
+      });
+    }
+  }
+
+  const topicsByCC: Record<number, number[]> = {};
+  for (const cct of courseChapterTopics) (topicsByCC[cct.course_chapter_id] ??= []).push(cct.topic_id);
+  const ccToChapterId: Record<number, number> = {};
+  for (const cc of courseChapters) ccToChapterId[cc.id] = cc.chapter_id;
+  const chaptersByCMS: Record<number, number[]> = {};
+  for (const cc of courseChapters) (chaptersByCMS[cc.course_module_subject_id] ??= []).push(cc.id);
+  const cmsByModule: Record<number, number[]> = {};
+  for (const s of (cms || []) as any[]) (cmsByModule[s.course_module_id] ??= []).push(s.id);
+
+  let totalChapters = 0, totalTopics = 0, totalSubtopics = 0;
+  const tree = modules.map((mod: any) => {
+    const modChapters: any[] = [];
+    for (const cmsId of (cmsByModule[mod.id] || [])) {
+      for (const ccId of (chaptersByCMS[cmsId] || [])) {
+        const chapter = chapterMap[ccToChapterId[ccId]];
+        if (!chapter) continue;
+        const chTopics = (topicsByCC[ccId] || []).map((tid: number) => {
+          const topic = topicMap[tid];
+          if (!topic) return null;
+          const subs = subtopicsByTopic[tid] || [];
+          totalSubtopics += subs.length;
+          return { id: topic.id, name: topic.name, display_order: topic.display_order, subtopic_count: subs.length, sub_topics: subs };
+        }).filter(Boolean).sort((a: any, b: any) => a.display_order - b.display_order);
+        totalTopics += chTopics.length;
+        modChapters.push({ id: chapter.id, name: chapter.name, display_order: chapter.display_order, topic_count: chTopics.length, topics: chTopics });
+      }
+    }
+    modChapters.sort((a: any, b: any) => a.display_order - b.display_order);
+    totalChapters += modChapters.length;
+    return { id: mod.id, name: mod.name, display_order: mod.display_order, chapter_count: modChapters.length, chapters: modChapters };
+  });
+
+  return { tree, counts: { modules: modules.length, chapters: totalChapters, topics: totalTopics, subtopics: totalSubtopics } };
+}
+
+export async function getContent(req: Request, res: Response) {
+  const enrollmentId = parseInt(req.params.id, 10);
+  const callerId = req.user!.id;
+  if (!Number.isFinite(enrollmentId) || enrollmentId <= 0) return err(res, 'Invalid enrollment id', 400);
+
+  const { data: enrollment } = await supabase.from('enrollments')
+    .select('id, user_id, item_type, item_id, enrollment_status, is_active, deleted_at, expires_at')
+    .eq('id', enrollmentId).single();
+  if (!enrollment) return err(res, 'Enrollment not found', 404);
+
+  const owns = enrollment.user_id === callerId;
+  if (!owns && !hasPermission(req, 'enrollment', 'read')) return err(res, 'Forbidden', 403);
+  if (enrollment.deleted_at) return err(res, 'Enrollment has been removed', 410);
+  if (!enrollment.is_active || enrollment.enrollment_status !== 'active') return err(res, 'Enrollment is not active', 403);
+  if (enrollment.expires_at && new Date(enrollment.expires_at) < new Date()) return err(res, 'Enrollment expired', 403);
+
+  // Resolve the course id (course → self; batch → its linked course). Other
+  // types carry no curriculum (webinars are single sessions; bundles expand
+  // to per-course enrollments at purchase, so they never appear here).
+  let courseId: number | null = null;
+  if (enrollment.item_type === 'course') {
+    courseId = Number(enrollment.item_id);
+  } else if (enrollment.item_type === 'batch') {
+    const { data: b } = await supabase.from('course_batches').select('course_id').eq('id', enrollment.item_id).maybeSingle();
+    courseId = b?.course_id ? Number(b.course_id) : null;
+  }
+
+  if (!courseId) {
+    return ok(res, {
+      enrollment_id: enrollmentId, item_type: enrollment.item_type, course_id: null, course_name: null,
+      course_thumbnail: null, curriculum: [], curriculum_counts: { modules: 0, chapters: 0, topics: 0, subtopics: 0 },
+      completed_subtopic_ids: [],
+    }, 'No curriculum for this item');
+  }
+
+  const { data: course } = await supabase.from('courses').select('id, name, slug, trailer_thumbnail_url').eq('id', courseId).maybeSingle();
+
+  const { data: prog } = await supabase.from('enrollment_progress')
+    .select('content_id').eq('enrollment_id', enrollmentId).eq('content_type', 'sub_topic')
+    .eq('progress_status', 'completed').is('deleted_at', null);
+  const completedIds = (prog || []).map((p: any) => Number(p.content_id));
+
+  const { tree, counts } = await buildCourseCurriculumWithVideo(courseId);
+
+  return ok(res, {
+    enrollment_id: enrollmentId,
+    item_type: enrollment.item_type,
+    course_id: courseId,
+    course_name: course?.name ?? null,
+    course_slug: course?.slug ?? null,
+    course_thumbnail: course?.trailer_thumbnail_url ?? null,
+    curriculum: tree,
+    curriculum_counts: counts,
+    completed_subtopic_ids: completedIds,
+  }, 'Course content');
 }

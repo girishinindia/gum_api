@@ -494,6 +494,40 @@ export async function softDelete(req: Request, res: Response) {
   return ok(res, data, 'User moved to trash');
 }
 
+// DELETE /users/me — self-service account deletion (App Store / Play
+// compliance). Soft-deletes the caller's OWN account and revokes all their
+// sessions so it is immediately inaccessible. A retention job can hard-purge
+// later per policy. Additive; does not touch the admin soft-delete path.
+export async function deleteMe(req: Request, res: Response) {
+  const id = req.user!.id;
+
+  // Super admins can't self-delete from the app (org-safety guard).
+  if (await isUserSuperAdmin(id)) {
+    return err(res, 'Super administrators cannot delete their account from the app', 403);
+  }
+
+  const { data: me } = await supabase.from('users').select('email, deleted_at').eq('id', id).single();
+  if (!me) return err(res, 'Account not found', 404);
+  if (me.deleted_at) return err(res, 'Account already deleted', 400);
+
+  const { error: e } = await supabase
+    .from('users')
+    .update({ deleted_at: new Date().toISOString(), status: 'inactive' })
+    .eq('id', id);
+  if (e) return err(res, e.message, 500);
+
+  // Revoke all active sessions for this user.
+  await supabase
+    .from('login_sessions')
+    .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_reason: 'account_self_deleted' })
+    .eq('user_id', id)
+    .eq('is_active', true);
+  await Promise.all([redis.del(`perms:${id}`), redis.del(`has_session:${id}`)]);
+
+  logAdmin({ actorId: id, action: 'account_self_deleted', targetType: 'user', targetId: id, targetName: me.email, ip: getClientIp(req) });
+  return ok(res, null, 'Your account has been deleted.');
+}
+
 // PATCH /users/:id/restore
 export async function restore(req: Request, res: Response) {
   const id = parseInt(req.params.id);
